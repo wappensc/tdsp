@@ -1,5 +1,6 @@
 # TDSP — Together Document Sync Protocol
 
+[![CI](https://github.com/wappensc/tdsp/actions/workflows/ci.yml/badge.svg)](https://github.com/wappensc/tdsp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Spec: TDSP 1.0](https://img.shields.io/badge/spec-TDSP%201.0-informational)](SPECIFICATION.md)
 [![Node.js ≥ 22.6](https://img.shields.io/badge/node-%E2%89%A5%2022.6-brightgreen)](package.json)
