@@ -1,0 +1,14 @@
+{
+  "name": "@tdsp/reconciliation",
+  "version": "1.0.0",
+  "description": "The TDSP document profile yjs-paragraphs/1 and its attribution tracker.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "yjs": "^13.6.32"
+  }
+}

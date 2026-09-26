@@ -1,0 +1,326 @@
+{
+  "$schema-note": "Machine-readable source of truth behind THIRD-PARTY-NOTICES.md's Components tables. `pnpm run licenses:check` walks the real, resolved production dependency tree of every distributed workspace member (tools/license-check.ts's DISTRIBUTED_PACKAGE_JSON_GLOBS) and fails if it finds a dependency missing from `packages` below, a license that no longer matches what is recorded, a license outside `allowedLicenses`, or a `packages` entry that is no longer a resolved dependency (stale). `pnpm run licenses:generate` regenerates THIRD-PARTY-NOTICES.md's two Components tables from this file plus the live dependency tree; it never touches the hand-maintained prose or the License texts section. `external` lists programs outside the pnpm dependency graph that a bridge runs as a separate process and that this repository does not include; no automated check can see them, so update the array by hand when the tested version changes.",
+  "allowedLicenses": ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MIT-0"],
+  "packages": [
+    {
+      "name": "@matrix-org/matrix-sdk-crypto-nodejs",
+      "version": "0.6.6",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "@pinojs/redact",
+      "version": "0.4.0",
+      "license": "MIT"
+    },
+    {
+      "name": "@selderee/plugin-htmlparser2",
+      "version": "0.12.0",
+      "license": "MIT"
+    },
+    {
+      "name": "@zone-eu/mailsplit",
+      "version": "5.4.16",
+      "license": "(MIT OR EUPL-1.1+)",
+      "electedLicense": "MIT"
+    },
+    {
+      "name": "@zone-eu/mailsplit",
+      "version": "5.4.17",
+      "license": "(MIT OR EUPL-1.1+)",
+      "electedLicense": "MIT"
+    },
+    {
+      "name": "agent-base",
+      "version": "7.1.4",
+      "license": "MIT"
+    },
+    {
+      "name": "atomic-sleep",
+      "version": "1.0.0",
+      "license": "MIT"
+    },
+    {
+      "name": "debug",
+      "version": "4.4.3",
+      "license": "MIT"
+    },
+    {
+      "name": "deepmerge-ts",
+      "version": "8.0.2",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "name": "dom-serializer",
+      "version": "2.0.0",
+      "license": "MIT"
+    },
+    {
+      "name": "domelementtype",
+      "version": "2.3.0",
+      "license": "BSD-2-Clause"
+    },
+    {
+      "name": "domhandler",
+      "version": "5.0.3",
+      "license": "BSD-2-Clause"
+    },
+    {
+      "name": "domutils",
+      "version": "3.2.2",
+      "license": "BSD-2-Clause"
+    },
+    {
+      "name": "encoding-japanese",
+      "version": "2.3.0",
+      "license": "MIT"
+    },
+    {
+      "name": "encoding-japanese",
+      "version": "2.4.0",
+      "license": "MIT"
+    },
+    {
+      "name": "entities",
+      "version": "4.5.0",
+      "license": "BSD-2-Clause"
+    },
+    {
+      "name": "entities",
+      "version": "7.0.1",
+      "license": "BSD-2-Clause"
+    },
+    {
+      "name": "he",
+      "version": "1.2.0",
+      "license": "MIT"
+    },
+    {
+      "name": "html-to-text",
+      "version": "10.0.1",
+      "license": "MIT"
+    },
+    {
+      "name": "htmlparser2",
+      "version": "10.1.0",
+      "license": "MIT"
+    },
+    {
+      "name": "https-proxy-agent",
+      "version": "7.0.6",
+      "license": "MIT"
+    },
+    {
+      "name": "iconv-lite",
+      "version": "0.7.3",
+      "license": "MIT"
+    },
+    {
+      "name": "imapflow",
+      "version": "1.7.8",
+      "license": "MIT"
+    },
+    {
+      "name": "ip-address",
+      "version": "10.7.2",
+      "license": "MIT"
+    },
+    {
+      "name": "isomorphic.js",
+      "version": "0.2.5",
+      "license": "MIT"
+    },
+    {
+      "name": "leac",
+      "version": "0.7.0",
+      "license": "MIT"
+    },
+    {
+      "name": "lib0",
+      "version": "0.2.117",
+      "license": "MIT"
+    },
+    {
+      "name": "libbase64",
+      "version": "1.3.0",
+      "license": "MIT"
+    },
+    {
+      "name": "libmime",
+      "version": "5.4.3",
+      "license": "MIT"
+    },
+    {
+      "name": "libmime",
+      "version": "5.4.4",
+      "license": "MIT"
+    },
+    {
+      "name": "libqp",
+      "version": "2.1.1",
+      "license": "MIT"
+    },
+    {
+      "name": "linkify-it",
+      "version": "5.0.2",
+      "license": "MIT"
+    },
+    {
+      "name": "mailparser",
+      "version": "3.9.28",
+      "license": "MIT"
+    },
+    {
+      "name": "ms",
+      "version": "2.1.3",
+      "license": "MIT"
+    },
+    {
+      "name": "node-downloader-helper",
+      "version": "2.1.11",
+      "license": "MIT"
+    },
+    {
+      "name": "nodemailer",
+      "version": "10.0.10",
+      "license": "MIT-0"
+    },
+    {
+      "name": "nodemailer",
+      "version": "7.0.13",
+      "license": "MIT-0"
+    },
+    {
+      "name": "on-exit-leak-free",
+      "version": "2.1.2",
+      "license": "MIT"
+    },
+    {
+      "name": "parseley",
+      "version": "0.13.1",
+      "license": "MIT"
+    },
+    {
+      "name": "peberminta",
+      "version": "0.10.0",
+      "license": "MIT"
+    },
+    {
+      "name": "pino",
+      "version": "10.3.1",
+      "license": "MIT"
+    },
+    {
+      "name": "pino-abstract-transport",
+      "version": "3.0.0",
+      "license": "MIT"
+    },
+    {
+      "name": "pino-std-serializers",
+      "version": "7.1.0",
+      "license": "MIT"
+    },
+    {
+      "name": "process-warning",
+      "version": "5.1.0",
+      "license": "MIT"
+    },
+    {
+      "name": "punycode.js",
+      "version": "2.3.1",
+      "license": "MIT"
+    },
+    {
+      "name": "quick-format-unescaped",
+      "version": "4.0.4",
+      "license": "MIT"
+    },
+    {
+      "name": "real-require",
+      "version": "0.2.0",
+      "license": "MIT"
+    },
+    {
+      "name": "real-require",
+      "version": "1.0.0",
+      "license": "MIT"
+    },
+    {
+      "name": "safe-stable-stringify",
+      "version": "2.5.0",
+      "license": "MIT"
+    },
+    {
+      "name": "safer-buffer",
+      "version": "2.1.2",
+      "license": "MIT"
+    },
+    {
+      "name": "selderee",
+      "version": "0.12.0",
+      "license": "MIT"
+    },
+    {
+      "name": "smart-buffer",
+      "version": "4.2.0",
+      "license": "MIT"
+    },
+    {
+      "name": "socks",
+      "version": "2.8.9",
+      "license": "MIT"
+    },
+    {
+      "name": "sonic-boom",
+      "version": "4.2.1",
+      "license": "MIT"
+    },
+    {
+      "name": "split2",
+      "version": "4.2.0",
+      "license": "ISC"
+    },
+    {
+      "name": "thread-stream",
+      "version": "4.2.0",
+      "license": "MIT"
+    },
+    {
+      "name": "tlds",
+      "version": "1.261.0",
+      "license": "MIT"
+    },
+    {
+      "name": "uc.micro",
+      "version": "2.1.0",
+      "license": "MIT"
+    },
+    {
+      "name": "yjs",
+      "version": "13.6.32",
+      "license": "MIT"
+    }
+  ],
+  "external": [
+    {
+      "name": "signal-cli",
+      "version": "0.14.7",
+      "license": "GPL-3.0-only",
+      "source": "https://github.com/AsamK/signal-cli",
+      "distribution": "Not included in this repository: bridges/signal-bridge needs a separately installed signal-cli and runs it as a separate program over its command line and JSON-RPC interface; no code here links it. The version is the one the bridge is tested with. Whoever distributes the bridge together with signal-cli takes on signal-cli's license for that part."
+    },
+    {
+      "name": "libsignal-client",
+      "version": "as vendored by the signal-cli release above",
+      "license": "AGPL-3.0-only",
+      "source": "https://github.com/signalapp/libsignal",
+      "distribution": "Part of signal-cli's own distribution; not included in this repository and not linked by any code here."
+    },
+    {
+      "name": "GnuPG",
+      "version": "2.2, 2.4 and 2.5 (tested: 2.2.40, 2.4.4, 2.5.22)",
+      "license": "GPL-3.0-or-later",
+      "source": "https://gnupg.org",
+      "distribution": "Not included in this repository: bridges/email-bridge runs the user's own installed gpg as a separate program, for PGP-enabled documents only; no code here links it."
+    }
+  ]
+}

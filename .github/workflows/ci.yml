@@ -1,0 +1,163 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint (Biome)
+        run: pnpm run lint
+
+      - name: Architecture boundaries (dependency-cruiser)
+        run: pnpm run depcruise
+
+      # Must stay in this job AND in the root `ci` script: this workflow lists its steps one by
+      # one instead of calling `pnpm run ci`, so a check registered in only one of the two places
+      # would be a silent hole. tools/netcheck-wiring.test.ts asserts both.
+      - name: Network-egress policy (netcheck)
+        run: pnpm run netcheck
+
+      # Same reasoning as netcheck; tools/license-check-wiring.test.ts asserts both.
+      - name: Third-party license check
+        run: pnpm run licenses:check
+
+      - name: Type-check
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
+
+  matrix:
+    # Against a real, local Synapse. Plain `docker compose` steps rather than a `services:`
+    # container, because the server's configuration has to be generated before it starts —
+    # the same commands `pnpm run matrix:up` runs locally.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Start local Synapse test homeserver
+        run: pnpm run matrix:up
+
+      - name: Matrix bridge and test homeserver tests
+        run: pnpm exec vitest run infra/matrix-testserver/ bridges/matrix-bridge/
+
+      - name: Synapse container logs
+        if: always()
+        run: docker compose -f infra/matrix-testserver/docker-compose.yml logs
+
+      - name: Tear down
+        if: always()
+        run: pnpm run matrix:down
+
+  email:
+    # Against a real, local Greenmail; its two test mailboxes are created at container start.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Start local Greenmail test SMTP/IMAP server
+        run: pnpm run email:up
+
+      - name: Email bridge and test server tests
+        run: pnpm exec vitest run infra/email-testserver/ bridges/email-bridge/
+
+      - name: Greenmail container logs
+        if: always()
+        run: docker compose -f infra/email-testserver/docker-compose.yml logs
+
+      - name: Tear down
+        if: always()
+        run: pnpm run email:down
+
+  network-isolation:
+    # The only layer that sees a NATIVE module opening a socket: the JavaScript guards (netcheck,
+    # the Vitest node:net patch) cannot see @matrix-org/matrix-sdk-crypto-nodejs's Rust binding,
+    # which does not go through Node's network stack. So the whole suite runs as a dedicated user
+    # whose non-loopback egress the kernel refuses. Scoped by uid, not `unshare -n`, so that
+    # loopback — and with it the local Synapse and Greenmail — stays reachable, and the runner
+    # agent keeps its own connection.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # Everything that legitimately needs the network happens before the block goes up.
+      - run: pnpm install --frozen-lockfile
+
+      - name: Start local Synapse test homeserver
+        run: pnpm run matrix:up
+
+      - name: Start local Greenmail test SMTP/IMAP server
+        run: pnpm run email:up
+
+      - name: Create the restricted test user
+        run: |
+          sudo useradd -m tdsp-netcheck
+          # Traverse permission on every parent of the checkout; without it Node reports the
+          # unreadable workspace as MODULE_NOT_FOUND rather than EACCES.
+          sudo chmod a+x /home/runner /home/runner/work
+          sudo chmod -R a+rX "$GITHUB_WORKSPACE" /opt/hostedtoolcache
+          sudo chmod -R a+rwX "$GITHUB_WORKSPACE/node_modules" || true
+
+      - name: Block all non-loopback egress for that user
+        run: |
+          sudo iptables -A OUTPUT -m owner --uid-owner "$(id -u tdsp-netcheck)" \
+            ! -o lo -j REJECT
+          sudo ip6tables -A OUTPUT -m owner --uid-owner "$(id -u tdsp-netcheck)" \
+            ! -o lo -j REJECT || true
+
+      # Proves the block is real before a passing suite is taken to mean anything.
+      - name: Canary — external egress must fail, loopback must work
+        run: |
+          if sudo -u tdsp-netcheck curl -sS --max-time 10 https://example.com >/dev/null 2>&1; then
+            echo "::error::egress block is NOT in effect — this job would be meaningless"
+            exit 1
+          fi
+          echo "external egress correctly blocked"
+          sudo -u tdsp-netcheck curl -sS --max-time 10 http://localhost:18008/health >/dev/null
+          echo "loopback correctly still reachable"
+
+      - name: Test suite with no route to the outside world
+        run: |
+          # pnpm writes a shell shim here, not a symlink, so it is run as a program.
+          sudo -u tdsp-netcheck env "PATH=$PATH" HOME=/home/tdsp-netcheck \
+            "$GITHUB_WORKSPACE/node_modules/.bin/vitest" run
+
+      - name: Remove the egress block
+        if: always()
+        run: |
+          sudo iptables -D OUTPUT -m owner --uid-owner "$(id -u tdsp-netcheck)" \
+            ! -o lo -j REJECT || true
+
+      - name: Tear down
+        if: always()
+        run: pnpm run matrix:down && pnpm run email:down

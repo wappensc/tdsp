@@ -1,0 +1,264 @@
+{
+  "$comment": "TDSP 1 frame decoding test vectors (SPECIFICATION.md §4.4). Each vector is a frame's text: valid ones must decode to the given kind; invalid ones must be rejected with the given reason and change no state. Generated from the reference encoder, then varied; checked by the reference decoder in src/test-vectors.test.ts.",
+  "version": 1,
+  "vectors": [
+    {
+      "name": "edit",
+      "frame": "{\"tdsp\":1,\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\"}",
+      "valid": true,
+      "kind": "edit"
+    },
+    {
+      "name": "resync-request from a joiner with nothing",
+      "frame": "{\"tdsp\":1,\"kind\":\"resync-request\",\"documentId\":\"doc-a1b2c3\",\"requestId\":\"5f3a9c0e12b47d68\",\"bootstrap\":true,\"controlSequence\":0,\"stateVector\":\"AA==\"}",
+      "valid": true,
+      "kind": "resync-request"
+    },
+    {
+      "name": "resync-response from the creator, with snapshot and overlay",
+      "frame": "{\"tdsp\":1,\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"5f3a9c0e12b47d68\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"control\":{\"profile\":\"yjs-paragraphs/1\",\"sequence\":7,\"closed\":false,\"members\":{\"bob\":\"write\",\"carol\":\"read\"},\"policy\":{\"minIntervalMs\":30000,\"maxIntervalMs\":120000,\"minChars\":0,\"maxChars\":null,\"expectedLatencyMs\":60000},\"policySequence\":4},\"attribution\":{\"ranges\":[{\"start\":0,\"end\":2,\"authorId\":\"alice\"}],\"lastEditBySender\":{\"alice\":2}}}",
+      "valid": true,
+      "kind": "resync-response"
+    },
+    {
+      "name": "resync-response with neither snapshot nor overlay, and an empty update",
+      "frame": "{\"tdsp\":1,\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"5f3a9c0e12b47d68\",\"update\":\"\",\"control\":null,\"attribution\":null}",
+      "valid": true,
+      "kind": "resync-response"
+    },
+    {
+      "name": "control: grant",
+      "frame": "{\"tdsp\":1,\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"sequence\":1,\"action\":\"membership\",\"member\":\"bob\",\"permission\":\"write\"}",
+      "valid": true,
+      "kind": "control"
+    },
+    {
+      "name": "control: revoke (permission null)",
+      "frame": "{\"tdsp\":1,\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"sequence\":2,\"action\":\"membership\",\"member\":\"bob\",\"permission\":null}",
+      "valid": true,
+      "kind": "control"
+    },
+    {
+      "name": "control: close",
+      "frame": "{\"tdsp\":1,\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"sequence\":3,\"action\":\"close\"}",
+      "valid": true,
+      "kind": "control"
+    },
+    {
+      "name": "control: policy with a null maxChars",
+      "frame": "{\"tdsp\":1,\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"sequence\":4,\"action\":\"policy\",\"policy\":{\"minIntervalMs\":30000,\"maxIntervalMs\":120000,\"minChars\":0,\"maxChars\":null,\"expectedLatencyMs\":60000}}",
+      "valid": true,
+      "kind": "control"
+    },
+    {
+      "name": "heartbeat",
+      "frame": "{\"tdsp\":1,\"kind\":\"heartbeat\",\"documentId\":\"doc-a1b2c3\",\"controlSequence\":3,\"stateVector\":\"AYma9JgPBA==\"}",
+      "valid": true,
+      "kind": "heartbeat"
+    },
+    {
+      "name": "fragment",
+      "frame": "{\"tdsp\":1,\"kind\":\"fragment\",\"documentId\":\"doc-a1b2c3\",\"messageId\":\"0123456789abcdef\",\"index\":0,\"total\":2,\"slice\":\"eyI=\"}",
+      "valid": true,
+      "kind": "fragment"
+    },
+    {
+      "name": "decline with profiles and text",
+      "frame": "{\"tdsp\":1,\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"unsupported-profile\",\"profiles\":[\"com.example.markdown/1\"],\"text\":\"My app cannot open this document.\"}",
+      "valid": true,
+      "kind": "decline"
+    },
+    {
+      "name": "decline with a reason only",
+      "frame": "{\"tdsp\":1,\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"declined\"}",
+      "valid": true,
+      "kind": "decline"
+    },
+    {
+      "name": "text with a surrogate pair written as escapes",
+      "frame": "{\"tdsp\":1,\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"other\",\"text\":\"\\ud83d\\ude00\"}",
+      "valid": true,
+      "kind": "decline"
+    },
+    {
+      "name": "not JSON",
+      "frame": "tdsp 1 edit",
+      "valid": false,
+      "reason": "not-json"
+    },
+    {
+      "name": "a JSON array",
+      "frame": "[1,2]",
+      "valid": false,
+      "reason": "not-json"
+    },
+    {
+      "name": "a member named twice (I-JSON)",
+      "frame": "{\"tdsp\":1,\"kind\":\"heartbeat\",\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\"}",
+      "valid": false,
+      "reason": "not-json"
+    },
+    {
+      "name": "an unpaired surrogate (I-JSON)",
+      "frame": "{\"tdsp\":1,\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"other\",\"text\":\"\\ud800\"}",
+      "valid": false,
+      "reason": "not-json"
+    },
+    {
+      "name": "no tdsp",
+      "frame": "{\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\"}",
+      "valid": false,
+      "reason": "unsupported-version"
+    },
+    {
+      "name": "tdsp 2",
+      "frame": "{\"tdsp\":2,\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\"}",
+      "valid": false,
+      "reason": "unsupported-version"
+    },
+    {
+      "name": "tdsp as a string",
+      "frame": "{\"tdsp\":\"1\",\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\"}",
+      "valid": false,
+      "reason": "unsupported-version"
+    },
+    {
+      "name": "an unknown kind",
+      "frame": "{\"tdsp\":1,\"kind\":\"chat\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\"}",
+      "valid": false,
+      "reason": "unknown-kind"
+    },
+    {
+      "name": "an edit without update",
+      "frame": "{\"tdsp\":1,\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\"}",
+      "valid": false,
+      "reason": "missing-field"
+    },
+    {
+      "name": "a request without requestId",
+      "frame": "{\"tdsp\":1,\"kind\":\"resync-request\",\"documentId\":\"doc-a1b2c3\",\"controlSequence\":0,\"stateVector\":\"AA==\"}",
+      "valid": false,
+      "reason": "missing-field"
+    },
+    {
+      "name": "an empty update in an edit",
+      "frame": "{\"tdsp\":1,\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"\"}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "non-canonical Base64 (padding bits set)",
+      "frame": "{\"tdsp\":1,\"kind\":\"heartbeat\",\"documentId\":\"doc-a1b2c3\",\"controlSequence\":3,\"stateVector\":\"AYma9JgPBB==\"}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "Base64 without padding",
+      "frame": "{\"tdsp\":1,\"kind\":\"heartbeat\",\"documentId\":\"doc-a1b2c3\",\"controlSequence\":3,\"stateVector\":\"AYma9JgPBA\"}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "a field the kind does not define",
+      "frame": "{\"tdsp\":1,\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"extra\":1}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "a uint32 overflow",
+      "frame": "{\"tdsp\":1,\"kind\":\"heartbeat\",\"documentId\":\"doc-a1b2c3\",\"controlSequence\":4294967296,\"stateVector\":\"AYma9JgPBA==\"}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "a control sequence 0",
+      "frame": "{\"tdsp\":1,\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"sequence\":0,\"action\":\"close\"}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "a close that names a member",
+      "frame": "{\"tdsp\":1,\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"sequence\":3,\"action\":\"close\",\"member\":\"bob\"}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "a policy with null minChars",
+      "frame": "{\"tdsp\":1,\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"sequence\":4,\"action\":\"policy\",\"policy\":{\"minIntervalMs\":30000,\"maxIntervalMs\":120000,\"minChars\":null,\"maxChars\":null,\"expectedLatencyMs\":60000}}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "an unknown permission",
+      "frame": "{\"tdsp\":1,\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"sequence\":1,\"action\":\"membership\",\"member\":\"bob\",\"permission\":\"admin\"}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "a fragment index not below total",
+      "frame": "{\"tdsp\":1,\"kind\":\"fragment\",\"documentId\":\"doc-a1b2c3\",\"messageId\":\"0123456789abcdef\",\"index\":2,\"total\":2,\"slice\":\"eyI=\"}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "an upper-case messageId",
+      "frame": "{\"tdsp\":1,\"kind\":\"fragment\",\"documentId\":\"doc-a1b2c3\",\"messageId\":\"0123456789ABCDEF\",\"index\":0,\"total\":2,\"slice\":\"eyI=\"}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "a respondsTo that is not 16 hex digits",
+      "frame": "{\"tdsp\":1,\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"request-7\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"control\":{\"profile\":\"yjs-paragraphs/1\",\"sequence\":7,\"closed\":false,\"members\":{\"bob\":\"write\",\"carol\":\"read\"},\"policy\":{\"minIntervalMs\":30000,\"maxIntervalMs\":120000,\"minChars\":0,\"maxChars\":null,\"expectedLatencyMs\":60000},\"policySequence\":4},\"attribution\":{\"ranges\":[{\"start\":0,\"end\":2,\"authorId\":\"alice\"}],\"lastEditBySender\":{\"alice\":2}}}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "a snapshot with policy but no policySequence",
+      "frame": "{\"tdsp\":1,\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"5f3a9c0e12b47d68\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"control\":{\"profile\":\"yjs-paragraphs/1\",\"sequence\":7,\"closed\":false,\"members\":{\"bob\":\"write\",\"carol\":\"read\"},\"policy\":{\"minIntervalMs\":30000,\"maxIntervalMs\":120000,\"minChars\":0,\"maxChars\":null,\"expectedLatencyMs\":60000}},\"attribution\":{\"ranges\":[{\"start\":0,\"end\":2,\"authorId\":\"alice\"}],\"lastEditBySender\":{\"alice\":2}}}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "a snapshot whose policySequence exceeds its sequence",
+      "frame": "{\"tdsp\":1,\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"5f3a9c0e12b47d68\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"control\":{\"profile\":\"yjs-paragraphs/1\",\"sequence\":7,\"closed\":false,\"members\":{\"bob\":\"write\",\"carol\":\"read\"},\"policy\":{\"minIntervalMs\":30000,\"maxIntervalMs\":120000,\"minChars\":0,\"maxChars\":null,\"expectedLatencyMs\":60000},\"policySequence\":8},\"attribution\":{\"ranges\":[{\"start\":0,\"end\":2,\"authorId\":\"alice\"}],\"lastEditBySender\":{\"alice\":2}}}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "a snapshot with a field it does not define",
+      "frame": "{\"tdsp\":1,\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"5f3a9c0e12b47d68\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"control\":{\"profile\":\"yjs-paragraphs/1\",\"sequence\":7,\"closed\":false,\"members\":{\"bob\":\"write\",\"carol\":\"read\"},\"policy\":{\"minIntervalMs\":30000,\"maxIntervalMs\":120000,\"minChars\":0,\"maxChars\":null,\"expectedLatencyMs\":60000},\"policySequence\":4,\"owner\":\"alice\"},\"attribution\":{\"ranges\":[{\"start\":0,\"end\":2,\"authorId\":\"alice\"}],\"lastEditBySender\":{\"alice\":2}}}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "a snapshot without members",
+      "frame": "{\"tdsp\":1,\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"5f3a9c0e12b47d68\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"control\":{\"profile\":\"yjs-paragraphs/1\",\"sequence\":7,\"closed\":false,\"policy\":{\"minIntervalMs\":30000,\"maxIntervalMs\":120000,\"minChars\":0,\"maxChars\":null,\"expectedLatencyMs\":60000},\"policySequence\":4},\"attribution\":{\"ranges\":[{\"start\":0,\"end\":2,\"authorId\":\"alice\"}],\"lastEditBySender\":{\"alice\":2}}}",
+      "valid": false,
+      "reason": "missing-field"
+    },
+    {
+      "name": "an overlay with a gap",
+      "frame": "{\"tdsp\":1,\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"5f3a9c0e12b47d68\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"control\":{\"profile\":\"yjs-paragraphs/1\",\"sequence\":7,\"closed\":false,\"members\":{\"bob\":\"write\",\"carol\":\"read\"},\"policy\":{\"minIntervalMs\":30000,\"maxIntervalMs\":120000,\"minChars\":0,\"maxChars\":null,\"expectedLatencyMs\":60000},\"policySequence\":4},\"attribution\":{\"ranges\":[{\"start\":0,\"end\":1,\"authorId\":\"a\"},{\"start\":2,\"end\":3,\"authorId\":\"b\"}],\"lastEditBySender\":{}}}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "a decline text of 501 characters",
+      "frame": "{\"tdsp\":1,\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"declined\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "an unknown decline reason",
+      "frame": "{\"tdsp\":1,\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"busy\"}",
+      "valid": false,
+      "reason": "invalid-field"
+    },
+    {
+      "name": "a documentId over 255 bytes",
+      "frame": "{\"tdsp\":1,\"kind\":\"edit\",\"documentId\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\"}",
+      "valid": false,
+      "reason": "invalid-field"
+    }
+  ]
+}

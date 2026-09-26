@@ -1,0 +1,12 @@
+{
+  "name": "@tdsp/messenger-port",
+  "version": "1.0.0",
+  "description": "The TDSP transport contract (MessengerPort), transport profiles and the transport conformance suite.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contract": "./src/contract.ts"
+  }
+}

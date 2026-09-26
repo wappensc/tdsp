@@ -1,0 +1,19 @@
+{
+  "name": "@tdsp/document-protocol",
+  "version": "1.0.0",
+  "description": "The TDSP engine (DocumentEngine) and the invitation link's reader and writer.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@tdsp/messenger-port": "workspace:*",
+    "@tdsp/reconciliation": "workspace:*"
+  },
+  "devDependencies": {
+    "@tdsp/messenger-mock": "workspace:*",
+    "yjs": "^13.6.32"
+  }
+}

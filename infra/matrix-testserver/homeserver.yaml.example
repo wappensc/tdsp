@@ -1,0 +1,66 @@
+# Documented shape of the config `generate-config.ts` actually produces —
+# NOT read by any script here. The real file lives at
+# `infra/matrix-testserver/credentials/homeserver.yaml`, gitignored,
+# generated fresh by Synapse's own `docker ... generate` mode (which fills
+# in `registration_shared_secret`/`macaroon_secret_key`/`form_secret` with
+# real random values, verified — this example uses obvious
+# placeholders instead) plus `generate-config.ts`'s appended test
+# overrides. Regenerate the real file with `pnpm run matrix:up`
+# (or force a clean one with `pnpm run matrix:reset` first) rather than
+# hand-editing this example or the generated file directly.
+
+server_name: "tdsp.test"
+pid_file: /data/homeserver.pid
+listeners:
+  - port: 8008
+    resources:
+      - compress: false
+        names:
+          - client
+          - federation
+    tls: false
+    type: http
+    x_forwarded: true
+database:
+  name: sqlite3
+  args:
+    database: /data/homeserver.db
+log_config: "/data/tdsp.test.log.config"
+media_store_path: /data/media_store
+registration_shared_secret: "<generated — a long random string, read by provision-test-accounts.ts>"
+report_stats: false
+macaroon_secret_key: "<generated>"
+form_secret: "<generated>"
+signing_key_path: "/data/tdsp.test.signing.key"
+trusted_key_servers:
+  - server_name: "matrix.org"
+
+# --- tdsp test overrides (appended by generate-config.ts) ---
+# Isolated, non-federating local/CI test server: no other
+# homeserver can ever reach this one, and test runs register/login/send
+# far faster than Synapse's production-tuned rate limits allow by default.
+federation_domain_whitelist: []
+enable_metrics: false
+rc_message:
+  per_second: 1000
+  burst_count: 1000
+rc_login:
+  address:
+    per_second: 1000
+    burst_count: 1000
+  account:
+    per_second: 1000
+    burst_count: 1000
+  failed_attempts:
+    per_second: 1000
+    burst_count: 1000
+rc_registration:
+  per_second: 1000
+  burst_count: 1000
+rc_joins:
+  local:
+    per_second: 1000
+    burst_count: 1000
+  remote:
+    per_second: 1000
+    burst_count: 1000

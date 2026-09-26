@@ -1,0 +1,22 @@
+{
+  "name": "@tdsp/signal-bridge",
+  "version": "1.0.0",
+  "description": "TDSP bridge for Signal, running signal-cli as a separate program.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "scripts": {
+    "start": "node --experimental-strip-types --env-file-if-exists=.env src/index.ts"
+  },
+  "dependencies": {
+    "@tdsp/bridge-log": "workspace:*",
+    "@tdsp/loopback": "workspace:*",
+    "@tdsp/messenger-port": "workspace:*"
+  },
+  "devDependencies": {
+    "@tdsp/messenger-signal": "workspace:*"
+  }
+}

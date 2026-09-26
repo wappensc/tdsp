@@ -1,0 +1,15 @@
+{
+  "name": "@tdsp/messenger-email",
+  "version": "1.0.0",
+  "description": "TDSP adapter for email, speaking to a local email bridge.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@tdsp/loopback": "workspace:*",
+    "@tdsp/messenger-port": "workspace:*"
+  }
+}

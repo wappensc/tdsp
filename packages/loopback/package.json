@@ -1,0 +1,11 @@
+{
+  "name": "@tdsp/loopback",
+  "version": "1.0.0",
+  "description": "The one check of whether an address is this machine, shared by TDSP adapters and bridges.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@tdsp/messenger-mock",
+  "version": "1.0.0",
+  "description": "An in-memory TDSP transport with deterministic fault injection, for tests.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@tdsp/messenger-port": "workspace:*"
+  }
+}

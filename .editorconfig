@@ -1,0 +1,22 @@
+# EditorConfig: https://editorconfig.org
+# Formatting for JS/TS/JSON is enforced by Biome (biome.json) regardless of
+# what an editor does with this file; this covers everything Biome doesn't
+# touch (YAML frontmatter, Markdown, shell, dotfiles) and gives editors that
+# don't run Biome directly a consistent baseline.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.{js,ts,tsx,json,jsonc}]
+max_line_length = 100
+
+[*.md]
+# Two trailing spaces are a Markdown line break, not accidental whitespace.
+trim_trailing_whitespace = false
+max_line_length = off

@@ -1,0 +1,99 @@
+{
+  "$comment": "TDSP 1 invitation link test vectors (SPECIFICATION.md §11.3). Each vector is a URL query: valid ones must read as the given invitation; invalid ones must be refused with the given problem. A policy that does not parse is dropped, not refused (INV-4). Checked by the reference reader in src/test-vectors.test.ts.",
+  "version": 1,
+  "vectors": [
+    {
+      "name": "Matrix, with a policy",
+      "query": "tdsp=1&provider=matrix&documentId=doc-1&creatorMemberId=%40alice%3Aexample.org&channelId=%21room%3Aexample.org&profile=yjs-paragraphs%2F1&policy=2000%2C10000%2C0%2Cinf%2C3000%400",
+      "valid": true,
+      "invitation": {
+        "messenger": "matrix",
+        "documentId": "doc-1",
+        "creatorMemberId": "@alice:example.org",
+        "channelId": "!room:example.org",
+        "profile": "yjs-paragraphs/1",
+        "policy": "2000,10000,0,inf,3000@0"
+      }
+    },
+    {
+      "name": "email with PGP, and an application's own parameter to ignore",
+      "query": "tdsp=1&provider=email&documentId=doc-2&creatorMemberId=alice%40example.org&threadRoot=%3Croot-1%40example.org%3E&recipients=alice%40example.org%2Cbob%40example.org&pgp=1&profile=yjs-paragraphs%2F1&bridge=http%3A%2F%2Flocalhost%3A8789",
+      "valid": true,
+      "invitation": {
+        "messenger": "email",
+        "documentId": "doc-2",
+        "creatorMemberId": "alice@example.org",
+        "threadRoot": "<root-1@example.org>",
+        "recipients": ["alice@example.org", "bob@example.org"],
+        "pgp": true,
+        "profile": "yjs-paragraphs/1"
+      }
+    },
+    {
+      "name": "a policy with a leading zero is dropped, the invitation still opens",
+      "query": "tdsp=1&provider=signal&documentId=doc-3&creatorMemberId=c0ffee&channelId=g1&profile=yjs-paragraphs%2F1&policy=02000%2C10000%2C0%2Cinf%2C3000%400",
+      "valid": true,
+      "invitation": {
+        "messenger": "signal",
+        "documentId": "doc-3",
+        "creatorMemberId": "c0ffee",
+        "channelId": "g1",
+        "profile": "yjs-paragraphs/1"
+      }
+    },
+    {
+      "name": "an ordinary page load",
+      "query": "provider=matrix&bridge=x",
+      "valid": false,
+      "problem": "not-an-invitation"
+    },
+    {
+      "name": "no version",
+      "query": "provider=matrix&documentId=d&creatorMemberId=c&channelId=r&profile=yjs-paragraphs%2F1",
+      "valid": false,
+      "problem": "unsupported-version"
+    },
+    {
+      "name": "version 2",
+      "query": "tdsp=2&provider=matrix&documentId=d&creatorMemberId=c&channelId=r&profile=yjs-paragraphs%2F1",
+      "valid": false,
+      "problem": "unsupported-version"
+    },
+    {
+      "name": "documentId twice",
+      "query": "tdsp=1&provider=matrix&documentId=d&documentId=e&creatorMemberId=c&channelId=r&profile=yjs-paragraphs%2F1",
+      "valid": false,
+      "problem": "repeated-field"
+    },
+    {
+      "name": "no profile",
+      "query": "tdsp=1&provider=matrix&documentId=d&creatorMemberId=c&channelId=r",
+      "valid": false,
+      "problem": "missing-field"
+    },
+    {
+      "name": "no channel for Matrix",
+      "query": "tdsp=1&provider=matrix&documentId=d&creatorMemberId=c&profile=yjs-paragraphs%2F1",
+      "valid": false,
+      "problem": "missing-field"
+    },
+    {
+      "name": "a profile that is not a profile id",
+      "query": "tdsp=1&provider=matrix&documentId=d&creatorMemberId=c&channelId=r&profile=Yjs",
+      "valid": false,
+      "problem": "invalid-field"
+    },
+    {
+      "name": "one participant twice, in two cases",
+      "query": "tdsp=1&provider=email&documentId=d&creatorMemberId=a%40x.org&threadRoot=%3Cr%40x.org%3E&recipients=a%40x.org%2CA%40x.org&profile=yjs-paragraphs%2F1",
+      "valid": false,
+      "problem": "invalid-field"
+    },
+    {
+      "name": "pgp spelled true",
+      "query": "tdsp=1&provider=email&documentId=d&creatorMemberId=a%40x.org&threadRoot=%3Cr%40x.org%3E&recipients=a%40x.org&pgp=true&profile=yjs-paragraphs%2F1",
+      "valid": false,
+      "problem": "invalid-field"
+    }
+  ]
+}

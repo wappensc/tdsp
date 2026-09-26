@@ -1,0 +1,26 @@
+# Local/CI-only SMTP/IMAP test server. Unlike
+# infra/matrix-testserver, no generated config/signing key/database is
+# needed first — Greenmail's own GREENMAIL_OPTS creates both fixed test
+# mailboxes (alice@example.org, bob@example.org — infra/email-testserver/
+# config.ts's own ALICE/BOB) directly at container startup. Real per-account
+# SMTP AUTH/IMAP LOGIN, unlike Mailhog, which has no real auth/mailbox model
+# at all.
+#
+# Pinned by digest, not `:latest` — reproducible across machines and CI.
+# Greenmail publishes no numbered-release tag, only `:latest`, so the digest
+# is the only pinnable form.
+services:
+  greenmail:
+    image: greenmail/standalone@sha256:1ef95a966418cd09b7ea91d504d8c0826bbe7a2f6e679a75c601a831587c1626
+    container_name: tdsp-email-testserver
+    restart: unless-stopped
+    ports:
+      - "13025:3025" # SMTP — infra/email-testserver/config.ts's SMTP_PORT
+      - "13143:3143" # IMAP — infra/email-testserver/config.ts's IMAP_PORT
+      - "18080:8080" # Greenmail's own REST/Swagger admin server — used here only as a liveness signal (health.ts)
+    environment:
+      GREENMAIL_OPTS: >-
+        -Dgreenmail.setup.test.smtp
+        -Dgreenmail.setup.test.imap
+        -Dgreenmail.hostname=0.0.0.0
+        -Dgreenmail.users=alice:tdsp-test-account-password@example.org,bob:tdsp-test-account-password@example.org

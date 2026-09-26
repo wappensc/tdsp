@@ -1,0 +1,27 @@
+{
+  "name": "@tdsp/email-bridge",
+  "version": "1.0.0",
+  "description": "TDSP bridge for email over SMTP/IMAP, with optional PGP via the user's own gpg.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "scripts": {
+    "start": "node --experimental-strip-types --env-file-if-exists=.env src/index.ts"
+  },
+  "dependencies": {
+    "@tdsp/bridge-log": "workspace:*",
+    "@tdsp/loopback": "workspace:*",
+    "@tdsp/messenger-port": "workspace:*",
+    "imapflow": "^1.0.191",
+    "mailparser": "^3.7.4",
+    "nodemailer": "^7.0.9"
+  },
+  "devDependencies": {
+    "@tdsp/messenger-email": "workspace:*",
+    "@types/mailparser": "^3.4.6",
+    "@types/nodemailer": "^7.0.4"
+  }
+}

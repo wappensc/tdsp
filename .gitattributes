@@ -1,0 +1,7 @@
+# Normalize line endings to LF on checkout, regardless of the checking-out
+# platform's default (matches .editorconfig's end_of_line = lf).
+* text=auto eol=lf
+
+# Machine-generated: exclude from GitHub's language stats and collapse by
+# default in diff/PR views (still diffable on demand).
+pnpm-lock.yaml linguist-generated=true

@@ -1,0 +1,15 @@
+{
+  "name": "@tdsp/messenger-matrix",
+  "version": "1.0.0",
+  "description": "TDSP adapter for Matrix, speaking to a local Matrix bridge.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@tdsp/loopback": "workspace:*",
+    "@tdsp/messenger-port": "workspace:*"
+  }
+}

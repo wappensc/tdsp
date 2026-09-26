@@ -1,0 +1,58 @@
+{
+  "name": "tdsp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TDSP, the Together Document Sync Protocol: a specification and reference implementation for end-to-end encrypted collaborative documents carried over existing messengers.",
+  "license": "MIT",
+  "author": "wappensc (https://github.com/wappensc)",
+  "homepage": "https://github.com/wappensc/tdsp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wappensc/tdsp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wappensc/tdsp/issues"
+  },
+  "type": "module",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
+    "depcruise": "depcruise packages bridges --config .dependency-cruiser.cjs",
+    "netcheck": "node --experimental-strip-types tools/netcheck-cli.ts",
+    "verify:network": "pnpm run netcheck && pnpm run depcruise && pnpm exec vitest run tools/",
+    "licenses:check": "node --experimental-strip-types tools/license-check-cli.ts",
+    "licenses:generate": "node --experimental-strip-types tools/license-generate-cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:l0": "vitest run --project l0",
+    "pretest:l2": "pnpm run matrix:reset && pnpm run matrix:up",
+    "test:l2": "vitest run --project l2",
+    "test:l4": "vitest run --project l4",
+    "bench": "vitest bench --run",
+    "ci": "pnpm run lint && pnpm run depcruise && pnpm run netcheck && pnpm run licenses:check && pnpm run typecheck && pnpm run test",
+    "matrix:up": "node --experimental-strip-types infra/matrix-testserver/generate-config.ts && docker compose -f infra/matrix-testserver/docker-compose.yml up -d && node --experimental-strip-types infra/matrix-testserver/wait-for-health.ts && node --experimental-strip-types infra/matrix-testserver/provision-test-accounts.ts",
+    "matrix:down": "docker compose -f infra/matrix-testserver/docker-compose.yml down",
+    "matrix:reset": "docker compose -f infra/matrix-testserver/docker-compose.yml down && rm -rf infra/matrix-testserver/credentials",
+    "email:up": "docker compose -f infra/email-testserver/docker-compose.yml up -d && node --experimental-strip-types infra/email-testserver/wait-for-health.ts",
+    "email:down": "docker compose -f infra/email-testserver/docker-compose.yml down",
+    "test:l4-email": "L4_EMAIL=1 vitest run bridges/email-bridge/src/l4-provider.test.ts",
+    "test:l4-email-bridges": "L4_EMAIL=1 vitest run bridges/email-bridge/src/l4-bridges.test.ts",
+    "signal:link": "node --experimental-strip-types infra/signal-l4/link-cli.ts",
+    "test:l4-signal": "vitest run bridges/signal-bridge/src/l4-contract.test.ts bridges/signal-bridge/src/l4-attachments.test.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.9",
+    "@types/node": "^26.2.0",
+    "@types/qrcode": "^1.5.6",
+    "dependency-cruiser": "^18.2.0",
+    "qrcode": "^1.5.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11"
+  }
+}

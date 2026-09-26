@@ -1,0 +1,15 @@
+{
+  "name": "@tdsp/messenger-signal",
+  "version": "1.0.0",
+  "description": "TDSP adapter for Signal, speaking to a local Signal bridge.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@tdsp/loopback": "workspace:*",
+    "@tdsp/messenger-port": "workspace:*"
+  }
+}

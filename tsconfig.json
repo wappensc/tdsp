@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": [
+    "types/*.d.ts",
+    "packages/*/src/**/*",
+    "bridges/*/src/**/*",
+    "infra/*/*.ts",
+    "tools/**/*.ts"
+  ]
+}

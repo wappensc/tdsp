@@ -1,0 +1,74 @@
+{
+  "$comment": "TDSP 1 email MemberId test vectors (SPECIFICATION.md EML-10). `addresses`: a participant address as given to a bridge, and the one canonical MemberId it becomes, or null when it must be refused. `lists`: a participant list, and whether a bridge must accept it. The binding lower-cases the local part and is scoped to providers that do not tell its letter case apart; no vector can show a provider that does, which is why such a provider is outside the binding rather than handled by it. Checked by the reference bridge in src/member-id-vectors.test.ts.",
+  "version": 1,
+  "addresses": [
+    {
+      "name": "domain in capitals",
+      "address": "Alice@EXAMPLE.ORG",
+      "memberId": "alice@example.org"
+    },
+    {
+      "name": "local part capitalised",
+      "address": "Alice@example.org",
+      "memberId": "alice@example.org"
+    },
+    {
+      "name": "already canonical",
+      "address": "alice@example.org",
+      "memberId": "alice@example.org"
+    },
+    {
+      "name": "surrounding space",
+      "address": "  alice@example.org\t",
+      "memberId": "alice@example.org"
+    },
+    {
+      "name": "a subaddress is its own MemberId",
+      "address": "Alice+Docs@example.org",
+      "memberId": "alice+docs@example.org"
+    },
+    {
+      "name": "dotted local part is kept",
+      "address": "a.lice@example.org",
+      "memberId": "a.lice@example.org"
+    },
+    { "name": "display name", "address": "Alice <alice@example.org>", "memberId": null },
+    { "name": "quoted display name", "address": "\"Alice\" <alice@example.org>", "memberId": null },
+    { "name": "angle brackets alone", "address": "<alice@example.org>", "memberId": null },
+    { "name": "comment", "address": "alice@example.org (Alice)", "memberId": null },
+    { "name": "no domain", "address": "alice@", "memberId": null },
+    { "name": "no local part", "address": "@example.org", "memberId": null },
+    { "name": "no at sign", "address": "alice", "memberId": null },
+    { "name": "two at signs", "address": "alice@@example.org", "memberId": null },
+    { "name": "space inside", "address": "a lice@example.org", "memberId": null },
+    { "name": "empty domain label", "address": "alice@example..org", "memberId": null },
+    { "name": "two addresses", "address": "alice@example.org, bob@example.org", "memberId": null }
+  ],
+  "lists": [
+    {
+      "name": "distinct people",
+      "participants": ["alice@example.org", "bob@example.org"],
+      "accepted": true
+    },
+    {
+      "name": "one person twice, in two letter cases",
+      "participants": ["Alice@example.org", "alice@example.org"],
+      "accepted": false
+    },
+    {
+      "name": "one person twice, domain case only",
+      "participants": ["alice@EXAMPLE.org", "alice@example.org"],
+      "accepted": false
+    },
+    {
+      "name": "a subaddress beside its base address",
+      "participants": ["alice@example.org", "alice+docs@example.org"],
+      "accepted": true
+    },
+    {
+      "name": "a display name in the list",
+      "participants": ["Alice <alice@example.org>", "bob@example.org"],
+      "accepted": false
+    }
+  ]
+}

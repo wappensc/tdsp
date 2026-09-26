@@ -1,0 +1,125 @@
+{
+  "$schema-note": "The network-egress policy (docs/network-policy.md). This file is one half of a deliberate double opt-out: a file may perform network I/O only when it appears here AND carries a matching `network-policy:` annotation at the code site. Adding an entry here alone does nothing; annotating alone does nothing. `pnpm run netcheck` enforces both halves and is a blocking CI step. Zones: A = packages and local tooling (loopback destinations only, never a real messenger); B = bridge processes (may reach the one configured messenger endpoint). `infra/` test tooling is held to Zone A's loopback-only rule. Destination classes: `loopback` (may dial a loopback address), `loopback-listener` (may accept connections on loopback), `configured-messenger-endpoint` (Zone B only).",
+  "grants": [
+    {
+      "file": "packages/messenger-matrix/src/index.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "The browser half of the Matrix adapter: a thin fetch() wrapper onto bridges/matrix-bridge's local HTTP interface. resolveBridgeUrl() rejects any non-loopback ?bridge= or VITE_MATRIX_BRIDGE_URL override, so this can never reach a remote host."
+    },
+    {
+      "file": "packages/messenger-signal/src/index.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "The browser half of the Signal adapter: a thin fetch() wrapper onto bridges/signal-bridge's local HTTP interface. resolveBridgeUrl() rejects any non-loopback ?bridge= or VITE_SIGNAL_BRIDGE_URL override, so this can never reach a remote host."
+    },
+    {
+      "file": "packages/messenger-email/src/index.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "The browser half of the email adapter: a thin fetch() wrapper onto bridges/email-bridge's local HTTP interface. resolveBridgeUrl() rejects any non-loopback ?bridge= or VITE_EMAIL_BRIDGE_URL override, so this can never reach a remote host."
+    },
+    {
+      "file": "bridges/matrix-bridge/src/matrix-api.ts",
+      "zone": "B",
+      "destination": "configured-messenger-endpoint",
+      "reason": "The one place the Matrix bridge reaches a remote host: the Matrix Client-Server API at MATRIX_HOMESERVER_URL. Matrix has no local daemon like signal-cli, so this connection cannot be made loopback the way the Signal bridge's is."
+    },
+    {
+      "file": "bridges/matrix-bridge/src/server.ts",
+      "zone": "B",
+      "destination": "loopback-listener",
+      "reason": "The bridge's own inbound HTTP interface, bound to 127.0.0.1 only, reflecting a CORS origin only when that origin is itself loopback (SPECIFICATION.md LBI-1, LBI-3). Accepts connections; never opens one."
+    },
+    {
+      "file": "bridges/signal-bridge/src/server.ts",
+      "zone": "B",
+      "destination": "loopback-listener",
+      "reason": "The Signal bridge's own inbound HTTP interface, bound to 127.0.0.1 only, reflecting a CORS origin only when that origin is itself loopback (SPECIFICATION.md LBI-1, LBI-3). Accepts connections; never opens one."
+    },
+    {
+      "file": "bridges/signal-bridge/src/signal-daemon.ts",
+      "zone": "B",
+      "destination": "loopback",
+      "reason": "Talks to the signal-cli daemon over an owner-only (chmod 0600) Unix domain socket, never TCP: createConnection() is called with a filesystem path, so this module opens no network connection of any kind. signal-cli itself reaches Signal's servers as a separate program."
+    },
+    {
+      "file": "bridges/email-bridge/src/mail-transport.ts",
+      "zone": "B",
+      "destination": "configured-messenger-endpoint",
+      "reason": "The one place the email bridge reaches a remote host: the configured mail server (SMTP_HOST/IMAP_HOST). Email has no local daemon like signal-cli, so this connection cannot be made loopback the way the Signal bridge's is; TLS is required for every host but this machine (tls-policy.ts)."
+    },
+    {
+      "file": "bridges/email-bridge/src/server.ts",
+      "zone": "B",
+      "destination": "loopback-listener",
+      "reason": "The email bridge's own inbound HTTP interface, bound to 127.0.0.1 only, reflecting a CORS origin only when that origin is itself loopback (SPECIFICATION.md LBI-1, LBI-3). Accepts connections; never opens one."
+    },
+    {
+      "file": "tools/network-guard.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "The runtime guard itself. It imports node:net in order to patch it and REFUSE non-loopback connections; it opens none of its own. Excluding the enforcement layer from the policy it enforces would be exactly the kind of quiet exemption this file exists to prevent, so it is declared like any other."
+    },
+    {
+      "file": "infra/matrix-testserver/health.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "Test infrastructure: polls the local Synapse container's /health endpoint on localhost:18008 to decide whether the live Matrix tests can run at all."
+    },
+    {
+      "file": "infra/email-l4/bridge-process.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "Test tooling for the email adapter's L4 tests: starts a real bridges/email-bridge process and polls its /health on 127.0.0.1, after asking the OS for a free loopback port. It never connects to a mail provider — only the bridge process does, under the bridge's own grant."
+    },
+    {
+      "file": "infra/email-testserver/health.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "Test infrastructure: polls the local Greenmail container's own admin server on localhost:18080 to decide whether the live email tests can run at all."
+    },
+    {
+      "file": "infra/matrix-testserver/login.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "Test infrastructure: logs a test account into the local Synapse container on localhost:18008, minting a fresh device so that a fresh crypto store matches it."
+    },
+    {
+      "file": "infra/matrix-testserver/register.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "Test infrastructure: registers a throwaway per-run account against the local Synapse container's admin API on localhost:18008."
+    },
+    {
+      "file": "infra/matrix-testserver/create-room.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "Test infrastructure: creates a fresh room per test run on the local Synapse container, so that a test needing an empty room does not inherit the shared fixture rooms' accumulated members."
+    },
+    {
+      "file": "infra/matrix-testserver/provision-test-accounts.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "Test infrastructure: idempotently provisions the shared alice/bob test accounts and their rooms on the local Synapse container at localhost:18008."
+    },
+    {
+      "file": "infra/signal-l4/config.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "Test infrastructure: asks the two Signal bridges configured for the L4 tests, on loopback addresses only (checked with isLoopbackUrl), whether each has a linked account, to decide whether those tests can run at all. A Signal device link has no login step a test could gate on, so this is a live check instead."
+    },
+    {
+      "file": "infra/email-l4/bridges.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "Test infrastructure: asks the two already running email bridges configured for the L4 tests, on loopback addresses only (checked with isLoopbackUrl), whether each has a mailbox configured, to decide whether those tests can run at all. Asked only after the L4_EMAIL=1 opt-in; never reaches a mail provider itself."
+    },
+    {
+      "file": "infra/signal-l4/link.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "Test infrastructure: links a running Signal bridge to an account by asking that bridge, on a loopback address only (checked with isLoopbackUrl), for a device link and then for its status and groups. Signal itself is reached by the bridge's signal-cli, never by this file."
+    }
+  ]
+}
