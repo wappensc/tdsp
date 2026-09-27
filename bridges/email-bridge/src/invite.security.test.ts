@@ -22,7 +22,7 @@ import type { IncomingMail, MailReceiver } from "./mail-transport.ts";
  * L0 — the creator's invitation and a participant's acceptance of it
  * (SPECIFICATION.md EML-4), with `FakeGpgInvoker` standing in for `gpg`. The
  * real thing — real keys, real armor, a real mailbox — is exercised by
- * `keyring-gpg.test.ts` (the keyring mechanics) and `pgp-live.test.ts` (the
+ * `keyring-gpg.security.test.ts` (the keyring mechanics) and `pgp-live.security.test.ts` (the
  * whole flow through Greenmail); what only this level can do is hand a
  * participant every *malformed or hostile* invitation a forger could produce
  * and check that each is refused for the right reason and leaves nothing

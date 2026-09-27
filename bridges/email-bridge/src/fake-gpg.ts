@@ -9,7 +9,7 @@ import type { GpgDecryptResult, GpgInvoker, GpgKey } from "./gpg-invoke.ts";
  * exercise the sign+encrypt / decrypt+verify plumbing — including
  * adversarial cases like a forged `From:`, a key rotation or an
  * eavesdropper — without a real `gpg` binary. The real one is covered
- * separately by `gpg-invoke.test.ts` and `gpg-crypto.test.ts` (real
+ * separately by `gpg-invoke.test.ts` and `gpg-crypto.security.test.ts` (real
  * `gpg`) and by the live Greenmail runs.
  *
  * It models just enough of PGP to make those tests meaningful, not PGP

@@ -34,7 +34,7 @@ const REDACTION_EVENT_TYPE = "m.room.redaction";
  * Written down twice, like `bridges/email-bridge/src/sync-state.ts`'s own
  * `RejectionReason` — the browser-side mirror is
  * `packages/messenger-matrix/src/integrity.ts`'s `IntegrityReason`, kept
- * identical by `integrity-vocabulary.test.ts`'s compile-time check (the
+ * identical by `integrity-vocabulary.security.test.ts`'s compile-time check (the
  * bridge may not import that package in production source, only in tests:
  * a bridge and an adapter stay independent).
  */

@@ -1172,7 +1172,7 @@ describe("bridges/email-bridge server", () => {
      * The whole invitation flow across two fake keyrings: Alice's bridge (a
      * `createInvite` over her own keyring) produces the email, Bob's server
      * receives it from a fake mailbox. Adversarial variants of the invitation
-     * itself are in `invite.test.ts`; this covers what the HTTP route adds.
+     * itself are in `invite.security.test.ts`; this covers what the HTTP route adds.
      */
     let bobGpg: FakeGpgInvoker;
     let receiver: FakeMailReceiver;

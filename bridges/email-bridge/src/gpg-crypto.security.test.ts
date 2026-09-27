@@ -140,7 +140,7 @@ describe("extractDecryptResult", () => {
  * `--quick-generate-key` call in this whole file**, in `beforeAll`: a second
  * one, in this or any other test of one Vitest file, reliably fails with
  * "can't connect to the gpg-agent" (see `gpg-invoke.test.ts`'s own comment —
- * a Vitest-worker quirk, not a `gpg-invoke.ts` concern; `pgp-live.test.ts`
+ * a Vitest-worker quirk, not a `gpg-invoke.ts` concern; `pgp-live.security.test.ts`
  * gets several keys by provisioning in a child process). Every scenario here
  * is built from that one key: Alice's home signs and decrypts, Bob's home has
  * only her *public* key imported (so it can verify but neither read what is

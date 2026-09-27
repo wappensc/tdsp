@@ -32,7 +32,7 @@ const RECEIVE_NOTIFICATION_METHOD = "receive";
  * Written down twice, like `bridges/matrix-bridge/src/sync-state.ts`'s own
  * `IntegrityReason` — the browser-side mirror is
  * `packages/messenger-signal/src/integrity.ts`'s `IntegrityReason`, kept
- * identical by `integrity-vocabulary.test.ts`'s compile-time check.
+ * identical by `integrity-vocabulary.security.test.ts`'s compile-time check.
  */
 export type IntegrityReason = "message-edited" | "message-remote-deleted";
 

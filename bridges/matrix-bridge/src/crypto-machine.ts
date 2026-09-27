@@ -49,7 +49,7 @@ export interface CryptoMachine {
    * last share otherwise never receives the key (this is *why* a
    * message sent before a member joins stays permanently undecryptable
    * to them — the Megolm history caveat (SPECIFICATION.md §13.3), tested live in
-   * `crypto.test.ts`, and unrelated to Matrix's own transport history:
+   * `crypto.security.test.ts`, and unrelated to Matrix's own transport history:
    * even with full transport history, no Megolm key was ever shared
    * with a device that didn't exist as a share target yet).
    */
@@ -189,7 +189,7 @@ export async function createCryptoMachine(
       } catch (error) {
         // Expected, not exceptional: the Megolm history caveat
         // ("a newly joined member cannot decrypt messages sent before
-        // they joined") surfaces exactly here — see crypto.test.ts.
+        // they joined") surfaces exactly here — see crypto.security.test.ts.
         return { ok: false, reason: error instanceof Error ? error.message : String(error) };
       }
     },

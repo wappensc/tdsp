@@ -24,12 +24,12 @@ const L2_TESTS = [
   "bridges/matrix-bridge/src/contract.test.ts",
   "bridges/matrix-bridge/src/invite.test.ts",
   "bridges/matrix-bridge/src/send-receive.test.ts",
-  "bridges/matrix-bridge/src/crypto.test.ts",
+  "bridges/matrix-bridge/src/crypto.security.test.ts",
   "infra/matrix-testserver/matrix-testserver.test.ts",
   "bridges/signal-bridge/src/signal-daemon.test.ts",
   "bridges/email-bridge/src/mail-transport.test.ts",
   "bridges/email-bridge/src/contract.test.ts",
-  "bridges/email-bridge/src/pgp-live.test.ts",
+  "bridges/email-bridge/src/pgp-live.security.test.ts",
   "infra/email-testserver/email-testserver.test.ts",
 ];
 const L4_TESTS = [

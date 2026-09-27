@@ -8,7 +8,7 @@ import { BASE_URL, HOMESERVER_YAML_PATH, TEST_ACCOUNT_PASSWORD } from "./config.
 /**
  * Synapse's admin shared-secret registration API — shared with
  * `provision-test-accounts.ts`, so that
- * `crypto.test.ts` can register a throwaway third account ("carol", for
+ * `crypto.security.test.ts` can register a throwaway third account ("carol", for
  * the history-caveat test) without duplicating the HMAC construction.
  * See `provision-test-accounts.ts`'s own doc comment for why this API
  * over `register_new_matrix_user`'s CLI or the client-facing
@@ -27,7 +27,7 @@ async function readRegistrationSharedSecret(): Promise<string> {
  * Idempotent: `M_USER_IN_USE` (a previous run already created this
  * account) is treated as success, not an error — the same tolerance
  * `provision-test-accounts.ts` always had, needed here too since
- * `crypto.test.ts` calls this on every run rather than gating on a
+ * `crypto.security.test.ts` calls this on every run rather than gating on a
  * `test-accounts.json`-style existence check.
  */
 export async function registerAccount(username: string): Promise<void> {

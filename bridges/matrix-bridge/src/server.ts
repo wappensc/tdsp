@@ -129,7 +129,7 @@ export interface MatrixRoomWriter {
  * *every* encrypted send, not cached across calls: fetching the room's
  * current membership on every send is cheap and always correct, where
  * caching it risks missing a member who joined since the last send
- * (exactly the scenario the history-caveat test in `crypto.test.ts`
+ * (exactly the scenario the history-caveat test in `crypto.security.test.ts`
  * depends on: a newly joined member *does* get included in the next
  * share).
  */

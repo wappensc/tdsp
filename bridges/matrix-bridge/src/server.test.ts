@@ -52,7 +52,7 @@ class FakeMatrixRoomReader implements MatrixRoomReader {
 // `encrypted` is accepted (MatrixRoomWriter's real interface) but
 // unused here — this file's own tests only care about plaintext
 // request/response shaping; the real encrypt/decrypt path is covered
-// live by crypto.test.ts, gated on hasTestMatrixHomeserver(), same
+// live by crypto.security.test.ts, gated on hasTestMatrixHomeserver(), same
 // fast-fake/real-integration split every other route already has.
 class FakeMatrixRoomWriter implements MatrixRoomWriter {
   sentEdits: { roomId: string; documentId: string; payload: string }[] = [];

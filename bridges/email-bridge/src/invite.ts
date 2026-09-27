@@ -40,7 +40,7 @@ import type { MailReceiver } from "./mail-transport.ts";
  * as the fingerprints a human compared out of band.
  */
 
-/** Why an invitation was refused. Also the wording keys in `packages/messenger-email` (kept identical by `integrity-vocabulary.test.ts`). */
+/** Why an invitation was refused. Also the wording keys in `packages/messenger-email` (kept identical by `integrity-vocabulary.security.test.ts`). */
 export type InviteRejectionReason =
   /** Not a rejection of anything received: the invitation is not in this mailbox (yet). Retryable. */
   | "invite-not-found"

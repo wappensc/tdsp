@@ -19,7 +19,7 @@ import { createLiveServerDependencies, createServer } from "./server.ts";
  * normal, human-readable Matrix message — not one of the
  * `de.wappensc.together.tdsp.*` event types every other bridge route sends.
  * Verified by reading the raw event straight off `/sync` (`matrix-api.ts`'s
- * own `syncOnce`, the same low-level helper `crypto.test.ts` uses),
+ * own `syncOnce`, the same low-level helper `crypto.security.test.ts` uses),
  * exactly the way an ordinary Matrix client (e.g. Element) would see it —
  * `event.type === "m.room.message"` and a plain `body` string, not
  * `de.wappensc.together.tdsp.frame`'s opaque `frame`.

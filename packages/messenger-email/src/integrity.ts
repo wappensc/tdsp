@@ -191,7 +191,7 @@ export function summarizeIntegrity(
  * to join (SPECIFICATION.md EML-5, EML-8) — the creator's signed and encrypted block in
  * the thread's first email. Written down twice, like {@link IntegrityReason}, and
  * kept identical to `bridges/email-bridge/src/invite.ts`'s `InviteRejectionReason`
- * by `integrity-vocabulary.test.ts`.
+ * by `integrity-vocabulary.security.test.ts`.
  *
  * `"invite-not-found"` is the one that is not a rejection of anything received:
  * the invitation may simply not have arrived yet, and joining can be retried.

@@ -7,7 +7,7 @@ import type { IntegrityReason } from "./sync-state.ts";
  * are the same list, written down twice — the bridge may not import that
  * package in production source (a bridge and an adapter stay independent),
  * only here in a `.test.ts` file. Mirrors `bridges/email-bridge/src/
- * integrity-vocabulary.test.ts` exactly. A reason added to one and
+ * integrity-vocabulary.security.test.ts` exactly. A reason added to one and
  * forgotten in the other would reach the browser as a string the UI has no
  * wording for — this is a compile-time check; `pnpm run typecheck` fails
  * the moment the two unions differ in either direction.

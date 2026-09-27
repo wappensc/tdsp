@@ -12,7 +12,7 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, ""
 
 /**
  * The static layer of the network-egress policy (docs/network-policy.md).
- * `credentials-gitignore.test.ts`'s discipline
+ * `credentials-gitignore.security.test.ts`'s discipline
  * applies here too: an invariant check is worth nothing unless it is
  * demonstrably able to *fail*, so most of what follows are violation
  * fixtures, not happy paths.

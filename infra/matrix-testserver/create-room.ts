@@ -6,7 +6,7 @@ import { BASE_URL } from "./config.ts";
 /**
  * `POST /_matrix/client/v3/createRoom` — shared with
  * `provision-test-accounts.ts` so
- * `crypto.test.ts` can create its own disposable, always-empty-of-
+ * `crypto.security.test.ts` can create its own disposable, always-empty-of-
  * members-except-the-creator room per run rather than reusing the
  * shared `rooms.encrypted` fixture — that fixture's membership
  * (`test-accounts.json`'s bob, and a live-test-added "carol") persists
