@@ -35,6 +35,13 @@ What the policy buys in Zone B is that the one permitted destination is declared
 everything else fails: a third-party library inside a bridge cannot quietly reach a
 second host.
 
+**Outside the policy: the workflows.** The CI workflows and the scripts beside them in
+`.github/` run on GitHub's machines and talk to GitHub, as every workflow does:
+`.github/scripts/repo-settings-collect.sh`, for one, asks the GitHub API how the
+repository is configured ([repository-settings.md](repository-settings.md)). They are not
+part of the code this policy covers, and nothing in `packages/`, `bridges/`, `tools/` or
+`infra/` calls them.
+
 ## The policy file and the double opt-out
 
 [`network-policy.json`](../network-policy.json) is the one reviewable record of every file

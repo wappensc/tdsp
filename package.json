@@ -29,6 +29,7 @@
     "licenses:check": "node --experimental-strip-types tools/license-check-cli.ts",
     "licenses:generate": "node --experimental-strip-types tools/license-generate-cli.ts",
     "wire:lock": "node --experimental-strip-types tools/wire-lock-cli.ts",
+    "repo:settings": "bash .github/scripts/repo-settings-collect.sh > repository-settings.collected.json && node --experimental-strip-types tools/repo-settings-cli.ts repository-settings.collected.json --require-admin",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:l0": "vitest run --project l0",

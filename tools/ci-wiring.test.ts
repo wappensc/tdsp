@@ -41,6 +41,16 @@ describe("the CI workflow cannot be sidestepped from outside the CI role's files
     );
   });
 
+  it("checks the repository's settings on every push to main, every day, and on demand", () => {
+    const workflow = read(".github/workflows/repository-settings.yml");
+    expect(workflow).toMatch(/push:\n\s+branches: \[main\]/);
+    expect(workflow).toMatch(/schedule:\n\s+- cron:/);
+    expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).toContain("bash .github/scripts/repo-settings-collect.sh");
+    expect(workflow).toContain("tools/repo-settings-cli.ts repository-settings.collected.json");
+    expect(workflow).not.toContain("continue-on-error");
+  });
+
   it("makes no job advisory", () => {
     expect(read(".github/workflows/ci.yml")).not.toContain("continue-on-error");
   });

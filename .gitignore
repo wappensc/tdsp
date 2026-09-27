@@ -25,3 +25,5 @@ credentials/
 
 # Vitest JSON report written by CI steps
 vitest-report.json
+# What `pnpm run repo:settings` read from GitHub
+repository-settings.collected.json

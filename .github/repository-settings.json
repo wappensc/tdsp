@@ -1,0 +1,53 @@
+{
+  "$comment": "How wappensc/tdsp must be configured on GitHub for its checks to be enforced (docs/repository-settings.md). tools/repo-settings.ts compares what GitHub reports with this file; only the CI role may change it (.github/CODEOWNERS). The team ids are GitHub's, as the ruleset's bypass list names teams by id.",
+  "repository": "wappensc/tdsp",
+  "organization": "wappensc",
+  "defaultBranch": "main",
+  "repositorySettings": {
+    "has_pull_requests": true,
+    "allow_auto_merge": true,
+    "allow_squash_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "delete_branch_on_merge": true
+  },
+  "organizationOwners": ["wappensc-admin"],
+  "collaborators": {
+    "wappensc-admin": "admin",
+    "wappensc-ci": "write",
+    "wappensc-developer": "write"
+  },
+  "teams": {
+    "admins": { "id": 19739404, "permission": "admin", "members": ["wappensc-admin"] },
+    "ci": { "id": 19739398, "permission": "push", "members": ["wappensc-ci"] },
+    "developers": { "id": 19739392, "permission": "push", "members": ["wappensc-developer"] }
+  },
+  "mainRuleset": {
+    "name": "main",
+    "enforcement": "active",
+    "include": ["~DEFAULT_BRANCH"],
+    "bypass": [{ "team": "admins", "mode": "always" }, { "team": "ci", "mode": "always" }]
+  },
+  "branchRules": {
+    "deletion": true,
+    "non_fast_forward": true,
+    "pull_request": {
+      "required_approving_review_count": 0,
+      "require_code_owner_review": true,
+      "dismiss_stale_reviews_on_push": true
+    },
+    "required_status_checks": [
+      { "context": "ci", "integration_id": 15368 },
+      { "context": "matrix", "integration_id": 15368 },
+      { "context": "email", "integration_id": 15368 },
+      { "context": "network-isolation", "integration_id": 15368 }
+    ],
+    "strict_required_status_checks_policy": false
+  },
+  "actions": {
+    "enabled": true,
+    "default_workflow_permissions": "read",
+    "can_approve_pull_request_reviews": false,
+    "fork_pr_approval_policy": "all_external_contributors"
+  }
+}
