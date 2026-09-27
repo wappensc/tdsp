@@ -25,7 +25,10 @@ The published test vectors ([§3.6](SPECIFICATION.md#36-conformance-suite)) —
 `packages/document-protocol/test-vectors/frames-v1.json`, `invitations-v1.json`, and
 `bridges/email-bridge/test-vectors/member-ids-v1.json` — pass against the reference
 decoder, invitation reader and email bridge. Every example frame in §4.5 and Appendix D
-is produced byte for byte by the reference encoder.
+is produced byte for byte by the reference encoder, and Appendix D's Signal envelope by the
+Signal bridge; the wire tests check this on every run, and freeze what the reference
+implementation puts on each messenger ([docs/testing.md](docs/testing.md), "Wire
+compatibility").
 
 **The test vectors are published and self-checked only.** No independently written
 implementation has run them yet, so they show that this implementation reads the wire as

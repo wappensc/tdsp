@@ -1,0 +1,28 @@
+# What decides whether and how this repository is checked belongs to the CI role: a change to
+# any of it lands on main only with the approval of @wappensc/ci (CONTRIBUTING.md, "Roles").
+# The main-branch ruleset requires that approval; everything else a developer merges on green.
+# The last matching pattern wins, so the file patterns come last.
+
+# The workflows, and this file itself.
+/.github/                                    @wappensc/ci
+
+# The checks and their configuration: tools, test selection, type checking, lint,
+# dependency rules, the network policy, the license policy, the Node.js version.
+/tools/                                      @wappensc/ci
+/vitest.config.ts                            @wappensc/ci
+/tsconfig.json                               @wappensc/ci
+/tsconfig.base.json                          @wappensc/ci
+/biome.json                                  @wappensc/ci
+/.dependency-cruiser.cjs                     @wappensc/ci
+/network-policy.json                         @wappensc/ci
+/license-policy.json                         @wappensc/ci
+/.nvmrc                                      @wappensc/ci
+
+# The wire, frozen, and the published test vectors (docs/testing.md, "Wire compatibility").
+/wire/                                       @wappensc/ci
+/packages/document-protocol/test-vectors/    @wappensc/ci
+/bridges/email-bridge/test-vectors/          @wappensc/ci
+
+# The security and wire tests, wherever they are.
+*.security.test.ts                           @wappensc/ci
+*.wire.test.ts                               @wappensc/ci

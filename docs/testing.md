@@ -284,6 +284,43 @@ once and then kept.
    both use the same mailboxes; run the one you need, or leave about twenty minutes
    between them.
 
+## Security tests
+
+The tests that pin a security property are named `*.security.test.ts`: who may change a
+document and what everyone else refuses (the engine's control state and authority), the
+email bridge's PGP and identity guarantees, what the bridges refuse to deliver (edited,
+redacted, forged or altered messages, attachments that do not match their hash), strict
+decoding, credentials kept out of git, the loopback boundary and cross-origin reads, TLS,
+and safe logging. They run at L0 like any other test — two of them, the Megolm and the
+real-`gpg` tests, at L2 — and after every CI run `tools/test-run-check.ts` proves that each
+of them ran and passed; a skipped security test fails the job.
+
+Only the CI role may change them ([CONTRIBUTING.md](../CONTRIBUTING.md), "Roles"). So each
+depends only on the code it tests and on helpers inside its own file.
+
+## Wire compatibility
+
+What TDSP puts on a messenger must not change within a version (SPECIFICATION.md §14,
+VER-1). The *wire tests*, `*.wire.test.ts`, hold the reference implementation to it:
+
+| Test | Holds to what is frozen in |
+| --- | --- |
+| `packages/document-protocol/src/frames.wire.test.ts` | `wire/frames-v1.json` (16 frames, every kind, both directions: written byte for byte, read back); the specification's example frames (§4.5, Appendix D); `wire/invitations-v1.json`; the profile `yjs-paragraphs/1` against the bytes of §4.5 |
+| `bridges/signal-bridge/src/envelope.wire.test.ts` | `wire/signal-v1.json`: the group message for a frame — in the body, at the body limit, as an attachment — and Appendix D's envelope |
+| `bridges/matrix-bridge/src/event.wire.test.ts` | `wire/matrix-v1.json`: the room event's type and content — inline, at the limit, as a media file |
+| `bridges/email-bridge/src/message.wire.test.ts` | `wire/email-v1.json`: what the bridge hands its mail library for an invitation and for a frame, through its real routes |
+| `tools/wire-lock.wire.test.ts` | `wire/wire-lock.json`: the hash of every entry above, of the published test vectors, of the constants beside them, and of the specification's normative wire sections (§4, §5, §7, §11, §13, Appendices A and B), with the specification's version |
+
+A failing wire test is a decision, not a bug to fix by editing the expectation: the wire
+files and the lock belong to the CI role, and `pnpm run wire:lock` names what kind of
+change it is — incompatible, addition or specification — and accepts it only together with
+the matching version of the specification ([CONTRIBUTING.md](../CONTRIBUTING.md), "A
+change to the wire").
+
+What the wire tests cannot see: a receiver that *interprets* the same bytes differently.
+That is what the behaviour tests are for, and why a change to a normative section's text is
+itself a finding the CI role has to confirm.
+
 ## Network access during tests
 
 Every test runs under a guard that refuses any connection to a non-loopback address,
