@@ -484,6 +484,9 @@ describe("profile ids and Base64", () => {
 
   it("handles a large buffer", () => {
     const bytes = Uint8Array.from({ length: 1_000_003 }, (_, i) => i % 251);
-    expect(base64ToBytes(bytesToBase64(bytes))).toEqual(bytes);
+    const back = base64ToBytes(bytesToBase64(bytes));
+    // Compared as one buffer: an element-by-element toEqual over a million entries takes
+    // seconds on a busy CI runner, and timed out there.
+    expect(back && Buffer.from(back).equals(Buffer.from(bytes))).toBe(true);
   });
 });
