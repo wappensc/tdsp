@@ -1,14 +1,22 @@
 import { existsSync, globSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import {
+  type LicensePolicy,
+  licenseVerdict,
+  loadPolicy,
+  NO_LICENSE,
+  staleApprovals,
+} from "./license-policy.ts";
 
 /**
  * Automates what a person would otherwise have to remember
  * (`THIRD-PARTY-NOTICES.md`): walk the real, resolved production
  * dependency tree of every distributed workspace member, and compare it
  * against `third-party-licenses.json`'s checked-in record. A mismatch — a
- * new dependency, a changed license, a stale entry, or any license
- * outside `allowedLicenses` — fails loudly instead of silently drifting
- * from what `THIRD-PARTY-NOTICES.md` documents.
+ * new dependency, a changed license, a stale entry — fails loudly instead
+ * of silently drifting from what `THIRD-PARTY-NOTICES.md` documents. Every
+ * license, of distributed, development-only and external dependencies
+ * alike, must also pass the CI role's policy (`license-policy.ts`).
  *
  * **Why plain Node module resolution instead of `pnpm licenses list` or
  * hand-parsing `pnpm-lock.yaml`.** Both were considered and rejected.
@@ -45,21 +53,8 @@ export interface PackageInfo {
 export interface RecordedPackage {
   readonly name: string;
   readonly version: string;
+  /** Exactly as the package declares it; `(none)` for a package that declares nothing. */
   readonly license: string;
-  /**
-   * Set only for a dependency whose own `package.json` declares a dual/
-   * multi-license SPDX expression (e.g. `"(MIT OR EUPL-1.1+)"`) — the
-   * single license this project exercises its right to use it under.
-   * `license` above still holds the *exact* upstream-declared string
-   * unchanged, so a real relicensing (the dual offer narrowing, or
-   * dropping the elected option entirely) still fails this check the
-   * normal way; only the allowlist comparison below prefers this field
-   * when present, so the allowlist itself only ever needs to name the
-   * elected license, never the full dual-license expression (which would
-   * otherwise force e.g. a copyleft option's name into `allowedLicenses`
-   * just to admit the permissive option a package actually offers).
-   */
-  readonly electedLicense?: string;
 }
 
 export interface ExternalComponent {
@@ -70,8 +65,12 @@ export interface ExternalComponent {
   readonly distribution: string;
 }
 
+/**
+ * `third-party-licenses.json`: the inventory of what is used and under which license, kept
+ * current by whoever changes a dependency. Which licenses are acceptable is not in it — that
+ * is `license-policy.json`, the CI role's file (`license-policy.ts`).
+ */
 export interface LicenseManifest {
-  readonly allowedLicenses: readonly string[];
   readonly packages: readonly RecordedPackage[];
   readonly external: readonly ExternalComponent[];
 }
@@ -79,9 +78,9 @@ export interface LicenseManifest {
 /**
  * Workspace members whose declared dependencies actually ship to end
  * users — the packages, compiled into an application's browser bundle,
- * and the bridges, each run as a process of its own. Development-only
- * dependencies (the root's and each member's `devDependencies`) never ship
- * and are not walked.
+ * and the bridges, each run as a process of its own. Their
+ * `devDependencies` never ship: `collectDevelopmentDependencies` walks those,
+ * for the license policy only.
  */
 export const DISTRIBUTED_PACKAGE_JSON_GLOBS = [
   "packages/*/package.json",
@@ -193,14 +192,14 @@ function tryResolvePackageJson(name: string, fromDir: string): string | null {
 }
 
 /**
- * Walks the real, installed dependency graph starting from every
- * distributed workspace member's own declared `dependencies` (skipping
- * `workspace:*` links to this repo's own packages), following both
- * `dependencies` and `peerDependencies` (see module comment) via Node's
- * own resolution algorithm. Returns one entry per distinct resolved
- * `name@version`, sorted by name.
+ * Walks the real, installed dependency graph from the given starting points, following
+ * `dependencies`, `optionalDependencies` (platform builds are real, installed code) and
+ * `peerDependencies` (see module comment) via Node's own resolution algorithm. Returns one
+ * entry per distinct resolved `name@version`, sorted by name.
  */
-export function collectProductionDependencies(repoRoot: string): PackageInfo[] {
+function walkDependencies(
+  roots: readonly { fromDir: string; names: readonly string[] }[],
+): PackageInfo[] {
   const visited = new Map<string, PackageInfo>();
 
   const visit = (name: string, fromDir: string): void => {
@@ -223,32 +222,63 @@ export function collectProductionDependencies(repoRoot: string): PackageInfo[] {
     });
 
     const depDir = path.dirname(pkgJsonPath);
-    const dependencies = (pkg.dependencies ?? {}) as Record<string, string>;
-    const peerDependencies = (pkg.peerDependencies ?? {}) as Record<string, string>;
     for (const depName of new Set([
-      ...Object.keys(dependencies),
-      ...Object.keys(peerDependencies),
+      ...Object.keys((pkg.dependencies ?? {}) as Record<string, string>),
+      ...Object.keys((pkg.optionalDependencies ?? {}) as Record<string, string>),
+      ...Object.keys((pkg.peerDependencies ?? {}) as Record<string, string>),
     ])) {
       visit(depName, depDir);
     }
   };
 
-  for (const glob of DISTRIBUTED_PACKAGE_JSON_GLOBS) {
-    for (const relative of globSync(glob, { cwd: repoRoot })) {
-      const pkgJsonPath = path.join(repoRoot, relative);
-      const pkg = readJson(pkgJsonPath);
-      const fromDir = path.dirname(pkgJsonPath);
-      const dependencies = (pkg.dependencies ?? {}) as Record<string, string>;
-      for (const [depName, specifier] of Object.entries(dependencies)) {
-        if (specifier.startsWith("workspace:")) {
-          continue; // internal, not third-party
-        }
-        visit(depName, fromDir);
-      }
+  for (const { fromDir, names } of roots) {
+    for (const name of names) {
+      visit(name, fromDir);
     }
   }
-
   return [...visited.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The third-party entries of one `package.json` field, skipping `workspace:*` links. */
+function rootsFrom(
+  repoRoot: string,
+  globs: readonly string[],
+  field: "dependencies" | "devDependencies",
+): { fromDir: string; names: string[] }[] {
+  const roots: { fromDir: string; names: string[] }[] = [];
+  for (const glob of globs) {
+    for (const relative of globSync(glob, { cwd: repoRoot })) {
+      const pkgJsonPath = path.join(repoRoot, relative);
+      const declared = (readJson(pkgJsonPath)[field] ?? {}) as Record<string, string>;
+      roots.push({
+        fromDir: path.dirname(pkgJsonPath),
+        names: Object.entries(declared)
+          .filter(([, specifier]) => !specifier.startsWith("workspace:"))
+          .map(([name]) => name),
+      });
+    }
+  }
+  return roots;
+}
+
+/** Everything the distributed workspace members ship: their `dependencies`, transitively. */
+export function collectProductionDependencies(repoRoot: string): PackageInfo[] {
+  return walkDependencies(rootsFrom(repoRoot, DISTRIBUTED_PACKAGE_JSON_GLOBS, "dependencies"));
+}
+
+/**
+ * Everything used only while developing and testing: the `devDependencies` of the root and
+ * of every workspace member, transitively. Not distributed, so not in the inventory — but
+ * held to the license policy all the same (`checkDevelopmentLicenses`).
+ */
+export function collectDevelopmentDependencies(repoRoot: string): PackageInfo[] {
+  return walkDependencies(
+    rootsFrom(
+      repoRoot,
+      ["package.json", "packages/*/package.json", "bridges/*/package.json"],
+      "devDependencies",
+    ),
+  );
 }
 
 /**
@@ -260,6 +290,7 @@ export function collectProductionDependencies(repoRoot: string): PackageInfo[] {
 export function checkAgainstManifest(
   actual: readonly PackageInfo[],
   manifest: LicenseManifest,
+  policy: LicensePolicy,
 ): string[] {
   const violations: string[] = [];
   // Grouped by name, not `name@version`: two genuinely different,
@@ -283,12 +314,7 @@ export function checkAgainstManifest(
     seenKeys.add(`${pkg.name}@${pkg.version}`);
     const candidates = recordedByName.get(pkg.name) ?? [];
     const entry = candidates.find((c) => c.version === pkg.version);
-    if (pkg.license === null) {
-      violations.push(
-        `${pkg.name}@${pkg.version}: has no license field at all — needs manual review`,
-      );
-      continue;
-    }
+    const declared = pkg.license ?? NO_LICENSE;
     if (!entry) {
       if (candidates.length === 1) {
         // The common case: one recorded version, a different one
@@ -303,26 +329,22 @@ export function checkAgainstManifest(
         // either way, "which one does this replace?" has no single
         // answer, so it is reported as its own new entry to add.
         violations.push(
-          `${pkg.name}@${pkg.version}: new production dependency, not recorded in third-party-licenses.json (license: ${pkg.license})`,
+          `${pkg.name}@${pkg.version}: new production dependency, not recorded in third-party-licenses.json (license: ${declared})`,
         );
       }
-    } else if (entry.license !== pkg.license) {
+    } else if (entry.license !== declared) {
       violations.push(
-        `${pkg.name}: recorded license "${entry.license}" no longer matches the installed package's "${pkg.license}"`,
+        `${pkg.name}: recorded license "${entry.license}" no longer matches the installed package's "${declared}"`,
       );
     }
     // Deliberately not part of the `!entry` branch above, and never
     // skipped via `continue`: a brand-new dependency that arrives with a
-    // disallowed license must fail on *both* counts in the same run —
-    // "not recorded" alone would let recording it (with its real,
-    // disallowed license) look like a one-step fix, when it is not. See
-    // THIRD-PARTY-NOTICES.md's "What happens when a dependency's license
-    // changes" for why this specifically must never be silently bypassable.
-    const licenseForAllowlist = entry?.electedLicense ?? pkg.license;
-    if (!manifest.allowedLicenses.includes(licenseForAllowlist)) {
-      violations.push(
-        `${pkg.name}: license "${licenseForAllowlist}" is not in allowedLicenses — review before shipping`,
-      );
+    // license the policy does not accept must fail on *both* counts in the
+    // same run — "not recorded" alone would let recording it look like a
+    // one-step fix, when only the CI role's approval is.
+    const verdict = licenseVerdict(pkg, "distributed", policy);
+    if (verdict !== undefined) {
+      violations.push(verdict);
     }
   }
 
@@ -343,10 +365,25 @@ export function checkAgainstManifest(
       !external.distribution
     ) {
       violations.push(`external component missing a required field: ${JSON.stringify(external)}`);
+      continue;
+    }
+    const verdict = licenseVerdict(external, "external", policy);
+    if (verdict !== undefined) {
+      violations.push(verdict);
     }
   }
 
   return violations;
+}
+
+/** Development-only dependencies are not inventoried, but held to the same policy. */
+export function checkDevelopmentLicenses(
+  actual: readonly PackageInfo[],
+  policy: LicensePolicy,
+): string[] {
+  return actual
+    .map((pkg) => licenseVerdict(pkg, "development", policy))
+    .filter((verdict): verdict is string => verdict !== undefined);
 }
 
 export function loadManifest(repoRoot: string): LicenseManifest {
@@ -355,8 +392,18 @@ export function loadManifest(repoRoot: string): LicenseManifest {
 
 export function main(repoRoot: string): number {
   const manifest = loadManifest(repoRoot);
+  const policy = loadPolicy(repoRoot);
   const actual = collectProductionDependencies(repoRoot);
-  const violations = checkAgainstManifest(actual, manifest);
+  const development = collectDevelopmentDependencies(repoRoot);
+  const violations = [
+    ...checkAgainstManifest(actual, manifest, policy),
+    ...checkDevelopmentLicenses(development, policy),
+    ...staleApprovals(policy, [
+      ...actual.map((thing) => ({ thing, scope: "distributed" as const })),
+      ...development.map((thing) => ({ thing, scope: "development" as const })),
+      ...manifest.external.map((thing) => ({ thing, scope: "external" as const })),
+    ]),
+  ];
 
   if (violations.length > 0) {
     console.error(`licenses:check: ${violations.length} issue(s) found:\n`);
@@ -364,13 +411,15 @@ export function main(repoRoot: string): number {
       console.error(`  - ${violation}`);
     }
     console.error(
-      "\nUpdate third-party-licenses.json (then run `pnpm run licenses:generate` to refresh\n" +
-        "THIRD-PARTY-NOTICES.md), or remove the offending dependency.\n",
+      "\nA new or changed dependency: record it in third-party-licenses.json (then run\n" +
+        "`pnpm run licenses:generate` to refresh THIRD-PARTY-NOTICES.md). A license the policy\n" +
+        "does not accept: only the CI role can approve it, in license-policy.json.\n",
     );
     return 1;
   }
   console.log(
-    `licenses:check: ${actual.length} distributed production dependencies, all recorded and allowed.`,
+    `licenses:check: ${actual.length} distributed and ${development.length} development ` +
+      "dependencies, every license allowed or approved.",
   );
   return 0;
 }

@@ -5,7 +5,6 @@ import { renderExternalTable, renderPackagesTable, replaceBetween } from "./lice
 describe("renderExternalTable", () => {
   it("renders one row per external component from the manifest", () => {
     const manifest: LicenseManifest = {
-      allowedLicenses: [],
       packages: [],
       external: [
         {

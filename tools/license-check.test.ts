@@ -5,16 +5,20 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   checkAgainstManifest,
+  checkDevelopmentLicenses,
+  collectDevelopmentDependencies,
   collectProductionDependencies,
   type LicenseManifest,
   loadManifest,
   type PackageInfo,
 } from "./license-check.ts";
+import { type LicensePolicy, loadPolicy } from "./license-policy.ts";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 
+const POLICY: LicensePolicy = { allowedLicenses: ["MIT", "Apache-2.0"], approvals: [] };
+
 const CLEAN_MANIFEST: LicenseManifest = {
-  allowedLicenses: ["MIT", "Apache-2.0"],
   packages: [{ name: "left-pad", version: "1.0.0", license: "MIT" }],
   external: [],
 };
@@ -31,7 +35,7 @@ const CLEAN_ACTUAL: PackageInfo[] = [
  */
 describe("checkAgainstManifest", () => {
   it("passes when the resolved tree exactly matches the manifest", () => {
-    expect(checkAgainstManifest(CLEAN_ACTUAL, CLEAN_MANIFEST)).toEqual([]);
+    expect(checkAgainstManifest(CLEAN_ACTUAL, CLEAN_MANIFEST, POLICY)).toEqual([]);
   });
 
   it("flags a resolved dependency the manifest has never seen", () => {
@@ -39,7 +43,7 @@ describe("checkAgainstManifest", () => {
       ...CLEAN_ACTUAL,
       { name: "new-dep", version: "2.0.0", license: "MIT", source: null },
     ];
-    const violations = checkAgainstManifest(actual, CLEAN_MANIFEST);
+    const violations = checkAgainstManifest(actual, CLEAN_MANIFEST, POLICY);
     expect(violations).toHaveLength(1);
     expect(violations[0]).toContain("new-dep@2.0.0");
     expect(violations[0]).toContain("not recorded");
@@ -48,7 +52,7 @@ describe("checkAgainstManifest", () => {
   /**
    * The property THIRD-PARTY-NOTICES.md documents as non-bypassable:
    * recording a brand-new copyleft dependency (silencing "not recorded")
-   * must not be a one-step fix. Both violations have to appear in the
+   * must not be a one-step fix — only the CI role's approval is. Both violations have to appear in the
    * very same run, not just on a second run after it's been recorded —
    * otherwise "add an entry and re-run" would look like it worked right
    * up until the allowlist check, which is exactly the false sense of
@@ -59,20 +63,21 @@ describe("checkAgainstManifest", () => {
       ...CLEAN_ACTUAL,
       { name: "gpl-dep", version: "1.0.0", license: "GPL-3.0-only", source: null },
     ];
-    const violations = checkAgainstManifest(actual, CLEAN_MANIFEST);
+    const violations = checkAgainstManifest(actual, CLEAN_MANIFEST, POLICY);
     expect(violations.some((v) => v.includes("gpl-dep@1.0.0") && v.includes("not recorded"))).toBe(
       true,
     );
     expect(
       violations.some(
         (v) =>
-          v.includes("gpl-dep") && v.includes('license "GPL-3.0-only" is not in allowedLicenses'),
+          v.includes("gpl-dep") &&
+          v.includes('license "GPL-3.0-only" is neither allowed nor approved for distributed use'),
       ),
     ).toBe(true);
   });
 
   it("flags a manifest entry that no longer resolves at all (stale)", () => {
-    const violations = checkAgainstManifest([], CLEAN_MANIFEST);
+    const violations = checkAgainstManifest([], CLEAN_MANIFEST, POLICY);
     expect(violations).toHaveLength(1);
     expect(violations[0]).toContain("left-pad");
     expect(violations[0]).toContain("no longer a resolved production dependency");
@@ -82,7 +87,7 @@ describe("checkAgainstManifest", () => {
     const actual: PackageInfo[] = [
       { name: "left-pad", version: "1.0.0", license: "GPL-3.0", source: null },
     ];
-    const violations = checkAgainstManifest(actual, CLEAN_MANIFEST);
+    const violations = checkAgainstManifest(actual, CLEAN_MANIFEST, POLICY);
     expect(
       violations.some((v) => v.includes('recorded license "MIT"') && v.includes('"GPL-3.0"')),
     ).toBe(true);
@@ -92,82 +97,121 @@ describe("checkAgainstManifest", () => {
     const actual: PackageInfo[] = [
       { name: "left-pad", version: "1.1.0", license: "MIT", source: null },
     ];
-    const violations = checkAgainstManifest(actual, CLEAN_MANIFEST);
+    const violations = checkAgainstManifest(actual, CLEAN_MANIFEST, POLICY);
     expect(
       violations.some((v) => v.includes('recorded version "1.0.0"') && v.includes('"1.1.0"')),
     ).toBe(true);
   });
 
   it("flags a recorded license that has since fallen off the allowlist", () => {
-    const manifest: LicenseManifest = {
-      ...CLEAN_MANIFEST,
-      allowedLicenses: ["Apache-2.0"], // MIT removed
-    };
-    const violations = checkAgainstManifest(CLEAN_ACTUAL, manifest);
-    expect(violations.some((v) => v.includes('license "MIT" is not in allowedLicenses'))).toBe(
-      true,
-    );
+    const policy: LicensePolicy = { ...POLICY, allowedLicenses: ["Apache-2.0"] }; // MIT removed
+    const violations = checkAgainstManifest(CLEAN_ACTUAL, CLEAN_MANIFEST, policy);
+    expect(
+      violations.some((v) => v.includes('license "MIT" is neither allowed nor approved')),
+    ).toBe(true);
   });
 
-  /**
-   * A dual-licensed dependency (e.g. `"(MIT OR EUPL-1.1+)"`) is checked
-   * against the allowlist using its *elected* license, not the full
-   * SPDX expression — so `allowedLicenses` never has to name the
-   * copyleft half of the offer just to admit the permissive one.
-   */
-  it("checks a dual-licensed dependency's elected license against the allowlist, not its full SPDX expression", () => {
+  it("accepts a dual-licensed dependency when one of its options is allowed, with nothing elected by hand", () => {
     const manifest: LicenseManifest = {
       ...CLEAN_MANIFEST,
       packages: [
         ...CLEAN_MANIFEST.packages,
-        {
-          name: "dual-dep",
-          version: "1.0.0",
-          license: "(MIT OR EUPL-1.1+)",
-          electedLicense: "MIT",
-        },
+        { name: "dual-dep", version: "1.0.0", license: "(MIT OR EUPL-1.1+)" },
       ],
     };
     const actual: PackageInfo[] = [
       ...CLEAN_ACTUAL,
       { name: "dual-dep", version: "1.0.0", license: "(MIT OR EUPL-1.1+)", source: null },
     ];
-    expect(checkAgainstManifest(actual, manifest)).toEqual([]);
+    expect(checkAgainstManifest(actual, manifest, POLICY)).toEqual([]);
   });
 
-  it("still flags a dual-licensed dependency's raw license drifting, even with an electedLicense recorded", () => {
+  it("flags a dual license that narrows to its copyleft option, on both counts", () => {
     const manifest: LicenseManifest = {
       ...CLEAN_MANIFEST,
       packages: [
         ...CLEAN_MANIFEST.packages,
-        {
-          name: "dual-dep",
-          version: "1.0.0",
-          license: "(MIT OR EUPL-1.1+)",
-          electedLicense: "MIT",
-        },
+        { name: "dual-dep", version: "1.0.0", license: "(MIT OR EUPL-1.1+)" },
       ],
     };
-    // The upstream package narrowed its own offer to EUPL alone — the
-    // elected-license override must not mask that from the drift check.
     const actual: PackageInfo[] = [
       ...CLEAN_ACTUAL,
       { name: "dual-dep", version: "1.0.0", license: "EUPL-1.1+", source: null },
     ];
-    const violations = checkAgainstManifest(actual, manifest);
+    const violations = checkAgainstManifest(actual, manifest, POLICY);
     expect(
       violations.some(
         (v) => v.includes('recorded license "(MIT OR EUPL-1.1+)"') && v.includes('"EUPL-1.1+"'),
       ),
     ).toBe(true);
+    expect(violations.some((v) => v.includes('license "EUPL-1.1+" is neither allowed'))).toBe(true);
   });
 
-  it("flags a resolved package with no license field at all, even if it happens to be recorded", () => {
+  it("accepts a copyleft dependency the CI role approved, and only under that license", () => {
+    const manifest: LicenseManifest = {
+      ...CLEAN_MANIFEST,
+      packages: [
+        ...CLEAN_MANIFEST.packages,
+        { name: "gpl-dep", version: "1.0.0", license: "GPL-3.0-only" },
+      ],
+    };
+    const policy: LicensePolicy = {
+      ...POLICY,
+      approvals: [
+        { package: "gpl-dep", license: "GPL-3.0-only", scope: "distributed", reason: "reviewed" },
+      ],
+    };
+    const approved = [
+      ...CLEAN_ACTUAL,
+      { name: "gpl-dep", version: "1.0.0", license: "GPL-3.0-only", source: null },
+    ];
+    expect(checkAgainstManifest(approved, manifest, policy)).toEqual([]);
+    const relicensed = [
+      ...CLEAN_ACTUAL,
+      { name: "gpl-dep", version: "1.0.0", license: "AGPL-3.0-only", source: null },
+    ];
+    expect(
+      checkAgainstManifest(relicensed, manifest, policy).some((v) =>
+        v.includes('license "AGPL-3.0-only" is neither allowed nor approved'),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags a resolved package with no license at all, as needing approval", () => {
     const actual: PackageInfo[] = [
       { name: "left-pad", version: "1.0.0", license: null, source: null },
     ];
-    const violations = checkAgainstManifest(actual, CLEAN_MANIFEST);
-    expect(violations.some((v) => v.includes("no license field at all"))).toBe(true);
+    const violations = checkAgainstManifest(actual, CLEAN_MANIFEST, POLICY);
+    expect(violations.some((v) => v.includes('license "(none)" is neither allowed'))).toBe(true);
+  });
+
+  it("requires the CI role's approval for an external program's copyleft license", () => {
+    const manifest: LicenseManifest = {
+      ...CLEAN_MANIFEST,
+      external: [
+        {
+          name: "some-tool",
+          version: "1.0",
+          license: "GPL-3.0-only",
+          source: "https://example.org",
+          distribution: "run as a separate process",
+        },
+      ],
+    };
+    expect(
+      checkAgainstManifest(CLEAN_ACTUAL, manifest, POLICY).some((v) =>
+        v.includes(
+          'some-tool@1.0: license "GPL-3.0-only" is neither allowed nor approved for external use',
+        ),
+      ),
+    ).toBe(true);
+    const policy: LicensePolicy = {
+      ...POLICY,
+      approvals: [
+        { package: "some-tool", license: "GPL-3.0-only", scope: "external", reason: "reviewed" },
+      ],
+    };
+    expect(checkAgainstManifest(CLEAN_ACTUAL, manifest, policy)).toEqual([]);
   });
 
   it("flags an external component missing a required field", () => {
@@ -183,7 +227,7 @@ describe("checkAgainstManifest", () => {
         },
       ],
     };
-    const violations = checkAgainstManifest(CLEAN_ACTUAL, manifest);
+    const violations = checkAgainstManifest(CLEAN_ACTUAL, manifest, POLICY);
     expect(
       violations.some((v) => v.includes("some-tool") && v.includes("missing a required field")),
     ).toBe(true);
@@ -269,10 +313,39 @@ describe("collectProductionDependencies — packages require.resolve cannot find
   });
 });
 
+describe("checkDevelopmentLicenses", () => {
+  it("holds development-only dependencies to the policy, without an inventory", () => {
+    const dev: PackageInfo[] = [
+      { name: "test-runner", version: "1.0.0", license: "MIT", source: null },
+      { name: "css-tool", version: "1.0.0", license: "MPL-2.0", source: null },
+    ];
+    expect(checkDevelopmentLicenses(dev, POLICY)).toEqual([
+      expect.stringContaining(
+        'css-tool@1.0.0: license "MPL-2.0" is neither allowed nor approved for development use',
+      ),
+    ]);
+    const policy: LicensePolicy = {
+      ...POLICY,
+      approvals: [
+        { package: "css-tool*", license: "MPL-2.0", scope: "development", reason: "test only" },
+      ],
+    };
+    expect(checkDevelopmentLicenses(dev, policy)).toEqual([]);
+  });
+});
+
 describe("the repository itself", () => {
-  it("holds today: every resolved dependency is recorded, licensed as expected, and allowed", () => {
+  it("holds today: every resolved dependency is recorded, licensed as expected, and allowed or approved", () => {
     const manifest = loadManifest(repoRoot);
+    const policy = loadPolicy(repoRoot);
     const actual = collectProductionDependencies(repoRoot);
-    expect(checkAgainstManifest(actual, manifest)).toEqual([]);
+    expect(checkAgainstManifest(actual, manifest, policy)).toEqual([]);
+    expect(checkDevelopmentLicenses(collectDevelopmentDependencies(repoRoot), policy)).toEqual([]);
+  });
+
+  it("walks the development tree too: vitest, but none of the workspace's own packages", () => {
+    const names = new Set(collectDevelopmentDependencies(repoRoot).map((p) => p.name));
+    expect(names.has("vitest")).toBe(true);
+    expect([...names].some((name) => name.startsWith("@tdsp/"))).toBe(false);
   });
 });

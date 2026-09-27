@@ -15,29 +15,38 @@ written by hand.
 
 ## What the license check enforces
 
+Two files, owned by two roles:
+
+- **`third-party-licenses.json`** — the inventory: every distributed package with the
+  license it declares, and the external programs the bridges run. Whoever changes a
+  dependency keeps it current.
+- **`license-policy.json`** — the policy: which licenses are accepted without asking
+  (`MIT`, `MIT-0`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`), and which packages
+  have been approved despite another license. **Only the CI role may change it**
+  (`.github/CODEOWNERS`).
+
 `pnpm run licenses:check` (part of `pnpm run ci`, and blocking in CI) walks the real,
-resolved production dependency tree of every package and bridge and compares it with
-`third-party-licenses.json`:
+resolved dependency trees and checks them against both:
 
-- **A new dependency, a changed version or a changed license** fails as "not recorded" or
-  "no longer matches". Fix: update the entry in `third-party-licenses.json`, run
+- **A new distributed dependency, a changed version or a changed license** fails as "not
+  recorded" or "no longer matches". Fix: update `third-party-licenses.json`, run
   `pnpm run licenses:generate`, commit both files.
-- **An entry that is no longer a dependency** fails as stale. Fix: remove it.
-- **A license outside `allowedLicenses`** (`MIT`, `MIT-0`, `Apache-2.0`, `BSD-2-Clause`,
-  `BSD-3-Clause`, `ISC`) fails on its own, in the same run, whether or not the package is
-  recorded. Recording it silences only the first violation; the build stays red until
-  the dependency is removed or `allowedLicenses` is widened — a visible, one-line change
-  to a checked-in file that a reviewer sees. A copyleft license cannot arrive quietly,
-  whether with a new dependency or through a relicensed version of an existing one.
-- **A dependency offering a choice of licenses** (an SPDX expression such as
-  `(MIT OR EUPL-1.1+)`) is recorded with the full expression unchanged, plus an
-  `electedLicense` naming the one this project uses it under. Only the elected license has
-  to be allowed, and a change to the upstream expression still fails the check.
-- **Two versions of the same package** resolved at once get one entry each.
-
-What the check cannot see: the programs under "External programs" below live outside the
-npm dependency graph. It only checks that their entries are complete; keeping the tested
-version current is a manual step.
+- **An inventory entry that is no longer a dependency** fails as stale. Fix: remove it.
+- **A license the policy does not accept** — copyleft, commercial, unknown, or none at all —
+  fails on its own, in the same run, whether or not the package is recorded. Recording it
+  silences only the first violation; the build stays red until the CI role approves that
+  one package under that exact license in `license-policy.json`, with the reason. An
+  approval does not admit a license class, only a package; a relicensed version voids it.
+- **A choice of licenses** — an SPDX expression such as `(MIT OR EUPL-1.1+)` — is accepted
+  when any of its options is; `A AND B` when every part is. Anything more involved
+  (`WITH` exceptions, nested expressions) needs an approval.
+- **Development-only dependencies** (Vitest, TypeScript, Biome, and everything they pull
+  in) are not distributed and not inventoried, but held to the same policy: a copyleft or
+  commercial test tool needs an approval too.
+- **External programs** (below) need an approval for their license as well; that their
+  recorded version is the tested one stays a manual check.
+- **An approval nothing matches any more** fails as stale, so that a removed dependency
+  cannot come back unnoticed under an old approval.
 
 ## External programs (not included)
 
@@ -62,7 +71,7 @@ corresponding source, the license text, no further restrictions) apply to that p
 The production (non-development) dependencies of the packages and bridges, with every
 further dependency they pull in. All are under permissive licenses. Development tooling
 (TypeScript, Vitest, Biome, dependency-cruiser, and `qrcode` for the Signal link
-script) is not distributed and not listed, and
+script) is not distributed and not listed — though held to the license policy above — and
 neither is the test-only infrastructure under `infra/` — the local Synapse (AGPL-3.0) and
 Greenmail (Apache-2.0) run as containers for testing and are never part of a bridge.
 

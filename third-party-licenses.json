@@ -1,6 +1,5 @@
 {
-  "$schema-note": "Machine-readable source of truth behind THIRD-PARTY-NOTICES.md's Components tables. `pnpm run licenses:check` walks the real, resolved production dependency tree of every distributed workspace member (tools/license-check.ts's DISTRIBUTED_PACKAGE_JSON_GLOBS) and fails if it finds a dependency missing from `packages` below, a license that no longer matches what is recorded, a license outside `allowedLicenses`, or a `packages` entry that is no longer a resolved dependency (stale). `pnpm run licenses:generate` regenerates THIRD-PARTY-NOTICES.md's two Components tables from this file plus the live dependency tree; it never touches the hand-maintained prose or the License texts section. `external` lists programs outside the pnpm dependency graph that a bridge runs as a separate process and that this repository does not include; no automated check can see them, so update the array by hand when the tested version changes.",
-  "allowedLicenses": ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MIT-0"],
+  "$schema-note": "The inventory behind THIRD-PARTY-NOTICES.md: every distributed third-party package with the license it declares, and the external programs a bridge runs. Kept current by whoever changes a dependency. `pnpm run licenses:check` walks the real, resolved dependency tree of every distributed workspace member (tools/license-check.ts) and fails on a dependency missing here, a version or license that no longer matches, or an entry that is no longer resolved. Which licenses are acceptable is not decided here but in license-policy.json, which only the CI role may change. `pnpm run licenses:generate` regenerates THIRD-PARTY-NOTICES.md's two tables from this file. `external` lists programs outside the pnpm dependency graph; no automated check sees them, so update the entries by hand when the tested version changes.",
   "packages": [
     {
       "name": "@matrix-org/matrix-sdk-crypto-nodejs",
@@ -20,14 +19,12 @@
     {
       "name": "@zone-eu/mailsplit",
       "version": "5.4.16",
-      "license": "(MIT OR EUPL-1.1+)",
-      "electedLicense": "MIT"
+      "license": "(MIT OR EUPL-1.1+)"
     },
     {
       "name": "@zone-eu/mailsplit",
       "version": "5.4.17",
-      "license": "(MIT OR EUPL-1.1+)",
-      "electedLicense": "MIT"
+      "license": "(MIT OR EUPL-1.1+)"
     },
     {
       "name": "agent-base",

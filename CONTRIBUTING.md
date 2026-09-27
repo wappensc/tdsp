@@ -31,9 +31,10 @@ git diff --check
 - **Network.** Adding a network connection anywhere needs both halves of the double
   opt-out, and a reason ([docs/network-policy.md](docs/network-policy.md)). Run
   `pnpm run verify:network`.
-- **Dependencies.** A new or updated production dependency must be on an allowed license;
-  update `third-party-licenses.json` and run `pnpm run licenses:generate`
-  ([THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).
+- **Dependencies.** Record a new or updated distributed dependency in
+  `third-party-licenses.json` and run `pnpm run licenses:generate`. A license outside the
+  policy — copyleft, commercial or unknown, for development tools too — needs the CI
+  role's approval in `license-policy.json` ([THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).
 - **Commits.** One coherent, independently revertible change per commit; do not mix a
   refactoring with a behaviour change.
 - **Never commit** credentials, access tokens, private keys, messenger account data or

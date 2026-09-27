@@ -1,0 +1,37 @@
+{
+  "$comment": "The license policy (tools/license-policy.ts). Only the CI role may change this file (.github/CODEOWNERS). allowedLicenses are accepted without asking; an SPDX 'A OR B' expression is accepted when any alternative is, 'A AND B' when every part is. Anything else — copyleft, commercial, unknown, or no license at all ('(none)') — fails `pnpm run licenses:check` until an entry in approvals admits that one package under that exact license. An approval names the package (a trailing * matches platform builds), the license exactly as declared, the scope (distributed covers development too; development: used only while developing and testing; external: a program a bridge runs as a separate process) and the reason a reviewer accepted it. A changed license voids the approval; an approval nothing matches any more fails the check as stale.",
+  "allowedLicenses": [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT-0"
+  ],
+  "approvals": [
+    {
+      "package": "signal-cli",
+      "license": "GPL-3.0-only",
+      "scope": "external",
+      "reason": "bridges/signal-bridge runs a separately installed signal-cli as its own process over its command line and JSON-RPC interface; nothing in this repository links, copies or ships it (THIRD-PARTY-NOTICES.md)."
+    },
+    {
+      "package": "libsignal-client",
+      "license": "AGPL-3.0-only",
+      "scope": "external",
+      "reason": "Part of signal-cli's own distribution, never linked or shipped by this repository; covered by the same separate-process boundary as signal-cli."
+    },
+    {
+      "package": "GnuPG",
+      "license": "GPL-3.0-or-later",
+      "scope": "external",
+      "reason": "bridges/email-bridge runs the user's own installed gpg as a separate program, for PGP-enabled documents only; nothing in this repository links or ships it."
+    },
+    {
+      "package": "lightningcss*",
+      "license": "MPL-2.0",
+      "scope": "development",
+      "reason": "CSS tooling pulled in by Vite through Vitest, with its platform build; runs only while testing and is never distributed. MPL-2.0 is file-level copyleft and places no obligation on code that merely uses it."
+    }
+  ]
+}
