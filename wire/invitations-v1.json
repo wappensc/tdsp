@@ -1,0 +1,42 @@
+{
+  "$comment": "The reference implementation's invitation links at invitation version 1, frozen: for each entry the writer must produce exactly `link` from `invitation`, and the reader must read `link` back to `invitation`. The invitations are those of the published vectors (packages/document-protocol/test-vectors/invitations-v1.json); these are what the writer makes of them. Checked by packages/document-protocol/src/frames.wire.test.ts against wire/wire-lock.json. Within a version an entry may be added, never changed or removed.",
+  "version": 1,
+  "entries": [
+    {
+      "name": "Matrix, with a policy",
+      "invitation": {
+        "messenger": "matrix",
+        "documentId": "doc-1",
+        "creatorMemberId": "@alice:example.org",
+        "channelId": "!room:example.org",
+        "profile": "yjs-paragraphs/1",
+        "policy": "2000,10000,0,inf,3000@0"
+      },
+      "link": "tdsp=1&provider=matrix&documentId=doc-1&creatorMemberId=%40alice%3Aexample.org&channelId=%21room%3Aexample.org&profile=yjs-paragraphs%2F1&policy=2000%2C10000%2C0%2Cinf%2C3000%400"
+    },
+    {
+      "name": "email with PGP, and an application's own parameter to ignore",
+      "invitation": {
+        "messenger": "email",
+        "documentId": "doc-2",
+        "creatorMemberId": "alice@example.org",
+        "threadRoot": "<root-1@example.org>",
+        "recipients": ["alice@example.org", "bob@example.org"],
+        "pgp": true,
+        "profile": "yjs-paragraphs/1"
+      },
+      "link": "tdsp=1&provider=email&documentId=doc-2&creatorMemberId=alice%40example.org&threadRoot=%3Croot-1%40example.org%3E&recipients=alice%40example.org%2Cbob%40example.org&pgp=1&profile=yjs-paragraphs%2F1"
+    },
+    {
+      "name": "a policy with a leading zero is dropped, the invitation still opens",
+      "invitation": {
+        "messenger": "signal",
+        "documentId": "doc-3",
+        "creatorMemberId": "c0ffee",
+        "channelId": "g1",
+        "profile": "yjs-paragraphs/1"
+      },
+      "link": "tdsp=1&provider=signal&documentId=doc-3&creatorMemberId=c0ffee&channelId=g1&profile=yjs-paragraphs%2F1"
+    }
+  ]
+}

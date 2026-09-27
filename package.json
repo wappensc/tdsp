@@ -28,6 +28,7 @@
     "verify:network": "pnpm run netcheck && pnpm run depcruise && pnpm exec vitest run tools/",
     "licenses:check": "node --experimental-strip-types tools/license-check-cli.ts",
     "licenses:generate": "node --experimental-strip-types tools/license-generate-cli.ts",
+    "wire:lock": "node --experimental-strip-types tools/wire-lock-cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:l0": "vitest run --project l0",

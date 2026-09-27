@@ -1,0 +1,213 @@
+{
+  "$comment": "The reference implementation's frames at frame version 1, frozen: for each entry, the encoder must produce exactly `frame` from `input`, and the decoder must read `frame` back to `input` (bytes as Base64, no limit as null). Checked by packages/document-protocol/src/frames.wire.test.ts against wire/wire-lock.json. Within a version an entry may be added (a compatible addition), never changed or removed.",
+  "version": 1,
+  "entries": [
+    {
+      "name": "edit: the §4.5 example",
+      "kind": "edit",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "update": "AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA="
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\"}"
+    },
+    {
+      "name": "control: membership, write",
+      "kind": "control",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "sequence": 1,
+        "action": "membership",
+        "member": "bob",
+        "permission": "write"
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"sequence\":1,\"action\":\"membership\",\"member\":\"bob\",\"permission\":\"write\"}"
+    },
+    {
+      "name": "control: membership, read",
+      "kind": "control",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "sequence": 2,
+        "action": "membership",
+        "member": "bob",
+        "permission": "read"
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"sequence\":2,\"action\":\"membership\",\"member\":\"bob\",\"permission\":\"read\"}"
+    },
+    {
+      "name": "control: membership, revoked",
+      "kind": "control",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "sequence": 4,
+        "action": "membership",
+        "member": "bob",
+        "permission": null
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"sequence\":4,\"action\":\"membership\",\"member\":\"bob\",\"permission\":null}"
+    },
+    {
+      "name": "control: close",
+      "kind": "control",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "sequence": 3,
+        "action": "close"
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"sequence\":3,\"action\":\"close\"}"
+    },
+    {
+      "name": "control: policy, with no upper bound on characters",
+      "kind": "control",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "sequence": 5,
+        "action": "policy",
+        "policy": {
+          "minIntervalMs": 30000,
+          "maxIntervalMs": 120000,
+          "minChars": 0,
+          "maxChars": null,
+          "expectedLatencyMs": 60000
+        }
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"sequence\":5,\"action\":\"policy\",\"policy\":{\"minIntervalMs\":30000,\"maxIntervalMs\":120000,\"minChars\":0,\"maxChars\":null,\"expectedLatencyMs\":60000}}"
+    },
+    {
+      "name": "heartbeat: the Appendix D example",
+      "kind": "heartbeat",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "controlSequence": 3,
+        "stateVector": "AYma9JgPBA=="
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"heartbeat\",\"documentId\":\"doc-a1b2c3\",\"controlSequence\":3,\"stateVector\":\"AYma9JgPBA==\"}"
+    },
+    {
+      "name": "resync-request: a joiner with nothing",
+      "kind": "resync-request",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "requestId": "5f3a9c0e12b47d68",
+        "bootstrap": true,
+        "controlSequence": 0,
+        "stateVector": "AA=="
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"resync-request\",\"documentId\":\"doc-a1b2c3\",\"requestId\":\"5f3a9c0e12b47d68\",\"bootstrap\":true,\"controlSequence\":0,\"stateVector\":\"AA==\"}"
+    },
+    {
+      "name": "resync-request: a member that fell behind",
+      "kind": "resync-request",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "requestId": "0123456789abcdef",
+        "bootstrap": false,
+        "controlSequence": 2,
+        "stateVector": "AYma9JgPBA=="
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"resync-request\",\"documentId\":\"doc-a1b2c3\",\"requestId\":\"0123456789abcdef\",\"bootstrap\":false,\"controlSequence\":2,\"stateVector\":\"AYma9JgPBA==\"}"
+    },
+    {
+      "name": "resync-response: content only",
+      "kind": "resync-response",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "respondsTo": "0123456789abcdef",
+        "update": "AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=",
+        "control": null,
+        "attribution": null
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"0123456789abcdef\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"control\":null,\"attribution\":null}"
+    },
+    {
+      "name": "resync-response: a joiner's bootstrap, with control snapshot and attribution",
+      "kind": "resync-response",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "respondsTo": "5f3a9c0e12b47d68",
+        "update": "AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=",
+        "control": {
+          "profile": "yjs-paragraphs/1",
+          "sequence": 5,
+          "closed": false,
+          "members": {
+            "bob": "write",
+            "carol": "read"
+          },
+          "policy": {
+            "minIntervalMs": 30000,
+            "maxIntervalMs": 120000,
+            "minChars": 0,
+            "maxChars": null,
+            "expectedLatencyMs": 60000
+          },
+          "policySequence": 5
+        },
+        "attribution": {
+          "ranges": [
+            {
+              "start": 0,
+              "end": 2,
+              "authorId": "alice"
+            }
+          ],
+          "lastEditBySender": {
+            "alice": 2
+          }
+        }
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"5f3a9c0e12b47d68\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"control\":{\"profile\":\"yjs-paragraphs/1\",\"sequence\":5,\"closed\":false,\"members\":{\"bob\":\"write\",\"carol\":\"read\"},\"policy\":{\"minIntervalMs\":30000,\"maxIntervalMs\":120000,\"minChars\":0,\"maxChars\":null,\"expectedLatencyMs\":60000},\"policySequence\":5},\"attribution\":{\"ranges\":[{\"start\":0,\"end\":2,\"authorId\":\"alice\"}],\"lastEditBySender\":{\"alice\":2}}}"
+    },
+    {
+      "name": "fragment: the first of two",
+      "kind": "fragment",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "messageId": "0909090909090909",
+        "index": 0,
+        "total": 2,
+        "slice": "eyJ0ZHNwIjox"
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"fragment\",\"documentId\":\"doc-a1b2c3\",\"messageId\":\"0909090909090909\",\"index\":0,\"total\":2,\"slice\":\"eyJ0ZHNwIjox\"}"
+    },
+    {
+      "name": "decline: the Appendix D example",
+      "kind": "decline",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "reason": "unsupported-profile",
+        "profiles": ["com.example.markdown/1"],
+        "text": "My app cannot open this document."
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"unsupported-profile\",\"profiles\":[\"com.example.markdown/1\"],\"text\":\"My app cannot open this document.\"}"
+    },
+    {
+      "name": "decline: unsupported-version, nothing else",
+      "kind": "decline",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "reason": "unsupported-version"
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"unsupported-version\"}"
+    },
+    {
+      "name": "decline: declined, nothing else",
+      "kind": "decline",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "reason": "declined"
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"declined\"}"
+    },
+    {
+      "name": "decline: other, nothing else",
+      "kind": "decline",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "reason": "other"
+      },
+      "frame": "{\"tdsp\":1,\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"other\"}"
+    }
+  ]
+}

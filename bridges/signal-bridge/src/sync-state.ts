@@ -86,7 +86,7 @@ function parseJson(raw: string): unknown {
   }
 }
 
-function parseEnvelope(raw: string): Envelope | null {
+export function parseEnvelope(raw: string): Envelope | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);

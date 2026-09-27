@@ -1,0 +1,55 @@
+{
+  "$comment": "The email binding's messages at envelope version 1, for a document without PGP, frozen (SPECIFICATION.md §13.4): what the bridge hands its mail library when it starts a thread (the invitation) and when it sends a frame, and how it reads a frame's body back. The PGP-signed and -encrypted form wraps the same envelope; its bytes depend on keys and are covered by the PGP tests. Checked by bridges/email-bridge/src/message.wire.test.ts against wire/wire-lock.json. Within a version an entry may be added, never changed or removed.",
+  "version": 1,
+  "constants": {
+    "DOCUMENT_HEADER": "x-tdsp-document",
+    "MAX_INCOMING_MAIL_BYTES": 10485760
+  },
+  "entries": [
+    {
+      "name": "starting a thread: the invitation",
+      "request": {
+        "path": "/threads/doc-a1b2c3",
+        "status": 200,
+        "body": {
+          "recipients": ["alice@example.org", "bob@example.org"],
+          "creator": "alice@example.org",
+          "profile": "yjs-paragraphs/1",
+          "threadRootMessageId": "<root-1@example.org>"
+        }
+      },
+      "mail": {
+        "from": "alice@example.org",
+        "to": "bob@example.org",
+        "subject": "tdsp document doc-a1b2c3",
+        "text": "You've been invited to collaborate on a shared document. Open your collaboration app and use the document id and creator address from this email to join.",
+        "headers": {
+          "x-tdsp-document": "doc-a1b2c3"
+        },
+        "messageId": "<root-1@example.org>"
+      }
+    },
+    {
+      "name": "sending the §4.5 edit",
+      "request": {
+        "path": "/channels/doc-a1b2c3/send",
+        "status": 200,
+        "body": {
+          "sender": "alice@example.org",
+          "payload": "{\"tdsp\":1,\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\"}"
+        }
+      },
+      "mail": {
+        "from": "alice@example.org",
+        "to": "bob@example.org",
+        "subject": "tdsp document doc-a1b2c3",
+        "text": "{\"tdsp\":1,\"kind\":\"frame\",\"documentId\":\"doc-a1b2c3\",\"frame\":\"{\\\"tdsp\\\":1,\\\"kind\\\":\\\"edit\\\",\\\"documentId\\\":\\\"doc-a1b2c3\\\",\\\"update\\\":\\\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\\\"}\"}",
+        "headers": {
+          "x-tdsp-document": "doc-a1b2c3"
+        },
+        "inReplyTo": "<root-1@example.org>",
+        "references": ["<root-1@example.org>"]
+      }
+    }
+  ]
+}

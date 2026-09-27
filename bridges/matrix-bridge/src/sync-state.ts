@@ -26,7 +26,7 @@ import {
 
 // The one event type this bridge sends and recognizes: every frame kind,
 // resync requests and responses included, rides it (SPECIFICATION.md §13.3).
-const FRAME_EVENT_TYPE = "de.wappensc.together.tdsp.frame";
+export const FRAME_EVENT_TYPE = "de.wappensc.together.tdsp.frame";
 const ENCRYPTED_EVENT_TYPE = "m.room.encrypted";
 const REDACTION_EVENT_TYPE = "m.room.redaction";
 
@@ -114,7 +114,7 @@ function foreignEnvelopeVersion(
     : undefined;
 }
 
-function readFrameEnvelope(content: unknown): FrameEnvelope | undefined {
+export function readFrameEnvelope(content: unknown): FrameEnvelope | undefined {
   if (typeof content !== "object" || content === null) {
     return undefined;
   }

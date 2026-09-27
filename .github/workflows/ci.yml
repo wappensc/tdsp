@@ -43,10 +43,10 @@ jobs:
       - name: Test
         run: pnpm exec vitest run --project l0 --reporter=default --reporter=json --outputFile.json=vitest-report.json
 
-      # The security tests (*.security.test.ts, owned by the CI role) must all have run and
-      # passed: none skipped, none missing from the report.
-      - name: Every security test ran
-        run: node --experimental-strip-types tools/test-run-check-cli.ts vitest-report.json --require '\.security\.test\.ts$'
+      # The security tests (*.security.test.ts) and the wire tests (*.wire.test.ts), both owned
+      # by the CI role, must all have run and passed: none skipped, none missing from the report.
+      - name: Every security and wire test ran
+        run: node --experimental-strip-types tools/test-run-check-cli.ts vitest-report.json --require '\.security\.test\.ts$' --require '\.wire\.test\.ts$'
 
   matrix:
     # Against a real, local Synapse. Plain `docker compose` steps rather than a `services:`

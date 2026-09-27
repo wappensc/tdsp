@@ -1,0 +1,159 @@
+{
+  "$comment": "The wire lock (tools/wire-lock.ts): hashes of every frozen wire entry, published test vector, constant and normative wire section of the specification, with the specification's version. tools/wire-lock.wire.test.ts fails on any difference and names its kind; only the CI role may accept one, with `pnpm run wire:lock -- --accept <incompatible|addition|specification>`, which checks that the specification's version moved accordingly. Never edit by hand.",
+  "specificationVersion": "1.0",
+  "files": {
+    "wire/frames-v1.json": {
+      "frame": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "entries": {
+        "entries: edit: the §4.5 example": "014895c2753138f1fe2ca825be159225b0c69d2e9bab7cb134e6c546a62a5d77",
+        "entries: control: membership, write": "9b8a0262f0ef831efb50447b5fefe55a3cdb4de4b53d797f1d6c1da255c9a615",
+        "entries: control: membership, read": "6b9d02c4d1fe7d68559c6987512b04a52c127c765140fca3ec333a9ebb903590",
+        "entries: control: membership, revoked": "6b02a735396c52e69ca19f1374fdbdf2547a701e195ef80e54ada91d4d971343",
+        "entries: control: close": "de470dbc94b8d9baab28fe79d4af514c26a723bb27774a704ea2928ec66c0fbd",
+        "entries: control: policy, with no upper bound on characters": "afc4fd053bfd7969f0563445d2973cd8cc680d9244ecae4e2a611b52688b707a",
+        "entries: heartbeat: the Appendix D example": "e320a94cffaaf669e1894e3f596e31fe1d10c43ab11042632505916e82a77bac",
+        "entries: resync-request: a joiner with nothing": "92802e3805d7d1f80b7916024f6fd9d9f684a691c8f6b4bf553ddee03581ee1c",
+        "entries: resync-request: a member that fell behind": "ba830b3bfbd24b9bfaa3b105c2aedad6a05133a473eb82524607ee900ec135f1",
+        "entries: resync-response: content only": "7bf0ee9c46bf212619ad293ac062129a15732f82439f685e12586ae2799b3856",
+        "entries: resync-response: a joiner's bootstrap, with control snapshot and attribution": "8b328fb724bb9e07207432267ee160159439512bc31b082582f5b06d1cd51cac",
+        "entries: fragment: the first of two": "374da43472d117515906a4a8574590ea6655e72d71efe75145571a3c45867ff6",
+        "entries: decline: the Appendix D example": "d8a796033a970e4988b8bfed145d8d4cb95e6eadae9940c937cff89a446d8900",
+        "entries: decline: unsupported-version, nothing else": "9a5c4925a02bf3d1331d04d6a739ce17c867356282dd027b63776db420a5d521",
+        "entries: decline: declined, nothing else": "66aa240409db598c61675dc1943c87f454213ebd271db12ff5ce28c0a4a12ef5",
+        "entries: decline: other, nothing else": "611942e07924b10fa75ecf6caf322b6a8068dc048e1e06524e4c522e9861f9a1"
+      }
+    },
+    "wire/invitations-v1.json": {
+      "frame": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "entries": {
+        "entries: Matrix, with a policy": "e6f564de7af4f9a6241c43661a1b7277c09ecd8de0eaf2f6916a4e4bc855e9f9",
+        "entries: email with PGP, and an application's own parameter to ignore": "e87dd811bd8883681f0bd6b52a05a67fb51c98c72e01431cd1398655afc89472",
+        "entries: a policy with a leading zero is dropped, the invitation still opens": "86e1e6f684df0bc954e7943d8cc8778af6156e39b42a44b94541d0243d758fbf"
+      }
+    },
+    "wire/signal-v1.json": {
+      "frame": "0047d2d45f6b854520e202cb63bba0fc0c5bd24862ff7e71176131956153a9d0",
+      "entries": {
+        "entries: the §4.5 edit, in the body": "fb3bb1245d8497e171a0a4866f03ff02537f2cf10c5acab9fd2d9cdc26993232",
+        "entries: a frame of exactly 800 bytes, still in the body": "057e08dd02c658e6ada4e529ad94b8edc06e98c0cf32d0806b62a2b559bb42f3",
+        "entries: a frame of 801 bytes, as the message's one attachment": "98c4d5ccc7ae55cf639fd2c54a99686dabd698eadc80f33ddff9b55a2fed6566"
+      }
+    },
+    "wire/matrix-v1.json": {
+      "frame": "58c310c0200c0d9599fcd17152b3b645bcbac79ea620edbad0c0641eb6c20045",
+      "entries": {
+        "entries: the §4.5 edit, in the event": "1eb7ea9e666c693c2d8be52f21d4c6de31b64d90fc2b936cde00e45b703bb20f",
+        "entries: a frame of exactly 32000 bytes, still in the event": "87667086c949068d4549f24d2cee174276efa0226f73380b4e5cb3a438872d2b",
+        "entries: a frame of 32001 bytes, as a media file": "86acf4475d3e3c82246faa3fd2ed8e681281cb58942102cabb03eefdb7964667"
+      }
+    },
+    "wire/email-v1.json": {
+      "frame": "b4a0e684a1c2604cbc0680fe9d42db97056652bdec25b529f37e44dac7abccea",
+      "entries": {
+        "entries: starting a thread: the invitation": "6f46a61045676d3c5f3cbe86a9cf14c962fbd12a8fa390b225111c539b40e535",
+        "entries: sending the §4.5 edit": "260cddc9772e4378690930441127912d09624a9cabc9727a2e089b239995b2e2"
+      }
+    },
+    "packages/document-protocol/test-vectors/frames-v1.json": {
+      "frame": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "entries": {
+        "vectors: edit": "ed034da81e2931a308331145ea0e973bb0ecb55a39100b1b1242d60464b52618",
+        "vectors: resync-request from a joiner with nothing": "9f58b9b5423c38f2e494a46d8ad88a9195db76c6dc0c76a9dfdc35f79d73faa2",
+        "vectors: resync-response from the creator, with snapshot and overlay": "64370d835e3df62c99504591bd213b8c721dafceec344c16306eb25cae4aa476",
+        "vectors: resync-response with neither snapshot nor overlay, and an empty update": "270f298bac7d7c3ca529bb86601ff20c09db38e7611f438b001dd931e1a97ac5",
+        "vectors: control: grant": "2fd1b1fc1a08467a3a7486c15680f18f0dfdf4e41d6a5b5c71faff5988cf781d",
+        "vectors: control: revoke (permission null)": "ace920eb2218341e45cdedd83d9f5d5454b00812136dea3e992a62b5c7563584",
+        "vectors: control: close": "97367e84d3e4cf0c5dde1b80c96951dcec26edcbf0f220d9bef5af0e21dd4a3f",
+        "vectors: control: policy with a null maxChars": "faa22f2eda53d52cc2c3ec9fcc8eddff5da4106162d829f98bbe5138a0ee24b0",
+        "vectors: heartbeat": "afd3e21b1ea329b77ad2ec108b9dd84a643288ec6dbc7254ec034cf61c346441",
+        "vectors: fragment": "4b670ed9c36339ba6684058c12c09d48d66934001227b5c2a80921b14d34252a",
+        "vectors: decline with profiles and text": "790d52548668acd991093391eaab776347b17538cb6b5fc02b6fff9e5206b917",
+        "vectors: decline with a reason only": "f078f53eedc6deca35a204e7d5134a1df8e2f60d35eca9e2fa80ed0836348ddb",
+        "vectors: text with a surrogate pair written as escapes": "e3e6f70d574187c84d3f5bc2917ff7d6b32769f3a40af4a1dcb4f0b64e020839",
+        "vectors: not JSON": "5feb5645cd9c90315aca688792673b7c99d15e27a240a7050a6fea178c7aacfc",
+        "vectors: a JSON array": "bbd9bd9d8f07382cd537ae6393a7b5b5a97a837cbaf8c54192e2c5a507da77ed",
+        "vectors: a member named twice (I-JSON)": "f9744cf84405aa09784b24819e79ee864d38346b133d706bcfe00d75a8745908",
+        "vectors: an unpaired surrogate (I-JSON)": "3a906398c8f2be863c7144e4ae3dcac87893f5a6d48749a661f6eadefe0aefe7",
+        "vectors: no tdsp": "21e5d25502297dae74680d584463ac02b34495cea8f9a263439496e2d6012b5b",
+        "vectors: tdsp 2": "fd7d90ac8c7d88367c8684387a0a5a1ec8b02177f268973dfe222fd977e5ae33",
+        "vectors: tdsp as a string": "96ab2cdb7e762652edbfe476935355a6963df45ed45819c8a4326554fd0d90d5",
+        "vectors: an unknown kind": "8811ac4251bbc8fe9b8a27beba796b6fb660aee45fb2eae0b4342712dec1f736",
+        "vectors: an edit without update": "f8141086eb41fa9dc2e6f8582493a5924bd4293da47eabfad8bcabf4244c2f8e",
+        "vectors: a request without requestId": "eb00253729064344fd3da0bf150b40b40d423c05ff132faf291e8b23f5f7aee0",
+        "vectors: an empty update in an edit": "667cfb7abb0cca73d31f1d2433dd10478f8a2cca4f0449dd039966d768eab82f",
+        "vectors: non-canonical Base64 (padding bits set)": "41fa61d566dfad98135f7a416e0f5f274e1ee85aef75ff99734bdf67ec312560",
+        "vectors: Base64 without padding": "388bd6fe3e5ea87054f47cf98b9036f7c4d7c21f9a9f10e3d1c6b47c00be5e24",
+        "vectors: a field the kind does not define": "732f24dfb2144246fd43382ff0cb27cc0dbee7f21f8946184e90c2ce013ddcee",
+        "vectors: a uint32 overflow": "6f4db0bb2378954950e36bcdff8aba65e9fc7198247bfd7167fe136f7ead5b40",
+        "vectors: a control sequence 0": "99981ca3700ef025644cb6f81ad786ea2ba74496e270fe29122025c4d9714e7b",
+        "vectors: a close that names a member": "d5c4beecc4dad44e8656e4f3325650d2f8180401f74af7a98981f878ea514b14",
+        "vectors: a policy with null minChars": "6e727c0bdcc0e1b58b8ea0cc3aa9ab2f5e7e72b2b2cc1138b6c23829a651c89a",
+        "vectors: an unknown permission": "e19485a8bd8dc94ec9c939822ac1aed68b58b886f703ba0fd92535e5e543d2b6",
+        "vectors: a fragment index not below total": "6909cae097e2af2394ad86216314a2d961223287b4b8d3c5d93f4a78d9fd1a71",
+        "vectors: an upper-case messageId": "d1d1eab3f858aa98a41079d982cabadb85eedece6d4aab17504b51abbf4f8aa6",
+        "vectors: a respondsTo that is not 16 hex digits": "92b057379099b373e1188c9ea397461771c73fc337fc597c0e71a9da5ab02c3d",
+        "vectors: a snapshot with policy but no policySequence": "06202f53606edab72bc4f953788e74fb93d53ff0bc0926f1e040c15db9941cd7",
+        "vectors: a snapshot whose policySequence exceeds its sequence": "41c089ccef2da3e90e3c2b798c9a486145f06c33284c4605cda622fc9f275a7f",
+        "vectors: a snapshot with a field it does not define": "b0c8890284fe8204ab91b269c16954a168cbbf4282c3ebd31aa64dcb9b4a40ed",
+        "vectors: a snapshot without members": "7b593e7f83fd1d51b9ca29f9ae08fc2f535c9ce8bc3982f02a3715d5ea06cd8a",
+        "vectors: an overlay with a gap": "06233b77883a0ce4610a4a35381fc63ea86ce20b0ad6b86fd81f4d29cc03acff",
+        "vectors: a decline text of 501 characters": "d0d4e5e8fbf211fb6ce4cadd06351094bfc0da76d2d5943bdc9b28a9e4e66abe",
+        "vectors: an unknown decline reason": "eafb1ee730432ec5469cad5015b99e47feb6f313297647587904c587aa9959b2",
+        "vectors: a documentId over 255 bytes": "bfe81b3f909cb3c3c06c1b3fe425c20185eb700f37895a928e1486762afe12c6"
+      }
+    },
+    "packages/document-protocol/test-vectors/invitations-v1.json": {
+      "frame": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "entries": {
+        "vectors: Matrix, with a policy": "486d59fcb5eb3929439bbb73ae120670bc07bb3ea434827a55cbee95cdf1a65f",
+        "vectors: email with PGP, and an application's own parameter to ignore": "e460d77ecb7a9d5e8fe78c9b2ce14a64b303d70d52a89ad41cde2a51f68d3dac",
+        "vectors: a policy with a leading zero is dropped, the invitation still opens": "16a9965d26643dc0ba668e7c8d432ea748d9655825d5beb00eb221e80637306d",
+        "vectors: an ordinary page load": "7af90140c657e421ae2e746967e02e399a72f3e0ff396ae679e17cbd10914700",
+        "vectors: no version": "b46b603717bc84dd3986f1ca15776dd501d754ea51f25d532a04938a50e247b0",
+        "vectors: version 2": "1e3d7b1d87c176c37e70a2881feafc4ae95612573a4b09f6c388bb28bc65fcbb",
+        "vectors: documentId twice": "6d39160d5fc09bc005865e2483753ad14f390455c3f0013841b326b8119d0b89",
+        "vectors: no profile": "c2eeb17629178be595a6ca876abf41a47c6a37fd75cd93751db9642dfca285d4",
+        "vectors: no channel for Matrix": "84ef514114ad5c24c6139ab031e4064bcfe64409572716747969b7930edd2493",
+        "vectors: a profile that is not a profile id": "7251abb4208a54d5100f7051fe026e531270b8d18aa28c590c73a7fceb160a47",
+        "vectors: one participant twice, in two cases": "d04462e25f79569d20109c1947ff4a02b70ce978143ca3cef5c1669686648299",
+        "vectors: pgp spelled true": "9faf2489125e8262d02a6fcd51bd9e0f9132f9c47ed702f775bcdcb9f17bc0c4"
+      }
+    },
+    "bridges/email-bridge/test-vectors/member-ids-v1.json": {
+      "frame": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
+      "entries": {
+        "addresses: domain in capitals": "1fdda5f3a70ef941a95e1284460b0ab8b153649040b94a89d1056d2e126f8039",
+        "addresses: local part capitalised": "71c955ef3d87d304c72208fc79b8cc4242297e18b33e5d85c12ddf9009e63e2e",
+        "addresses: already canonical": "13ba369b77895a650aa3652e48ec1a3bc3f7f2395d7430e6751b19273a35492c",
+        "addresses: surrounding space": "16453b8051a26fa6569335360c2f2816aa968967a6ec875b4ae8ba704e1eff43",
+        "addresses: a subaddress is its own MemberId": "089c6fa989e81bc71ecf93b793d21907f948dda80566408baa3e0dc6f943c0b6",
+        "addresses: dotted local part is kept": "120136eec5efe921c11eadbc10e16ada4b2c1ca7e7e5a5235731018911dae363",
+        "addresses: display name": "ebcfc7cd15294ab1bc8d2641ca57d5e70743dfc48d55b4aec0b8effcc93c4f50",
+        "addresses: quoted display name": "184ba8c22942cdfd2dbb08a6f54e98e6a1533f8077215442489d6c48566b49af",
+        "addresses: angle brackets alone": "5dd1f27b27d58da2c86e500af3e14d3adc9fe69191fc5404dfe18e6c6dbb7527",
+        "addresses: comment": "8b9def993686a0f4a57eca0012ce5d3cef9d9b18cf030fb10b9de9a8028d2289",
+        "addresses: no domain": "6c9159dc8a006fde9b04a58e962f1784008fb0d7f23428650941b06fe41c8b51",
+        "addresses: no local part": "24f2bacbe8c08b4594f28e2492b2adff80678853af072051aebb2cd2e621c8cb",
+        "addresses: no at sign": "9d1194f5fe23b7c3160ce017628832e9f7a2b434c384a516739d52edb5ca1ed2",
+        "addresses: two at signs": "3cf4350921febf26be5e85130e261c9b8f4f4c254c17ba83d6b24fb3cd1321ff",
+        "addresses: space inside": "21a57b511e1802762dea618225335ce6fb8327f5ff4443f5aafbaed15ec9fe6a",
+        "addresses: empty domain label": "f0429c84baab7177663c4883a09192c709b3038cc54c0ee209fa71f160b6b341",
+        "addresses: two addresses": "ef5419a009a06c00ae38c535c0c44a4b173510503db6f5d67dcf9e87a8e30bd7",
+        "lists: distinct people": "03eb2c05d9f7ae6c60c150a15ed9d609bb97df95d143ce947aa46b1e26b1cde8",
+        "lists: one person twice, in two letter cases": "779be5a24240f74c1bd16545d8a11fc3bc99e6342ce4da5f06330eaa963a2271",
+        "lists: one person twice, domain case only": "4f2ea487b3e3c61a8a2e968e4436d3607f6c8d34562c33c38c6030969c03174b",
+        "lists: a subaddress beside its base address": "3fc1a3de3eb78e7e5ed0ec547766185de9d0a1e0a4034e8957f3d730e91963c5",
+        "lists: a display name in the list": "85c9f66ece30a843c7b71a82d68e79e14c06ab0adfd28e83a443ec6f6822298d"
+      }
+    }
+  },
+  "sections": {
+    "## 4. The payload frame": "5d3762b39c715367203271748beaaf8da46da38400a10b2d043bed6e995de89b",
+    "## 5. Document profiles": "9f73ec0934ce89197b4d73a1fe08b6f2cfdbe858d9c4b892b1c749a477036043",
+    "## 7. Control state": "6762639eda5f0071cc8125ee23d956ad968a3a360d4e140fa340d6e4d2c21550",
+    "## 11. Invitations": "3da4038832381c585cfd4cd739c9ad81976c6b3ac06402e36adf60c90d7626a2",
+    "## 13. Messenger bindings": "75b8ecffb969e5f5071405be21ece1d486c1e53e99859904e8e357c70d2e2491",
+    "## Appendix A. Profile `yjs-paragraphs/1`": "6f611a44ed24d58c580a16a9496423a80c70f5aeeaa7d28eab46355445737a16",
+    "## Appendix B. Recommended values": "bbe6c76dc13b949c15a20900fe6bb1bf202ac836841d13dffc0dc2191ae53f33"
+  }
+}

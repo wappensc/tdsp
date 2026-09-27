@@ -35,9 +35,9 @@ describe("the CI workflow cannot be sidestepped from outside the CI role's files
     }
   });
 
-  it("proves in the blocking job that every security test ran", () => {
+  it("proves in the blocking job that every security and wire test ran", () => {
     expect(job("ci")).toContain(
-      "tools/test-run-check-cli.ts vitest-report.json --require '\\.security\\.test\\.ts$'",
+      "tools/test-run-check-cli.ts vitest-report.json --require '\\.security\\.test\\.ts$' --require '\\.wire\\.test\\.ts$'",
     );
   });
 
