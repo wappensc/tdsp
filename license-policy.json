@@ -1,13 +1,6 @@
 {
   "$comment": "The license policy (tools/license-policy.ts). Only the CI role may change this file (.github/CODEOWNERS). allowedLicenses are accepted without asking; an SPDX 'A OR B' expression is accepted when any alternative is, 'A AND B' when every part is. Anything else — copyleft, commercial, unknown, or no license at all ('(none)') — fails `pnpm run licenses:check` until an entry in approvals admits that one package under that exact license. An approval names the package (a trailing * matches platform builds), the license exactly as declared, the scope (distributed covers development too; development: used only while developing and testing; external: a program a bridge runs as a separate process) and the reason a reviewer accepted it. A changed license voids the approval; an approval nothing matches any more fails the check as stale.",
-  "allowedLicenses": [
-    "MIT",
-    "Apache-2.0",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
-    "MIT-0"
-  ],
+  "allowedLicenses": ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MIT-0"],
   "approvals": [
     {
       "package": "signal-cli",
