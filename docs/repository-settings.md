@@ -1,3 +1,12 @@
+---
+title: "Repository settings"
+summary: "The GitHub configuration the development process relies on — organization owners, teams, repository permissions, the main ruleset, merge and Actions settings — why each matters, and how the Repository settings workflow and the full check by hand verify it."
+read_when:
+  - "Changing the organization, a team, or the repository's settings on GitHub"
+  - "The Repository settings workflow warns or fails"
+  - "Running the full check by hand as the admin or CI role"
+---
+
 # Repository settings
 
 The development process ([CONTRIBUTING.md](../CONTRIBUTING.md), "Roles") rests on settings

@@ -1,3 +1,12 @@
+---
+title: "Network-egress policy"
+summary: "Which network connections the reference implementation may open — loopback only for packages, tools and test infrastructure, one configured messenger endpoint for a bridge — the double opt-out that allows one, and the checks that enforce it."
+read_when:
+  - "Adding or changing code that opens a network connection"
+  - "netcheck, the Vitest network guard or the network-isolation job fails"
+  - "Changing network-policy.json"
+---
+
 # Network-egress policy
 
 TDSP's reference implementation opens **no network connection except the ones it
