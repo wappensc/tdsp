@@ -1,3 +1,13 @@
+---
+title: "Testing"
+summary: "The test levels L0, L2 and L4 and what each needs, the prerequisites every developer sets up (TDSP_ROOT, real accounts), running the tests against local Synapse and Greenmail and against real Signal and email accounts, and the security and wire tests."
+read_when:
+  - "Running tests beyond pnpm run ci"
+  - "Setting up the local test servers, real test accounts, or bridges on two machines"
+  - "Linking a Signal bridge by QR code"
+  - "A security or wire test fails"
+---
+
 # Testing
 
 The tests are split into three levels by what they need. Every test that needs something

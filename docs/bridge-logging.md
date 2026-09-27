@@ -1,3 +1,12 @@
+---
+title: "Bridge logging"
+summary: "How the Signal, Matrix and email bridges log through packages/bridge-log: one structured line per record, safe against injection, floods and secrets by construction, the event catalogue, the LOG_LEVEL, LOG_FORMAT and LOG_FILE settings, and what is never logged."
+read_when:
+  - "Running a bridge and reading or configuring its log"
+  - "Adding or changing a log event in a bridge"
+  - "Checking what a bridge never writes to its log"
+---
+
 # Bridge logging
 
 `bridges/signal-bridge`, `bridges/matrix-bridge` and `bridges/email-bridge` log
