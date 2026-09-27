@@ -90,6 +90,18 @@ export function checkSettings(expected: ExpectedSettings, collected: Collected):
     }
     return entry.data;
   };
+  /**
+   * A list that is never empty in fact — a repository always has an administrator, an
+   * organization an owner — and that GitHub returns empty, rather than refusing, to a token
+   * that may not see it (the workflow's own token, for one). Empty therefore means unreadable.
+   */
+  const nonEmptyList = (path: string): unknown[] => {
+    const list = data(path) as unknown[];
+    if (list.length === 0) {
+      throw new Unreadable(`GET ${path} (GitHub returned it empty to this token)`);
+    }
+    return list;
+  };
   /** A field that GitHub returns only to an administrator, and otherwise leaves out or null. */
   const adminField = (record: Record_, field: string, path: string): unknown => {
     const value = record[field];
@@ -129,7 +141,10 @@ export function checkSettings(expected: ExpectedSettings, collected: Collected):
     [
       "no one but the expected accounts can write to the repository",
       () => {
-        const list = data(`repos/${repo}/collaborators`) as { login: string; role_name: string }[];
+        const list = nonEmptyList(`repos/${repo}/collaborators`) as {
+          login: string;
+          role_name: string;
+        }[];
         const actual = Object.fromEntries(
           list
             .filter(
@@ -146,7 +161,9 @@ export function checkSettings(expected: ExpectedSettings, collected: Collected):
     [
       "the organization's owners are exactly the admin accounts",
       () => {
-        const owners = (data(`orgs/${org}/members`) as { login: string }[]).map((m) => m.login);
+        const owners = (nonEmptyList(`orgs/${org}/members`) as { login: string }[]).map(
+          (m) => m.login,
+        );
         return sameSet(owners, expected.organizationOwners)
           ? undefined
           : `owners are ${describe(owners)}, expected ${describe(expected.organizationOwners)}`;

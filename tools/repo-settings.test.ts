@@ -287,6 +287,19 @@ describe("the repository settings, as an ordinary token sees them", () => {
     return view;
   }
 
+  it("takes an empty list of collaborators or owners as hidden from the token, not as empty", () => {
+    // What the workflow's own token got on its first run: HTTP 200 and [], for both.
+    const view = adminView();
+    view[`repos/${R}/collaborators?per_page=100`] = { ok: true, data: [] };
+    view[`orgs/${O}/members?role=admin&per_page=100`] = { ok: true, data: [] };
+    const results = checkSettings(EXPECTED, { endpoints: view });
+    expect(results.filter((r) => r.outcome === "fail")).toEqual([]);
+    expect(results.filter((r) => r.outcome === "not-checked").map((r) => r.detail)).toEqual([
+      expect.stringContaining("GitHub returned it empty to this token"),
+      expect.stringContaining("GitHub returned it empty to this token"),
+    ]);
+  });
+
   it("reports what it cannot read as not checked, never as passed", () => {
     const results = checkSettings(EXPECTED, { endpoints: ordinaryView() });
     expect(results.filter((r) => r.outcome === "fail")).toEqual([]);
