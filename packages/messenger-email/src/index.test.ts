@@ -586,12 +586,6 @@ describe("EmailMessengerPort", () => {
   });
 });
 
-/**
- * Zone A (docs/network-policy.md): this package may only ever dial loopback.
- * Identical cases to `messenger-matrix`'s/`messenger-signal`'s own suites —
- * kept as a full copy here too, not a shared helper, matching those two
- * packages' own established precedent for this function.
- */
 describe("generateThreadRootMessageId", () => {
   it("is <uuid@domain>, the domain being the creator's own", () => {
     expect(generateThreadRootMessageId("alice@example.org")).toMatch(

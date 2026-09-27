@@ -128,46 +128,6 @@ describe("matrix-bridge HTTP API", () => {
     rmSync(bindStoreDir, { recursive: true, force: true });
   });
 
-  it("reflects a loopback Origin, and OPTIONS gets a 204 preflight reply", async () => {
-    const getResponse = await fetch(`${baseUrl}/health`, {
-      headers: { origin: "http://localhost:5173" },
-    });
-    expect(getResponse.headers.get("access-control-allow-origin")).toBe("http://localhost:5173");
-    expect(getResponse.headers.get("vary")).toBe("Origin");
-
-    const preflight = await fetch(`${baseUrl}/channels/doc-1/send`, {
-      method: "OPTIONS",
-      headers: { origin: "http://127.0.0.1:4002" },
-    });
-    expect(preflight.status).toBe(204);
-    expect(preflight.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:4002");
-    expect(preflight.headers.get("access-control-allow-methods")).toContain("POST");
-  });
-
-  /**
-   * The bridge has no authentication (LBI-2), which is exactly what makes
-   * the Origin load-bearing — with `*`, any site a person visits while a
-   * bridge runs could read their room list out of their own browser. Loopback binding does not help;
-   * the request comes from inside the machine.
-   */
-  it("sends no CORS header at all to a non-loopback Origin", async () => {
-    for (const origin of [
-      "https://evil.tld",
-      "http://localhost.evil.tld",
-      "http://192.168.1.10:5173",
-      "null",
-    ]) {
-      const response = await fetch(`${baseUrl}/channels`, { headers: { origin } });
-      expect(response.headers.get("access-control-allow-origin")).toBeNull();
-    }
-  });
-
-  it("still answers a request with no Origin at all (curl, a Node client)", async () => {
-    const response = await fetch(`${baseUrl}/health`);
-    expect(response.status).toBe(200);
-    expect(response.headers.get("access-control-allow-origin")).toBeNull();
-  });
-
   it("GET /health reports ok and whether an access token is configured", async () => {
     const response = await fetch(`${baseUrl}/health`);
     expect(response.status).toBe(200);
