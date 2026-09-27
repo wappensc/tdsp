@@ -185,7 +185,8 @@ meant to be checkable, not to be taken on trust — whoever wrote it.
 
 ## Contributing, security, licenses
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) — how to work on this repository.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to work on this repository: the roles, and how a
+  change reaches `main`.
 - [SECURITY.md](SECURITY.md) — how to report a vulnerability.
 - [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) — the dependencies and the external
   programs the bridges run, with their licenses.
