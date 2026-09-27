@@ -1,0 +1,34 @@
+name: Repository settings
+
+# Whether the repository on GitHub is configured the way the development process needs it
+# (docs/repository-settings.md). This job reads with the workflow's own token, which cannot
+# see everything an administrator can: what it cannot read it reports as a warning, not as a
+# pass, and the admin or CI role runs the full check by hand (`pnpm run repo:settings`). A
+# setting that differs from .github/repository-settings.json fails the job. It runs on every
+# push to main, every day, and on demand, because a setting can change without any commit.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repository-settings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Ask GitHub for the settings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/repo-settings-collect.sh > repository-settings.collected.json
+
+      - name: Compare them with .github/repository-settings.json
+        run: node --experimental-strip-types tools/repo-settings-cli.ts repository-settings.collected.json

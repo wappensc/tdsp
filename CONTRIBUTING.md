@@ -51,6 +51,10 @@ through a `package.json` script; the tests that need Synapse or Greenmail actual
 none of them skipped; every security and wire test ran and passed
 (`tools/test-run-check.ts`).
 
+All of this rests on settings that live on GitHub — who is in which team, what `main`
+accepts, who may bypass it. They are listed, and checked automatically and by hand, in
+[docs/repository-settings.md](docs/repository-settings.md).
+
 The test *content* of ordinary tests stays a developer's responsibility: a developer can
 weaken a functional test, and review of the change is the only guard against that. What a
 developer cannot weaken is the machinery above.
