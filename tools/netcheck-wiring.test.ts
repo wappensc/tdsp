@@ -35,7 +35,7 @@ describe("the network-egress checks are actually wired in", () => {
   });
 
   it("runs netcheck in the blocking CI job, which does not call the ci script", () => {
-    expect(ciJob()).toContain("pnpm run netcheck");
+    expect(ciJob()).toContain("node --experimental-strip-types tools/netcheck-cli.ts");
   });
 
   it("keeps the blocking CI job blocking", () => {

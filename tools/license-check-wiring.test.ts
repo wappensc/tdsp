@@ -23,7 +23,7 @@ describe("the third-party license checks are actually wired in", () => {
   });
 
   it("runs licenses:check in the blocking CI job, which does not call the ci script", () => {
-    expect(ciJob()).toContain("pnpm run licenses:check");
+    expect(ciJob()).toContain("node --experimental-strip-types tools/license-check-cli.ts");
   });
 
   it("keeps the blocking CI job blocking", () => {

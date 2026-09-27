@@ -18,27 +18,30 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
+      # Every check is called directly, never through a package.json script: package.json is
+      # not owned by the CI role (.github/CODEOWNERS), so a script there could be emptied and
+      # the step would still pass. tools/ci-wiring.test.ts asserts it.
       - name: Lint (Biome)
-        run: pnpm run lint
+        run: pnpm exec biome check .
 
       - name: Architecture boundaries (dependency-cruiser)
-        run: pnpm run depcruise
+        run: pnpm exec depcruise packages bridges --config .dependency-cruiser.cjs
 
       # Must stay in this job AND in the root `ci` script: this workflow lists its steps one by
       # one instead of calling `pnpm run ci`, so a check registered in only one of the two places
       # would be a silent hole. tools/netcheck-wiring.test.ts asserts both.
       - name: Network-egress policy (netcheck)
-        run: pnpm run netcheck
+        run: node --experimental-strip-types tools/netcheck-cli.ts
 
       # Same reasoning as netcheck; tools/license-check-wiring.test.ts asserts both.
       - name: Third-party license check
-        run: pnpm run licenses:check
+        run: node --experimental-strip-types tools/license-check-cli.ts
 
       - name: Type-check
-        run: pnpm run typecheck
+        run: pnpm exec tsc --noEmit
 
       - name: Test
-        run: pnpm run test
+        run: pnpm exec vitest run --project l0 --reporter=default --reporter=json --outputFile.json=vitest-report.json
 
   matrix:
     # Against a real, local Synapse. Plain `docker compose` steps rather than a `services:`
@@ -58,7 +61,11 @@ jobs:
         run: pnpm run matrix:up
 
       - name: Matrix bridge and test homeserver tests
-        run: pnpm exec vitest run infra/matrix-testserver/ bridges/matrix-bridge/
+        run: pnpm exec vitest run infra/matrix-testserver/ bridges/matrix-bridge/ --reporter=default --reporter=json --outputFile.json=vitest-report.json
+
+      # A test that cannot reach Synapse skips itself, and a skip looks green: prove they ran.
+      - name: Every Matrix test ran
+        run: node --experimental-strip-types tools/test-run-check-cli.ts vitest-report.json --require '^(infra/matrix-testserver|bridges/matrix-bridge)/'
 
       - name: Synapse container logs
         if: always()
@@ -84,7 +91,11 @@ jobs:
         run: pnpm run email:up
 
       - name: Email bridge and test server tests
-        run: pnpm exec vitest run infra/email-testserver/ bridges/email-bridge/
+        run: pnpm exec vitest run infra/email-testserver/ bridges/email-bridge/ --reporter=default --reporter=json --outputFile.json=vitest-report.json
+
+      # As for Matrix; the L4 files need real mailboxes and skip by design.
+      - name: Every email test ran
+        run: node --experimental-strip-types tools/test-run-check-cli.ts vitest-report.json --require '^(infra/email-testserver|bridges/email-bridge)/' --except '/l4-(provider|bridges)\.test\.ts$'
 
       - name: Greenmail container logs
         if: always()

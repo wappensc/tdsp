@@ -22,3 +22,6 @@ credentials/
 .DS_Store
 .idea/
 .vscode/
+
+# Vitest JSON report written by CI steps
+vitest-report.json
