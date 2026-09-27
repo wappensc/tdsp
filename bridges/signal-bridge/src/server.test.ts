@@ -282,7 +282,7 @@ describe("signal-bridge HTTP API", () => {
     expect(response.status).toBe(200);
   });
 
-  it("has no membership, archive or delete routes any more: they are control frames in the payload", async () => {
+  it("has no membership, archive or delete routes: they are control frames in the payload", async () => {
     await bindDocument("doc-1");
     for (const route of ["membership", "archive", "delete"]) {
       const response = await fetch(`${baseUrl}/channels/doc-1/${route}`, {

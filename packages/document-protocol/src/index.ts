@@ -1464,12 +1464,9 @@ export class DocumentEngine {
    * (SPECIFICATION.md §5.4) — never marked for a
    * request made with existing content, which has no such question to
    * answer (a partial gap-heal response never adopts an overlay). No
-   * window or timer guards this any more: since only the creator answers a
-   * resync, there is exactly one possible response, and
-   * `#considerBootstrapOverlay` adopts it the moment it arrives — the
-   * `resyncOverlayWindowMs`/deferral timing this comment described before
-   * that decision existed only to pick among *several* possible answers,
-   * a scenario that no longer exists.
+   * window or timer guards this: since only the creator answers a resync,
+   * there is exactly one possible response, and `#considerBootstrapOverlay`
+   * adopts it the moment it arrives.
    */
   async requestResync(): Promise<ResyncOutcome> {
     return this.#requestResync(false);

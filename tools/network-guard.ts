@@ -67,8 +67,9 @@ export function destinationOf(args: readonly unknown[]): Destination {
  * points. Nothing in this repository connects by such a name.
  *
  * Deliberately its own copy, not `@tdsp/loopback`'s `isLoopbackHost`
- * (which accepts and refuses the same hosts): this guard is one of Decision
- * 0014's independent enforcement layers, there to catch the shipped code — and a
+ * (which accepts and refuses the same hosts): this guard is one of the network
+ * policy's independent enforcement layers (docs/network-policy.md), there to
+ * catch the shipped code — and a
  * layer that imported the shipped code's own check would weaken with it.
  */
 export function isLoopbackHost(host: string): boolean {

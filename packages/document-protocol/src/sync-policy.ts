@@ -21,7 +21,7 @@ export interface SyncPolicy {
   readonly expectedLatencyMs: number;
 }
 
-/** Reproduces the pre-Decision-0019 behaviour exactly: a message after a typing pause, no floor, no cap. */
+/** The library's defaults: a message after a typing pause, no floor, no cap. */
 export const DEFAULT_SYNC_POLICY: SyncPolicy = {
   minIntervalMs: 0,
   maxIntervalMs: Number.POSITIVE_INFINITY,

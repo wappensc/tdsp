@@ -30,8 +30,8 @@ import type { MailReceiver } from "./mail-transport.ts";
  * and communicates only with those keys. The participant's own keyring is
  * consulted for exactly two things — their own secret key, and a *comparison*
  * (`key-report.ts`) that tells them where it disagrees with the creator. There
- * is no trust on first use any more: nobody is ever pinned by whatever
- * message arrives first.
+ * is no pinning on first use: nobody is ever pinned by whatever message
+ * arrives first.
  *
  * **What this does not do**, and the documentation must not suggest it does:
  * the invitation is an ordinary email. Whoever can forge it towards someone

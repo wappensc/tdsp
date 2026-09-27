@@ -56,9 +56,8 @@ import {
 
 const DOCUMENT_ID = "doc-1";
 
-// DocumentEngine.create()/.join() default to batchWindowMs: 500 (Decision
-// 0005's follow-up — a real messenger cannot perform well sending one
-// message per keystroke). Every test below except the dedicated "outgoing-
+// DocumentEngine.create()/.join() default to batchWindowMs: 500 — a real
+// messenger cannot perform well sending one message per keystroke. Every test below except the dedicated "outgoing-
 // message batching" describe block is about convergence, fault injection,
 // or attribution semantics that assume synchronous, immediate-send
 // delivery visibility — not about batching itself — so they explicitly opt
