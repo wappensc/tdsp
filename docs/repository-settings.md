@@ -1,10 +1,11 @@
 ---
 title: "Repository settings"
-summary: "The GitHub configuration the development process relies on — organization owners, teams, repository permissions, the main ruleset, merge and Actions settings — why each matters, and how the Repository settings workflow and the full check by hand verify it."
+summary: "The GitHub configuration the development process relies on — organization owners, teams, repository permissions, the main ruleset, the release-tag rulesets and release immutability, merge and Actions settings — why each matters, how the tag rulesets are created, and how the Repository settings workflow and the full check by hand verify it."
 read_when:
   - "Changing the organization, a team, or the repository's settings on GitHub"
   - "The Repository settings workflow warns or fails"
   - "Running the full check by hand as the admin or CI role"
+  - "Creating or changing the rulesets that protect release tags"
 ---
 
 # Repository settings
@@ -49,6 +50,27 @@ without any file changing — so they are written down here, recorded machine-re
 | Require review from Code Owners | on | a change to the checks would need no CI approval |
 | Dismiss stale approvals when new commits are pushed | on | a change could be swapped after the CI role approved it |
 | Require status checks | `ci`, `matrix`, `email`, `network-isolation`, each from **GitHub Actions**; "up to date" off | a status set by hand through the API — which anyone with write access can do — would count |
+
+**Repository → Settings → Rules → Rulesets → `release-tags-create` and `release-tags-locked`**
+
+A release tag `vX.Y.Z` is what other projects depend on ([versioning.md](versioning.md)).
+A bypass applies to every rule of its ruleset, so the two restrictions are two rulesets:
+one ruleset with a bypass for `admins` and `ci` would let them move and delete a tag too.
+
+| Ruleset | Setting | Value | Otherwise |
+| --- | --- | --- | --- |
+| both | Enforcement | Active | — |
+| both | Target | tags matching `v*` (`refs/tags/v*`) | — |
+| `release-tags-create` | Restrict creations | on | any developer could push a release tag |
+| `release-tags-create` | Bypass list | teams `admins` and `ci`, "Always" | no one could create a release tag |
+| `release-tags-locked` | Restrict updates, Restrict deletions | on | a tag could be moved or deleted under the projects that depend on it |
+| `release-tags-locked` | Bypass list | empty | the teams on it could move or delete a tag |
+
+**Repository → Settings → General → Releases**
+
+| Setting | Value | Otherwise |
+| --- | --- | --- |
+| Enable release immutability | on | the tag of a published release could be moved or deleted by anyone the rulesets let through |
 
 **Repository → Settings → General**
 
@@ -125,6 +147,35 @@ read then fails:
 
 Run it after any change to the organization, the teams or the repository's settings, and
 from time to time besides the daily partial check.
+
+A 404 from `repos/wappensc/tdsp/immutable-releases` means either that release
+immutability is off or that the token may not read it; the check reports it as not made,
+so the full check fails on it either way.
+
+## Creating the tag rulesets
+
+The rulesets are created from `.github/repository-settings.json`, the same file the check
+compares with, as `wappensc-admin` (only an administrator may create a ruleset). `gh auth
+token --user wappensc-admin` needs that account signed in to `gh` (`gh auth login` adds
+it); the active account stays as it is.
+
+```sh
+cd ~/Projects/together-tdsp && git switch main && git pull
+export GH_TOKEN=$(gh auth token --user wappensc-admin)
+jq -c '.teams as $t | .tagRulesets[] | {name, target: "tag", enforcement,
+    conditions: {ref_name: {include, exclude: []}}, rules: [.rules[] | {type: .}],
+    bypass_actors: [.bypass[] | {actor_id: $t[.team].id, actor_type: "Team", bypass_mode: .mode}]}' \
+  .github/repository-settings.json |
+while read -r ruleset; do
+  gh api -X POST repos/wappensc/tdsp/rulesets --input - <<<"$ruleset" --jq '"\(.id) \(.name)"'
+done
+pnpm run repo:settings
+unset GH_TOKEN
+```
+
+Each `gh api` call prints the new ruleset's id and name, and the full check that follows
+must pass. Run it once: to change a ruleset that exists, edit it under Settings → Rules →
+Rulesets, or delete it there before running this again.
 
 ## When a check fails
 

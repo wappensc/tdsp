@@ -28,6 +28,23 @@
     "include": ["~DEFAULT_BRANCH"],
     "bypass": [{ "team": "admins", "mode": "always" }, { "team": "ci", "mode": "always" }]
   },
+  "tagRulesets": [
+    {
+      "name": "release-tags-create",
+      "enforcement": "active",
+      "include": ["refs/tags/v*"],
+      "rules": ["creation"],
+      "bypass": [{ "team": "admins", "mode": "always" }, { "team": "ci", "mode": "always" }]
+    },
+    {
+      "name": "release-tags-locked",
+      "enforcement": "active",
+      "include": ["refs/tags/v*"],
+      "rules": ["update", "deletion"],
+      "bypass": []
+    }
+  ],
+  "immutableReleases": true,
   "branchRules": {
     "deletion": true,
     "non_fast_forward": true,
