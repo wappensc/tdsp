@@ -36,7 +36,28 @@ function adminView(): Record<string, { ok: boolean; data?: unknown }> {
       Object.entries(EXPECTED.collaborators).map(([login, role_name]) => ({ login, role_name })),
     ),
     [`repos/${R}/codeowners/errors`]: ok({ errors: [] }),
-    [`repos/${R}/rulesets`]: ok([{ id: 7, name: "main" }]),
+    [`repos/${R}/rulesets?targets=branch,tag`]: ok([
+      { id: 7, name: "main" },
+      ...EXPECTED.tagRulesets.map((ruleset, i) => ({ id: 8 + i, name: ruleset.name })),
+    ]),
+    ...Object.fromEntries(
+      EXPECTED.tagRulesets.map((ruleset, i) => [
+        `repos/${R}/rulesets/${8 + i}`,
+        ok({
+          name: ruleset.name,
+          target: "tag",
+          enforcement: ruleset.enforcement,
+          conditions: { ref_name: { include: [...ruleset.include], exclude: [] } },
+          rules: ruleset.rules.map((type) => ({ type })),
+          bypass_actors: ruleset.bypass.map((b) => ({
+            actor_id: EXPECTED.teams[b.team]?.id,
+            actor_type: "Team",
+            bypass_mode: b.mode,
+          })),
+        }),
+      ]),
+    ),
+    [`repos/${R}/immutable-releases`]: ok({ enabled: true, enforced_by_owner: false }),
     [`repos/${R}/rulesets/7`]: ok({
       name: "main",
       enforcement: "active",
@@ -230,6 +251,62 @@ describe("the repository settings, as an administrator sees them", () => {
         /bypass is/,
       ],
       [
+        "anyone with write access allowed to create a release tag",
+        withChange(`repos/${R}/rulesets/8`, (ruleset: object) => ({ ...ruleset, rules: [] })),
+        /release-tags-create ruleset is active .* — rules are \[\]/,
+      ],
+      [
+        "the developers team allowed to create a release tag",
+        withChange(`repos/${R}/rulesets/8`, (ruleset: { bypass_actors: object[] }) => ({
+          ...ruleset,
+          bypass_actors: [
+            ...ruleset.bypass_actors,
+            { actor_id: 19739392, actor_type: "Team", bypass_mode: "always" },
+          ],
+        })),
+        /bypass the release-tags-create ruleset — bypass is/,
+      ],
+      [
+        "release tags allowed to be moved",
+        withChange(`repos/${R}/rulesets/9`, (ruleset: object) => ({
+          ...ruleset,
+          rules: [{ type: "deletion" }],
+        })),
+        /release-tags-locked ruleset is active .* — rules are \["deletion"\]/,
+      ],
+      [
+        "the ci team allowed to move or delete a release tag",
+        withChange(`repos/${R}/rulesets/9`, (ruleset: object) => ({
+          ...ruleset,
+          bypass_actors: [{ actor_id: 19739398, actor_type: "Team", bypass_mode: "always" }],
+        })),
+        /no one may bypass the release-tags-locked ruleset — bypass is/,
+      ],
+      [
+        "the locked tag ruleset only evaluated, not enforced",
+        withChange(`repos/${R}/rulesets/9`, (ruleset: object) => ({
+          ...ruleset,
+          enforcement: "evaluate",
+        })),
+        /release-tags-locked ruleset .* — enforcement is evaluate/,
+      ],
+      [
+        "the locked tag ruleset narrowed to another pattern",
+        withChange(`repos/${R}/rulesets/9`, (ruleset: object) => ({
+          ...ruleset,
+          conditions: { ref_name: { include: ["refs/tags/v1.*"], exclude: [] } },
+        })),
+        /release-tags-locked ruleset .* — applies to \["refs\/tags\/v1\.\*"\]/,
+      ],
+      [
+        "the locked ruleset made a branch ruleset",
+        withChange(`repos/${R}/rulesets/9`, (ruleset: object) => ({
+          ...ruleset,
+          target: "branch",
+        })),
+        /release-tags-locked ruleset .* — target is branch/,
+      ],
+      [
         "the workflow token allowed to write",
         withChange(`repos/${R}/actions/permissions/workflow`, (w: object) => ({
           ...w,
@@ -267,6 +344,33 @@ describe("the repository settings, as an administrator sees them", () => {
       expect(found).toHaveLength(1);
       expect(found[0]).toMatch(message);
     });
+
+    it("a tag ruleset deleted fails both of its checks", () => {
+      const view = withChange(`repos/${R}/rulesets?targets=branch,tag`, (list: { id: number }[]) =>
+        list.filter((ruleset) => ruleset.id !== 9),
+      );
+      expect(failures(view)).toEqual([
+        expect.stringMatching(/release-tags-locked .* — no ruleset named "release-tags-locked"/),
+        expect.stringMatching(/release-tags-locked ruleset — no ruleset named/),
+      ]);
+    });
+  });
+
+  it("reports immutable releases switched off as not checked, which fails the full check", () => {
+    // GitHub answers 404 when they are off, the same answer a token without admin read gets.
+    const view = adminView();
+    view[`repos/${R}/immutable-releases`] = { ok: false };
+    const results = checkSettings(EXPECTED, { endpoints: view });
+    expect(results.filter((r) => r.outcome === "fail")).toEqual([]);
+    expect(results.filter((r) => r.outcome === "not-checked")).toEqual([
+      expect.objectContaining({ name: expect.stringContaining("immutable releases are on") }),
+    ]);
+  });
+
+  it("fails when GitHub reports immutable releases as not enabled", () => {
+    expect(
+      failures(withChange(`repos/${R}/immutable-releases`, () => ({ enabled: false }))),
+    ).toEqual([expect.stringMatching(/immutable releases are on — enabled is false/)]);
   });
 });
 
@@ -282,8 +386,11 @@ describe("the repository settings, as an ordinary token sees them", () => {
     ]) {
       view[path] = { ok: false };
     }
-    const ruleset = view[`repos/${R}/rulesets/7`]?.data as Record<string, unknown>;
-    view[`repos/${R}/rulesets/7`] = { ok: true, data: { ...ruleset, bypass_actors: null } };
+    for (const id of [7, 8, 9]) {
+      const ruleset = view[`repos/${R}/rulesets/${id}`]?.data as Record<string, unknown>;
+      view[`repos/${R}/rulesets/${id}`] = { ok: true, data: { ...ruleset, bypass_actors: null } };
+    }
+    view[`repos/${R}/immutable-releases`] = { ok: false };
     return view;
   }
 
@@ -306,6 +413,9 @@ describe("the repository settings, as an ordinary token sees them", () => {
     expect(results.filter((r) => r.outcome === "not-checked").map((r) => r.name)).toEqual([
       "each team has exactly its permission on the repository, and no other team has any",
       "only the admins and ci teams may bypass the main ruleset",
+      "only the admins and ci teams may bypass the release-tags-create ruleset",
+      "no one may bypass the release-tags-locked ruleset",
+      "a published release's tag can be neither moved nor deleted: immutable releases are on",
       "GitHub Actions is on, its token only reads, and it cannot approve pull requests",
       "a pull request from outside the teams runs no workflow before someone approves it",
     ]);
@@ -354,7 +464,10 @@ describe("the repository settings, as an ordinary token sees them", () => {
 
 describe(".github/repository-settings.json", () => {
   it("names only teams it defines in the bypass list, and every team member is a collaborator", () => {
-    for (const bypass of EXPECTED.mainRuleset.bypass) {
+    for (const bypass of [
+      ...EXPECTED.mainRuleset.bypass,
+      ...EXPECTED.tagRulesets.flatMap((ruleset) => ruleset.bypass),
+    ]) {
       expect(EXPECTED.teams[bypass.team], bypass.team).toBeDefined();
     }
     for (const team of Object.values(EXPECTED.teams)) {

@@ -5,7 +5,8 @@ import { readFileSync } from "node:fs";
  * (docs/repository-settings.md): without these settings the CI role's ownership of the
  * checks could be sidestepped quietly — a developer with admin rights could switch the
  * ruleset off, an extra bypass could merge without checks, a team losing write access would
- * silently void CODEOWNERS.
+ * silently void CODEOWNERS, and a release tag could be moved under the projects that depend
+ * on it (docs/versioning.md).
  *
  * `.github/scripts/repo-settings-collect.sh` asks GitHub and records, per API path, what it
  * returned or that the token in use may not read it. This compares that with
@@ -34,6 +35,14 @@ export interface ExpectedSettings {
     readonly include: readonly string[];
     readonly bypass: readonly { readonly team: string; readonly mode: string }[];
   };
+  readonly tagRulesets: readonly {
+    readonly name: string;
+    readonly enforcement: string;
+    readonly include: readonly string[];
+    readonly rules: readonly string[];
+    readonly bypass: readonly { readonly team: string; readonly mode: string }[];
+  }[];
+  readonly immutableReleases: boolean;
   readonly branchRules: {
     readonly deletion: boolean;
     readonly non_fast_forward: boolean;
@@ -115,14 +124,73 @@ export function checkSettings(expected: ExpectedSettings, collected: Collected):
       type: string;
       parameters?: Record_;
     }[];
-  const mainRuleset = (): Record_ => {
+  const rulesetNamed = (name: string): Record_ => {
     const list = data(`repos/${repo}/rulesets`) as { id: number; name: string }[];
-    const listed = list.find((ruleset) => ruleset.name === expected.mainRuleset.name);
+    const listed = list.find((ruleset) => ruleset.name === name);
     if (listed === undefined) {
-      throw new Error(`no ruleset named "${expected.mainRuleset.name}"`);
+      throw new Error(`no ruleset named "${name}"`);
     }
     return data(`repos/${repo}/rulesets/${listed.id}`) as Record_;
   };
+  const mainRuleset = () => rulesetNamed(expected.mainRuleset.name);
+  const includeOf = (ruleset: Record_) =>
+    ((ruleset.conditions as Record_ | undefined)?.ref_name as Record_ | undefined)?.include as
+      | string[]
+      | undefined;
+  /** The ruleset's bypass list compared with `want`; GitHub shows it to an administrator only. */
+  const bypassDiffers = (
+    ruleset: Record_,
+    want: readonly { readonly team: string; readonly mode: string }[],
+  ): string | undefined => {
+    const bypass = adminField(ruleset, "bypass_actors", `repos/${repo}/rulesets/{id}`) as {
+      actor_id: number;
+      actor_type: string;
+      bypass_mode: string;
+    }[];
+    const actual = bypass.map((b) => `${b.actor_type}:${b.actor_id}:${b.bypass_mode}`);
+    const wanted = want.map((b) => `Team:${expected.teams[b.team]?.id}:${b.mode}`);
+    return sameSet(actual, wanted)
+      ? undefined
+      : `bypass is ${describe(actual)}, expected ${describe(wanted)}`;
+  };
+  /**
+   * A tag ruleset's checks: one for what an ordinary token can read (enforcement, target,
+   * pattern, rules), one for its bypass list. Restricting creation and forbidding updates and
+   * deletion are two rulesets because a bypass applies to every rule of its ruleset: one
+   * ruleset would let the teams that may create a release tag also move or delete it.
+   */
+  const tagRulesetChecks = (
+    want: ExpectedSettings["tagRulesets"][number],
+  ): [string, () => string | undefined][] => [
+    [
+      `the ${want.name} ruleset is active and restricts ${want.rules.join(" and ")} of tags ${want.include.join(", ")}`,
+      () => {
+        const ruleset = rulesetNamed(want.name);
+        const problems: string[] = [];
+        if (ruleset.enforcement !== want.enforcement) {
+          problems.push(`enforcement is ${ruleset.enforcement}`);
+        }
+        if (ruleset.target !== "tag") {
+          problems.push(`target is ${ruleset.target}`);
+        }
+        const include = includeOf(ruleset);
+        if (!sameSet(include ?? [], want.include)) {
+          problems.push(`applies to ${describe(include)}`);
+        }
+        const rules = ((ruleset.rules ?? []) as { type: string }[]).map((rule) => rule.type);
+        if (!sameSet(rules, want.rules)) {
+          problems.push(`rules are ${describe(rules)}`);
+        }
+        return problems.length === 0 ? undefined : problems.join("; ");
+      },
+    ],
+    [
+      want.bypass.length === 0
+        ? `no one may bypass the ${want.name} ruleset`
+        : `only the ${want.bypass.map((b) => b.team).join(" and ")} teams may bypass the ${want.name} ruleset`,
+      () => bypassDiffers(rulesetNamed(want.name), want.bypass),
+    ],
+  ];
 
   const checks: [string, () => string | undefined][] = [
     [
@@ -267,9 +335,7 @@ export function checkSettings(expected: ExpectedSettings, collected: Collected):
         if (ruleset.enforcement !== expected.mainRuleset.enforcement) {
           problems.push(`enforcement is ${ruleset.enforcement}`);
         }
-        const include = (
-          (ruleset.conditions as Record_ | undefined)?.ref_name as Record_ | undefined
-        )?.include as string[] | undefined;
+        const include = includeOf(ruleset);
         if (!sameSet(include ?? [], expected.mainRuleset.include)) {
           problems.push(`applies to ${describe(include)}`);
         }
@@ -278,23 +344,23 @@ export function checkSettings(expected: ExpectedSettings, collected: Collected):
     ],
     [
       "only the admins and ci teams may bypass the main ruleset",
+      () => bypassDiffers(mainRuleset(), expected.mainRuleset.bypass),
+    ],
+    ...expected.tagRulesets.flatMap(tagRulesetChecks),
+    [
+      "a published release's tag can be neither moved nor deleted: immutable releases are on",
       () => {
-        const bypass = adminField(
-          mainRuleset(),
-          "bypass_actors",
-          `repos/${repo}/rulesets/{id}`,
-        ) as {
-          actor_id: number;
-          actor_type: string;
-          bypass_mode: string;
-        }[];
-        const actual = bypass.map((b) => `${b.actor_type}:${b.actor_id}:${b.bypass_mode}`);
-        const want = expected.mainRuleset.bypass.map(
-          (b) => `Team:${expected.teams[b.team]?.id}:${b.mode}`,
-        );
-        return sameSet(actual, want)
+        // GitHub answers 404 both when immutable releases are off and when the token may not
+        // read the setting, so an answer that is not 200 can only be reported as not checked.
+        const path = `repos/${repo}/immutable-releases`;
+        const entry = collected.endpoints[path];
+        if (entry === undefined || !entry.ok) {
+          throw new Unreadable(`GET ${path} (404: switched off, or not readable by this token)`);
+        }
+        const { enabled } = entry.data as Record_;
+        return enabled === expected.immutableReleases
           ? undefined
-          : `bypass is ${describe(actual)}, expected ${describe(want)}`;
+          : `enabled is ${enabled}, not ${expected.immutableReleases}`;
       },
     ],
     [

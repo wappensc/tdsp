@@ -19,7 +19,8 @@ paths=(
   "repos/$repo/rules/branches/$branch"
   "repos/$repo/collaborators?per_page=100"
   "repos/$repo/codeowners/errors"
-  "repos/$repo/rulesets"
+  "repos/$repo/rulesets?targets=branch,tag"
+  "repos/$repo/immutable-releases"
   "repos/$repo/teams?per_page=100"
   "repos/$repo/actions/permissions"
   "repos/$repo/actions/permissions/workflow"
@@ -43,8 +44,9 @@ fetch() {
   for path in "${paths[@]}"; do
     fetch "$path"
   done
-  # Each ruleset's details (its bypass list among them), for the ids the list returned.
-  if ids=$(gh api "repos/$repo/rulesets" --jq '.[].id' 2>/dev/null); then
+  # Each ruleset's details (its bypass list among them), for the ids the list returned. The
+  # list names its targets: GitHub does not document which rulesets it returns without them.
+  if ids=$(gh api "repos/$repo/rulesets?targets=branch,tag" --jq '.[].id' 2>/dev/null); then
     for id in $ids; do
       fetch "repos/$repo/rulesets/$id"
     done
