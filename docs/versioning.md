@@ -1,6 +1,6 @@
 ---
 title: "Versioning and releases"
-summary: "What a release tag vX.Y.Z of the reference implementation names and promises, how it relates to the specification's own version, which number a change moves, how tags are made and how far they are protected, and how another project depends on a release through Git."
+summary: "What a release tag vX.Y.Z of the reference implementation names and promises, how it relates to the specification's own version, which number a change moves, who makes a tag and how it is protected, and how another project depends on a release through Git."
 read_when:
   - "Tagging a release, or deciding whether a change needs a new major, minor or patch version"
   - "Changing an export of a package, or the shape of persisted engine state"
@@ -55,25 +55,28 @@ bridges in this repository.
 
 - A tag is annotated, named `vX.Y.Z`, and placed on a commit of `main` whose CI runs
   passed. Its message names the version of the specification it implements.
+- The CI role creates it (`wappensc-ci`, or `wappensc-admin`): no one else may push a tag
+  matching `v*`. It publishes the release right after pushing the tag.
 - A tag is never moved or deleted once pushed: a wrong release is superseded by the next
   patch version.
 - There is no maintenance branch. When a fix is needed for an older major version while
   `main` has moved on, a branch `release/X.x` is created from that major's last tag.
 
-**A tag is protected only through its release.** GitHub's immutable releases are enabled
-for this repository, by the repository's own setting rather than by the organization
-owner, so a repository admin can switch them off. GitHub documents that the tag of a
-published immutable release can be neither moved nor deleted; that has not been tried
-here, but GitHub reports `v1.0.0`'s release as immutable. A tag without a release has no
-protection, and neither has a tag in the time between its push and its release: the only
-ruleset applies to the branch `main`. Publish the release right after pushing its tag.
+**How a tag is protected.** Two rulesets and one repository setting, all three verified by
+the full check of the repository settings
+([repository-settings.md](repository-settings.md)):
 
-The intended protection adds a ruleset for `refs/tags/v*` that forbids deletion and update
-and restricts creation to the admins and ci teams, and a check in
-`tools/repo-settings.ts` of both that ruleset and the immutable-releases setting
-([docs/repository-settings.md](repository-settings.md)). Until then, compare the commit a
-tag points to (`git ls-remote --tags origin`) with the one named in its release notes
-before relying on it.
+| What | Protects against |
+| --- | --- |
+| Ruleset `release-tags-create` | anyone but the `admins` and `ci` teams creating a `v*` tag |
+| Ruleset `release-tags-locked`, with no bypass | anyone moving or deleting a `v*` tag, a tag without a release included |
+| Release immutability | anyone moving or deleting the tag of a published release |
+
+These rest on GitHub's documentation of rulesets and immutable releases; that a push
+against them is refused has not been tried here. An administrator can still switch any
+of the three off; the daily Repository settings workflow sees whether the two rulesets
+are in place, and only the full check sees their bypass lists and the immutability
+setting.
 
 ## Depending on a release
 
