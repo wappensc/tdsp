@@ -1,6 +1,6 @@
 ---
 title: "Versioning and releases"
-summary: "What a release tag vX.Y.Z of the reference implementation names and promises, how it relates to the specification's own version, which number a change moves, how tags are made and not yet protected, and how another project depends on a release through Git."
+summary: "What a release tag vX.Y.Z of the reference implementation names and promises, how it relates to the specification's own version, which number a change moves, how tags are made and how far they are protected, and how another project depends on a release through Git."
 read_when:
   - "Tagging a release, or deciding whether a change needs a new major, minor or patch version"
   - "Changing an export of a package, or the shape of persisted engine state"
@@ -60,10 +60,17 @@ bridges in this repository.
 - There is no maintenance branch. When a fix is needed for an older major version while
   `main` has moved on, a branch `release/X.x` is created from that major's last tag.
 
-**Tags are not protected yet.** The only ruleset applies to the branch `main`, so any
-account with write access can move or delete a tag. The intended protection is a ruleset
-for `refs/tags/v*` that forbids deletion and update and restricts creation to the admins
-and ci teams, together with a check of it in `tools/repo-settings.ts`
+**A tag is protected only through its release.** GitHub's immutable releases are enabled
+for this repository, by the repository's own setting rather than by the organization
+owner, so a repository admin can switch them off. GitHub documents that the tag of a
+published immutable release can be neither moved nor deleted; that has not been tried
+here, but GitHub reports `v1.0.0`'s release as immutable. A tag without a release has no
+protection, and neither has a tag in the time between its push and its release: the only
+ruleset applies to the branch `main`. Publish the release right after pushing its tag.
+
+The intended protection adds a ruleset for `refs/tags/v*` that forbids deletion and update
+and restricts creation to the admins and ci teams, and a check in
+`tools/repo-settings.ts` of both that ruleset and the immutable-releases setting
 ([docs/repository-settings.md](repository-settings.md)). Until then, compare the commit a
 tag points to (`git ls-remote --tags origin`) with the one named in its release notes
 before relying on it.
