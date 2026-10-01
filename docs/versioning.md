@@ -72,8 +72,11 @@ the full check of the repository settings
 | Ruleset `release-tags-locked`, with no bypass | anyone moving or deleting a `v*` tag, a tag without a release included |
 | Release immutability | anyone moving or deleting the tag of a published release |
 
-These rest on GitHub's documentation of rulesets and immutable releases; that a push
-against them is refused has not been tried here. An administrator can still switch any
+That a developer cannot create a `v*` tag has been tried: on 2 October 2026 GitHub refused
+`wappensc-developer`'s push of `v0.0.0-probe` with `GH013 … Cannot create ref due to
+creations being restricted`. That moving or deleting a tag is refused rests on GitHub's
+documentation of rulesets and immutable releases and has not been tried, because an
+attempt that succeeded would change a published tag. An administrator can still switch any
 of the three off; the daily Repository settings workflow sees whether the two rulesets
 are in place, and only the full check sees their bypass lists and the immutability
 setting.
