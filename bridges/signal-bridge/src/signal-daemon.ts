@@ -67,19 +67,22 @@ let nextRequestId = 0;
 
 /**
  * A JSON-RPC error `signal-cli` answered a call with. `code` is `signal-cli`'s own
- * error code (5 is Signal's rate limit — see
- * `send-failure.ts`); the message is the text this bridge has always thrown.
+ * JSON-RPC error code (-5 is Signal's rate limit — see `send-failure.ts`), and `data`
+ * the error's `data` member as received, unchecked; the message is the text this bridge
+ * has always thrown.
  *
  * Not written as a TS constructor parameter property: this bridge runs under Node's
  * `--experimental-strip-types`, which only strips annotations (see `MatrixApiError`).
  */
 export class SignalRpcError extends Error {
   readonly code: number;
+  readonly data: unknown;
 
-  constructor(message: string, code: number) {
+  constructor(message: string, code: number, data?: unknown) {
     super(message);
     this.name = "SignalRpcError";
     this.code = code;
+    this.data = data;
   }
 }
 
@@ -174,7 +177,7 @@ export class SocketRpcClient {
       method?: string;
       params?: unknown;
       result?: unknown;
-      error?: { code: number; message: string };
+      error?: { code: number; message: string; data?: unknown };
     };
     try {
       message = JSON.parse(line);
@@ -205,6 +208,7 @@ export class SocketRpcClient {
         new SignalRpcError(
           `signal-cli JSON-RPC error: ${message.error.message} (code ${message.error.code})`,
           message.error.code,
+          message.error.data,
         ),
       );
     } else {
