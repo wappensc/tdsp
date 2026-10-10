@@ -406,8 +406,8 @@ export interface DocumentEngineOptions {
    * frame or a control snapshot is accepted from, so a client that does not know it
    * cannot act on either and rejects them. It also decides who answers a resync
    * request (RSY-6): the creator answers everyone else's, and a peer answers only the
-   * creator's own (a creator that restarted has lost its content and nobody
-   * else can restore it). A client that does not know the creator answers no
+   * creator's own (a restarted creator may lack content — none persisted, or what
+   * arrived while it was away — and only a peer can give it back). A client that does not know the creator answers no
    * one and accepts a resync response from no one.
    */
   creatorMemberId?: MemberId;
@@ -1152,8 +1152,8 @@ export class DocumentEngine {
         // LIF-6): an edit sent before the close may arrive after it and is applied like
         // any other, so every receiver ends with the same content whichever came first.
         // Only the creator answers a resync request, with one
-        // exception: a creator that restarted has lost its content, and only a
-        // peer can restore it. So a response counts if it comes from the creator,
+        // exception: a restarted creator may lack content, and only a peer can
+        // give it back. So a response counts if it comes from the creator,
         // or — for the creator alone — answers one of its own requests.
         if (
           frame.kind === "resync-response" &&
@@ -1803,8 +1803,8 @@ export class DocumentEngine {
   /**
    * Whether a resync response from `sender` counts. Only the
    * creator answers a resync request, so a response counts if it comes from the
-   * creator. The one exception is the creator itself: a creator that restarted has
-   * lost its content, only a peer can restore it, and so it accepts a response
+   * creator. The one exception is the creator itself: a restarted creator may lack
+   * content, only a peer can give it back, and so it accepts a response
    * from anyone — but only one that answers a request *it* made, so an unsolicited
    * "response" cannot be used to push content at it.
    */
@@ -1824,8 +1824,8 @@ export class DocumentEngine {
    * snapshot per online member at tens of seconds of latency, and suppressing the
    * others until the creator's answer arrives only works on a fast network. The single
    * exception: a peer answers a request
-   * made by the creator, because a creator that restarted has lost its content and
-   * nobody else can restore it. What a peer sends the creator is content only — it
+   * made by the creator, because a restarted creator may lack content that
+   * nobody else can give back. What a peer sends the creator is content only — it
    * never carries a control snapshot, which only the creator can issue.
    *
    * Per request, per tick: skip this client's own request; skip one already
