@@ -7,7 +7,7 @@ import { ATTACHMENT_FRAME_LIMIT } from "./attachment.ts";
  *
  * **The intervals here are estimates**, not measurements: no run has been made to hit
  * Signal's own rate limit on purpose. `signal-cli` surfaces
- * that limit as a JSON-RPC error (code 5, see `send-failure.ts`), so a floor that is too
+ * that limit as a JSON-RPC error (code -5, see `send-failure.ts`), so a floor that is too
  * fast is corrected by the scheduler's adaptive spacing rather than by being right.
  *
  * **The size bound is a choice, not a limit of Signal.** A message body carries roughly

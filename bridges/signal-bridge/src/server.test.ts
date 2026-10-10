@@ -251,11 +251,15 @@ describe("signal-bridge HTTP API", () => {
         body: JSON.stringify({ sender: "alice", payload: "aGVsbG8=" }),
       });
     };
-    // signal-cli's error code 5 is Signal's rate limit.
-    expect((await sendFailingWith(new SignalRpcError("rate limited (code 5)", 5))).status).toBe(
-      429,
+    // signal-cli's JSON-RPC error code -5 is Signal's rate limit, with the wait Signal stated.
+    const rateLimited = await sendFailingWith(
+      new SignalRpcError("rate limited (code -5)", -5, {
+        response: { results: [{ type: "RATE_LIMIT_FAILURE", retryAfterSeconds: 42 }] },
+      }),
     );
-    expect((await sendFailingWith(new SignalRpcError("other (code 1)", 1))).status).toBe(502);
+    expect(rateLimited.status).toBe(429);
+    expect(rateLimited.headers.get("retry-after")).toBe("42");
+    expect((await sendFailingWith(new SignalRpcError("other (code -1)", -1))).status).toBe(502);
     expect((await sendFailingWith(new Error("signal-cli daemon socket closed"))).status).toBe(502);
     // A frame over what the bridge carries in one message can never be retried into fitting.
     expect((await sendFailingWith(new FrameTooLargeError(5_000_000))).status).toBe(413);
