@@ -79,5 +79,10 @@ behind a claim elsewhere in the specification.
 - **Persistence across restarts** of a creator's control state and of undistributed
   changes is required of an application (CTL-12, SND-8); a creator whose persisted state
   is lost restarts from sequence 0.
+- **Matrix device verification.** The Matrix bridge does not cross-sign its device.
+  Element is moving its clients to exclude such devices by default (MSC4153: their
+  messages hidden, no room keys sent to them), announced for October 2026; people using
+  Element would then not see what the bridge posts. Between bridges of this repository
+  nothing changes. Not tried against Element ([#27](https://github.com/wappensc/tdsp/issues/27)).
 - **The email bridge's memory of seen messages** grows with the thread (a few hundred
   bytes per mail); bounding it needs an IMAP UID position.
