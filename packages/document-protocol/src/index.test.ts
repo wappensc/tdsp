@@ -3590,3 +3590,159 @@ describe("send scheduling and retry", () => {
     });
   });
 });
+
+describe("starting from persisted content (join's restore, SPECIFICATION.md §6.3, SND-8)", () => {
+  const OPTIONS = { batchWindowMs: 0, resyncResponseThrottleMs: 0 };
+
+  /** The mock, with a restarted member shown nothing from before its restart — as on a messenger without history. */
+  function transport() {
+    const port = new InMemoryMessengerPort();
+    const hiddenUpTo = new Map<MemberId, number>();
+    const messenger: MessengerPort = {
+      transportProfile: () => port.transportProfile(),
+      createDocument: (documentId, creator) => port.createDocument(documentId, creator),
+      listChannels: (member) => port.listChannels(member),
+      receive: async (documentId, member) =>
+        (await port.receive(documentId, member)).filter(
+          (delivery) => Number(delivery.id) > (hiddenUpTo.get(member) ?? -1),
+        ),
+      send: (documentId, sender, payload) => port.send(documentId, sender, payload),
+    };
+    const restart = async (member: MemberId) => {
+      hiddenUpTo.set(member, Number((await port.receive(DOCUMENT_ID, "x")).at(-1)?.id ?? -1));
+    };
+    const kindsFrom = async (sender: MemberId, after: number) =>
+      (await port.receive(DOCUMENT_ID, "x"))
+        .filter((delivery) => delivery.sender === sender && Number(delivery.id) > after)
+        .map((delivery) => decodeFrame(delivery.payload).kind);
+    const lastId = async () => Number((await port.receive(DOCUMENT_ID, "x")).at(-1)?.id ?? -1);
+    return { port, messenger, restart, kindsFrom, lastId };
+  }
+
+  async function twoAuthors(messenger: MessengerPort) {
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, OPTIONS);
+    await alice.setMembership("bob", "write");
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, {
+      ...OPTIONS,
+      creatorMemberId: "alice",
+    });
+    await alice.sync();
+    await bob.sync();
+    alice.edit((fragment) => insertPlainText(fragment, 0, "Hallo "));
+    await bob.sync();
+    bob.edit((fragment) => insertPlainText(fragment, 6, "Welt"));
+    await alice.sync();
+    return { alice, bob };
+  }
+
+  it("shows the content at once, attributed as persisted, and sends it once as a whole (creator)", async () => {
+    const t = transport();
+    const { alice, bob } = await twoAuthors(t.messenger);
+    const saved = encodeUpdate(alice.document);
+    const attribution = alice.attribution.toJSON();
+    const controlState = alice.controlState;
+    alice.dispose();
+    await t.restart("alice");
+    const before = await t.lastId();
+
+    const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", t.messenger, undefined, {
+      ...OPTIONS,
+      creatorMemberId: "alice",
+      controlState,
+      restore: { state: saved, attribution },
+    });
+    expect(getPlainText(restarted.fragment)).toBe("Hallo Welt");
+    expect(restarted.attribution.toJSON()).toEqual(attribution);
+    // It may hold what nobody else has, so it sends the whole state once, as resync() does.
+    await vi.waitFor(async () => expect(restarted.hasUndistributedChanges).toBe(false));
+    expect(await t.kindsFrom("alice", before)).toEqual(["resync-request", "edit"]);
+    await bob.sync();
+    expect(getPlainText(bob.fragment)).toBe("Hallo Welt");
+  });
+
+  it("delivers a change that never went out before the restart, once the creator has bootstrapped it (non-creator)", async () => {
+    const t = transport();
+    const { alice } = await twoAuthors(t.messenger);
+    // Bob's application persisted his document, whose last change never went out.
+    const errors: unknown[] = [];
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", t.messenger, undefined, {
+      ...OPTIONS,
+      creatorMemberId: "alice",
+    });
+    await alice.sync();
+    await bob.sync();
+    t.port.disconnect("bob");
+    bob.edit((fragment) => insertPlainText(fragment, 10, "!"));
+    const saved = encodeUpdate(bob.document);
+    bob.dispose(); // the last attempt fails: the change is lost from the send queue
+    t.port.reconnect("bob");
+    await alice.sync();
+    expect(getPlainText(alice.fragment)).toBe("Hallo Welt"); // nobody else has it
+    await t.restart("bob");
+
+    const restarted = await DocumentEngine.join(
+      DOCUMENT_ID,
+      "bob",
+      t.messenger,
+      (error) => errors.push(error),
+      { ...OPTIONS, creatorMemberId: "alice", restore: { state: saved } },
+    );
+    expect(getPlainText(restarted.fragment)).toBe("Hallo Welt!");
+    expect(restarted.hasUndistributedChanges).toBe(true); // not before its bootstrap (CTL-13)
+    expect(restarted.attribution.ranges.some((range) => range.authorId === "bob")).toBe(false);
+
+    await alice.sync(); // answers the restarted bob's request
+    await restarted.sync(); // bootstrapped: the whole state goes out
+    await vi.waitFor(async () => expect(restarted.hasUndistributedChanges).toBe(false));
+    await alice.sync();
+    expect(getPlainText(alice.fragment)).toBe("Hallo Welt!");
+    // Restoring is not an edit: nothing was refused for awaiting the bootstrap.
+    expect(errors.filter((error) => error instanceof SendRefusedError)).toEqual([]);
+  });
+
+  it("keeps the mark, and sends nothing, while the restored member may not edit", async () => {
+    const t = transport();
+    const { alice, bob } = await twoAuthors(t.messenger);
+    await alice.setMembership("bob", "read");
+    await bob.sync();
+    const saved = encodeUpdate(bob.document);
+    bob.dispose();
+    await t.restart("bob");
+    const before = await t.lastId();
+
+    const restarted = await DocumentEngine.join(DOCUMENT_ID, "bob", t.messenger, () => {}, {
+      ...OPTIONS,
+      creatorMemberId: "alice",
+      restore: { state: saved },
+    });
+    await alice.sync();
+    await restarted.sync();
+    expect(restarted.permissionOf("bob")).toBe("read");
+    expect(restarted.hasUndistributedChanges).toBe(true);
+    expect(await t.kindsFrom("bob", before)).toEqual(["resync-request"]);
+  });
+
+  it("refuses a state that does not decode, before anything is sent", async () => {
+    const t = transport();
+    await twoAuthors(t.messenger);
+    const before = await t.lastId();
+    await expect(
+      DocumentEngine.join(DOCUMENT_ID, "bob", t.messenger, undefined, {
+        ...OPTIONS,
+        creatorMemberId: "alice",
+        restore: { state: new Uint8Array([0xff, 0xff, 0xff]) },
+      }),
+    ).rejects.toThrow(/restored state/);
+    expect(await t.lastId()).toBe(before);
+  });
+
+  it("create() refuses it: a new document has no persisted content", async () => {
+    const t = transport();
+    await expect(
+      DocumentEngine.create(DOCUMENT_ID, "alice", t.messenger, undefined, {
+        ...OPTIONS,
+        restore: { state: new Uint8Array([0]) },
+      }),
+    ).rejects.toThrow(/join\(/);
+  });
+});
