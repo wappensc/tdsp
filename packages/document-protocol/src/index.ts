@@ -846,6 +846,13 @@ export class DocumentEngine {
       onError(error, "broadcast");
     }
     await client.sync();
+    // A control frame left pending by a restart may have been delivered or not: sent again
+    // now, unchanged, and retried until the transport accepts or refuses it (CTL-12), so it
+    // takes effect without waiting for the creator's next action. Not awaited: offline, it
+    // may take as long as the outage.
+    if (client.#pendingControl !== undefined) {
+      client.#resendPendingControl().catch((error: unknown) => onError(error, "broadcast"));
+    }
     return client;
   }
 
@@ -1356,6 +1363,12 @@ export class DocumentEngine {
    *
    * `"creator"` cannot be granted, and the creator's own record cannot be
    * changed: a creator is fixed at creation.
+   *
+   * Like every control action, it resolves once the transport has accepted the frame. A send
+   * that fails for now is retried (`sendStatus` shows it), so while offline this waits. It
+   * rejects when the transport refuses the frame for good — then nothing changed — or when
+   * the engine is disposed first: then the frame stays pending in the persisted control state,
+   * and the restarted creator sends it (SPECIFICATION.md CTL-12).
    */
   async setMembership(member: MemberId, permission: "read" | "write" | null): Promise<void> {
     if ((permission as Permission | null) === "creator") {
@@ -1631,7 +1644,8 @@ export class DocumentEngine {
   /**
    * Stops broadcasting local edits. Does not affect other clients on the channel.
    * Sends what is pending one last time; there is no retry after this, so a failure
-   * is reported through `onError` and the change is lost.
+   * is reported through `onError` and the change is lost. A control frame still being
+   * retried is not lost: it stays pending in the persisted control state (CTL-12).
    */
   dispose(): void {
     this.#unobserve();
@@ -1989,10 +2003,28 @@ export class DocumentEngine {
     selection.hasAdopted = true;
   }
 
+  /** Sends a control frame left pending by a restart, in turn with every other control action (CTL-12). */
+  #resendPendingControl(): Promise<void> {
+    return this.#onControlChain(async () => {
+      if (this.#pendingControl !== undefined) {
+        await this.#sendControl(this.#pendingControl);
+      }
+    });
+  }
+
+  /** Runs `run` after every control action before it has settled, so no two take a number at once. */
+  #onControlChain(run: () => Promise<void>): Promise<void> {
+    const next = this.#controlChain.then(run, run);
+    this.#controlChain = next.catch(() => {});
+    return next;
+  }
+
   /**
    * The creator's issue path. Serialised, so two concurrent calls cannot take the
-   * same number; the number is taken only after the send succeeded, so a failed
-   * send never leaves a gap.
+   * same number; the number is taken only after the send succeeded, so a send refused
+   * for good never leaves a gap. A send that fails for now is retried until it is
+   * accepted or refused for good (CTL-12, SND-7): the action resolves only then, and the
+   * actions after it wait.
    */
   #issueControl(
     fields: ControlFields | (() => ControlFields),
@@ -2019,16 +2051,15 @@ export class DocumentEngine {
       });
       await this.#sendControl(frameText);
     };
-    const next = this.#controlChain.then(run, run);
-    this.#controlChain = next.catch(() => {});
-    return next;
+    return this.#onControlChain(run);
   }
 
   /**
    * Sends one control frame of the creator's through the outbox (CTL-12): persisted as
    * pending before the send, applied and cleared once the messenger accepted it, cleared
    * without being applied if the messenger refused it for good — then its number was not
-   * used. A crash in between leaves it pending, and the restarted engine sends the very
+   * used. A failure that is not for good is retried until one of the two happens. A crash
+   * or a `dispose()` in between leaves it pending, and the restarted engine sends the very
    * same text again.
    */
   async #sendControl(frameText: string): Promise<void> {
@@ -2061,15 +2092,20 @@ export class DocumentEngine {
     try {
       // Through the scheduler, on the floor like any message (SPECIFICATION.md SND-2);
       // receivers expect a follow-up to a control message, so the heartbeat is owed after it.
+      // A failure worth retrying is retried there (SND-7): such a send may have been delivered
+      // all the same, so the frame must go out again, unchanged, until it is accepted.
       id = await this.#scheduler.submit(
         () => this.#messenger.send(this.documentId, this.memberId, frameText),
-        { armsHeartbeat: true },
+        { armsHeartbeat: true, retry: true },
       );
     } catch (error) {
-      // Refused for good (a retryable failure is retried inside the scheduler): the
-      // messenger took nothing, so the number is still free.
-      this.#pendingControl = undefined;
-      this.#notifyControlStateChange();
+      // Refused for good: the messenger took nothing, so the number is free again. Any other
+      // failure reaches here only once the scheduler stopped retrying — this engine was
+      // disposed — and the frame stays pending, persisted, for the restarted engine (CTL-12).
+      if (!classifySendFailure(error).retryable) {
+        this.#pendingControl = undefined;
+        this.#notifyControlStateChange();
+      }
       throw error;
     }
     this.#markOwnSend(id);
