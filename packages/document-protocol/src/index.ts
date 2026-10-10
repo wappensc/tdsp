@@ -415,7 +415,7 @@ export interface DocumentEngineOptions {
   /**
    * The creator's own control state, as the application last persisted it
    * (SPECIFICATION.md CTL-12): given back when the creator re-attaches to
-   * its own document, so its sequence counter continues instead of restarting at
+   * its own document with `join()` — `create()` refuses it (LIF-5) — so its sequence counter continues instead of restarting at
    * 1 — a restarted counter would have every control frame rejected as stale —
    * and so its control snapshot, sent to joiners, still lists everyone it had
    * granted. **Honoured only when `creatorMemberId` equals this client's own
@@ -727,6 +727,14 @@ export class DocumentEngine {
     onError: DocumentEngineErrorHandler = defaultOnError,
     options: DocumentEngineOptions = {},
   ): Promise<DocumentEngine> {
+    // Persisted control state means the document exists: creating it anew would seed a
+    // second first paragraph over its content (LIF-5). Refused before anything is sent.
+    if (options.controlState !== undefined) {
+      throw new Error(
+        `cannot create ${documentId} anew from persisted control state (SPECIFICATION.md LIF-5): ` +
+          "a creator resuming its document rejoins it with join(…, { creatorMemberId: <its own memberId>, controlState })",
+      );
+    }
     // Refused before anything is registered or sent (PRF-3).
     const profile = profileFor(options.profile ?? YJS_PARAGRAPHS_1);
     await messenger.createDocument(documentId, memberId);
