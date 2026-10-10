@@ -1,4 +1,9 @@
-import type { DocumentId, ResyncRequestId } from "@tdsp/messenger-port";
+import {
+  type DocumentId,
+  jsonTextTooDeep,
+  MAX_JSON_NESTING,
+  type ResyncRequestId,
+} from "@tdsp/messenger-port";
 import { strictJsonProblem } from "./strict-json";
 import type { SyncPolicy } from "./sync-policy";
 
@@ -549,6 +554,13 @@ function decodePolicy(raw: unknown): SyncPolicy {
  * is the document the delivery was routed to is the engine's check (`document-mismatch`).
  */
 export function decodeFrame(text: string): Frame {
+  // Before the parser, so no frame's nesting is ever the parser's problem (§1.6).
+  if (jsonTextTooDeep(text)) {
+    throw new FrameDecodeError(
+      "not-json",
+      `the payload nests arrays and objects more than ${MAX_JSON_NESTING} deep`,
+    );
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
