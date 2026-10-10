@@ -206,17 +206,20 @@ function computeHunks(
 
 /**
  * Turns `computeHunks`' alignment into `PlainTextChange`s in flat index
- * space, one `diffText` call per "changed" hunk, walking a running `offset`
+ * space, one change or `diffText` call per "changed" hunk, walking a running `offset`
  * that an "equal" hunk advances by its own length plus one (the `"\n"` join
  * to whatever follows).
  *
- * **Each changed hunk borrows one paragraph of context from its neighbours.** Without it, a
- * hunk with zero old paragraphs and one new one (a paragraph inserted, say by pressing Enter
- * at the end of a paragraph) reports the new paragraph's text but not the extra `"\n"` the
- * document gained, so the paragraph after it lands one position early. The borrowed
+ * **A hunk that only inserts or only removes whole paragraphs** is reported as one change at
+ * its aligned position (`wholeParagraphChange`), `"\n"` boundary included.
+ *
+ * **Every other changed hunk borrows one paragraph of context from its neighbours.** Without
+ * it, a change that also adds or removes a paragraph boundary (a paragraph split or merged)
+ * reports the text but not the `"\n"` the document gained or lost, so the paragraph after it
+ * lands one position off. The borrowed
  * paragraph is identical on both sides by construction, so `diffText`'s prefix/suffix
- * matching trims it back out — but only after walking across the `"\n"` in between, which a
- * hunk with an empty side has no other way to see. The neighbour is only *read* for context,
+ * matching trims it back out — but only after walking across the `"\n"` in between, which the
+ * changed paragraphs alone do not show. The neighbour is only *read* for context,
  * never removed from the hunk list, so its own turn through the loop still only advances
  * `offset`.
  *
@@ -245,6 +248,12 @@ function diffParagraphs(
 
     const prev = hunks[i - 1];
     const next = hunks[i + 1];
+    const whole = wholeParagraphChange(hunk, offset, prev !== undefined, next !== undefined);
+    if (whole !== undefined) {
+      changes.push(whole);
+      offset += hunk.newParagraphs.join("\n").length + (hunk.newParagraphs.length > 0 ? 1 : 0);
+      continue;
+    }
     let regionOffset = offset;
     let oldParas = hunk.oldParagraphs;
     let newParas = hunk.newParagraphs;
@@ -262,6 +271,43 @@ function diffParagraphs(
     offset += hunk.newParagraphs.join("\n").length + (hunk.newParagraphs.length > 0 ? 1 : 0);
   }
   return changes;
+}
+
+/**
+ * The one change a hunk that only inserts or only removes whole paragraphs stands for, placed
+ * where `computeHunks` aligned it; `undefined` for a hunk with paragraphs on both sides.
+ *
+ * **Such a hunk is not handed to `diffText`.** With the borrowed context, the prefix/suffix
+ * trim is free to slide the change across a paragraph boundary whenever the text on either
+ * side repeats: a paragraph inserted in front of one that begins with the same words — two
+ * people starting a line at the same moment — is reported that many characters late, and the
+ * attribution credits each author with part of the other's line (ATR-2's rationale). The
+ * alignment already says exactly which paragraphs came or went, so the change is reported at
+ * their start, together with the one `"\n"` that joins them to the paragraph after them —
+ * or, when they are the last, to the one before.
+ */
+function wholeParagraphChange(
+  hunk: ParagraphHunk,
+  offset: number,
+  hasPrev: boolean,
+  hasNext: boolean,
+): PlainTextChange | undefined {
+  const inserted = hunk.oldParagraphs.length === 0;
+  const removed = hunk.newParagraphs.length === 0;
+  if (inserted === removed) {
+    return undefined;
+  }
+  const paragraphs = inserted ? hunk.newParagraphs : hunk.oldParagraphs;
+  const joined = paragraphs.join("\n").length;
+  const kind = inserted ? "insert" : "delete";
+  if (hasNext) {
+    return { kind, index: offset, length: joined + 1 };
+  }
+  if (hasPrev) {
+    return { kind, index: offset - 1, length: joined + 1 };
+  }
+  // Every paragraph there is, came or went: no boundary to either side.
+  return joined > 0 ? { kind, index: offset, length: joined } : undefined;
 }
 
 /**
