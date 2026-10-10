@@ -830,6 +830,12 @@ bootstraps ([§8](#8-bootstrap-and-resync)).
   restarts the control sequence at 1, after which every participant rejects the
   creator's frames as stale.
 
+An application may also persist a document's content and show it at once after a
+restart; TDSP requires only the creator's control state to be persisted (CTL-12).
+The restarted engine still sends a resync request when it joins (RSY-1), a
+non-creator still edits only after its bootstrap (CTL-13), and persisted content
+can hold changes that never reached anyone else (SND-8).
+
 ### 6.4 Closing a document
 
 Closing marks a document as finished. It is the only lifecycle transition after
@@ -1192,8 +1198,11 @@ and the answer is a targeted diff.
   request. An engine MUST NOT answer its own request.
   *Rationale:* one possible responder makes a join cost exactly one answer instead
   of one per online member, removes every timing-dependent suppression rule, and
-  leaves one attribution overlay. The exception exists because a creator's
-  content lives in memory: after a restart only a peer can give it back.
+  leaves one attribution overlay. The exception exists because a creator may
+  restart without the content it had — its application must persist the
+  creator's control state (CTL-12) but need not persist content — and, even with
+  persisted content, may lack what arrived while it was away; then only a peer
+  can give it back.
 - **RSY-7** · *engine* — A responder MUST answer a request only if it holds content
   the requester's state vector lacks or — for the creator only — it has issued a
   control sequence greater than the requester's, or the request has `bootstrap:
