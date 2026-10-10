@@ -13,6 +13,7 @@ import {
   type AttributionSnapshot,
   AttributionTracker,
   getFragment,
+  getPlainText,
   observePlainTextChanges,
   observeUpdates,
   type ReconciledDocument,
@@ -426,6 +427,28 @@ export interface DocumentEngineOptions {
   controlState?: PersistedControlState;
 
   /**
+   * The document's content as the application persisted it, to start from on `join()` —
+   * after a restart, so the document shows at once, before the messenger is reachable.
+   * `state` is the profile's encoded state (`encodeUpdate`), `attribution` what
+   * `attribution.toJSON()` returned for that same state; without it the restored text is
+   * unattributed. Applied before anything is observed, so it is neither sent as an edit of
+   * this client's nor credited to it. `create()` refuses it: a new document has nothing to
+   * restore.
+   *
+   * Persisted content may hold changes nobody else received — one still waiting to go out,
+   * or in flight, when the application stopped. So restored content counts as undistributed
+   * (`hasUndistributedChanges`, SPECIFICATION.md SND-8) until the engine has sent the whole
+   * state once, as `resync()` does: right away for the creator, after the bootstrap for
+   * anyone else (CTL-13), never while this client may not edit. One message per restart, the
+   * price of never losing such a change. Restoring changes what is shown, not what is
+   * permitted, and the engine still asks for a resync when it joins (RSY-1).
+   */
+  restore?: {
+    readonly state: Uint8Array;
+    readonly attribution?: AttributionSnapshot;
+  };
+
+  /**
    * Called after every change to this client's control state — a control frame
    * applied, one about to be sent, a snapshot adopted — so the application can persist
    * it (see `controlState`). Only a creator's is worth persisting, and it must be
@@ -563,6 +586,9 @@ export class DocumentEngine {
   #maxBytes: number | undefined;
   // `SendScheduler.droppedCount` as of the last `resync()` the transport accepted.
   #distributedThroughDrop = 0;
+  // Content restored on join that may hold changes nobody else has: sent whole once this
+  // client may edit (`restore`). Until then `#distributedThroughDrop` is below every count.
+  #restoredUnsent = false;
   // The one slot a resync request of this client's own may hold, however many things ask.
   #resyncGate = new ResyncGate();
   #autoResync: boolean;
@@ -729,6 +755,12 @@ export class DocumentEngine {
   ): Promise<DocumentEngine> {
     // Persisted control state means the document exists: creating it anew would seed a
     // second first paragraph over its content (LIF-5). Refused before anything is sent.
+    if (options.restore !== undefined) {
+      throw new Error(
+        `cannot create ${documentId} from persisted content: a creator resuming its document ` +
+          "rejoins it with join(…, { creatorMemberId: <its own memberId>, controlState, restore })",
+      );
+    }
     if (options.controlState !== undefined) {
       throw new Error(
         `cannot create ${documentId} anew from persisted control state (SPECIFICATION.md LIF-5): ` +
@@ -838,16 +870,32 @@ export class DocumentEngine {
     }
     // Refused before anything is sent (PRF-3): the application can decline instead.
     const profile = profileFor(options.profile ?? YJS_PARAGRAPHS_1);
+    // Persisted content goes in before the engine observes the document: it is neither an
+    // edit to send nor text this client just wrote. Refused before anything is sent.
+    const document = profile.createEmpty();
+    if (options.restore !== undefined) {
+      try {
+        profile.applyUpdate(document, options.restore.state, REMOTE_ORIGIN);
+      } catch (error) {
+        throw new Error(
+          `the restored state of ${documentId} does not decode under the profile ${profile.id}`,
+          { cause: error },
+        );
+      }
+    }
     const transport = await messenger.transportProfile?.();
     const client = new DocumentEngine(
       documentId,
       memberId,
       messenger,
       onError,
-      profile.createEmpty(),
+      document,
       options,
       transport,
     );
+    if (options.restore !== undefined) {
+      client.#startFromRestored(options.restore.attribution);
+    }
     try {
       await client.requestResync();
     } catch (error) {
@@ -889,8 +937,8 @@ export class DocumentEngine {
   /**
    * Whether this client may hold content no other participant has (SPECIFICATION.md
    * SND-8, SND-10): a message of its own carrying content was dropped for good since the engine
-   * started, and no `resync()` has sent the whole state since — every part of it, when it is
-   * too large for one message. Dropping ends the send
+   * started, or it started from restored content (`restore`), and no `resync()` has sent the
+   * whole state since — every part of it, when it is too large for one message. Dropping ends the send
    * job only — the change stays in this document, and every later change builds on it, so an
    * application must not show the document as synchronised while this is true. `resync()` is
    * the repair: it sends the whole state, once whatever caused the refusal is fixed. Held in
@@ -1246,7 +1294,40 @@ export class DocumentEngine {
       this.#onError(error, "broadcast"),
     );
     await this.#respondToResyncRequests(this.#queueResyncRequests(incomingResyncRequests));
+    this.#sendRestoredOnce();
     return applied;
+  }
+
+  /** Attributes restored content and marks it undistributed until it has been sent whole (`restore`). */
+  #startFromRestored(attribution: AttributionSnapshot | undefined): void {
+    if (attribution !== undefined) {
+      this.attribution.restore(attribution);
+    } else {
+      const length = getPlainText(getFragment(this.document)).length;
+      if (length > 0) {
+        this.attribution.recordInsert(0, length, UNATTRIBUTED_AUTHOR_ID);
+      }
+    }
+    this.#distributedThroughDrop = -1;
+    this.#restoredUnsent = true;
+  }
+
+  /**
+   * Sends restored content whole, once, as soon as this client may edit (SND-8, CTL-13). Not
+   * awaited: a large document goes out over several permitted slots. A failure is reported,
+   * and the mark stays until a `resync()` succeeds.
+   */
+  #sendRestoredOnce(): void {
+    if (!this.#restoredUnsent) {
+      return;
+    }
+    try {
+      this.#assertMayEdit();
+    } catch {
+      return; // not yet, or not at all: the content stays marked undistributed
+    }
+    this.#restoredUnsent = false;
+    this.resync().catch((error: unknown) => this.#onError(error, "broadcast"));
   }
 
   /**
