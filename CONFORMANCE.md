@@ -53,6 +53,7 @@ the specification says, not that two implementations interoperate.
 | LBI-6 | The status mappings of all three bridges are tested with faked errors; none has been provoked against a real provider's rate limit. For Signal the faked error follows `signal-cli`'s source (JSON-RPC code -5, with the stated wait in its send results), not a captured response |
 | LOS-1 … LOS-8 | Tested against the in-memory transport; not against a real messenger that actually loses a message. A bridge restart that falls entirely between two polls is not noticed (§10) |
 | §10, LOS-8: "ok" without evidence | By definition not a claim of completeness. A creator whose request expired unanswered may lack an offline member's change; the engine keeps the *unanswered* outcome observable |
+| SND-8, restored content | `join()` can start from persisted content (`restore`): shown at once, not sent as a local edit, counted as undistributed until the engine has sent the whole state once it may edit — at once for the creator, after the bootstrap for anyone else, never while read-only; a change that never left before the restart arrives that way. Tested against the in-memory transport |
 | CTL-12, SND-8 (application) | The engine sends no control frame the application could not persist, and marks changes it could not distribute until a resync; both tested. Keeping either across a restart is the application's part, and this repository contains no application |
 
 ## Known gaps
@@ -78,7 +79,9 @@ behind a claim elsewhere in the specification.
   built.
 - **Persistence across restarts** of a creator's control state and of undistributed
   changes is required of an application (CTL-12, SND-8); a creator whose persisted state
-  is lost restarts from sequence 0.
+  is lost restarts from sequence 0. An application that restores persisted content through
+  `join()` need not keep the undistributed mark: the engine treats restored content as
+  undistributed, at the cost of one message per restart.
 - **Matrix device verification.** The Matrix bridge does not cross-sign its device.
   Element is moving its clients to exclude such devices by default (MSC4153: their
   messages hidden, no room keys sent to them), announced for October 2026; people using
