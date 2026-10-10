@@ -513,6 +513,105 @@ describe("observePlainTextChanges: multi-paragraph structural changes", () => {
 
     unsubscribe();
   });
+
+  it("attributes a concurrent paragraph to its author when it arrives in front of one that begins with the same text, in either order of the concurrent inserts", () => {
+    // Which of two concurrent inserts at one index Yjs places first depends on the client
+    // ids, so both orders are run.
+    for (const [localId, remoteId] of [
+      [2, 1],
+      [1, 2],
+    ] as const) {
+      const local = new Y.Doc();
+      local.clientID = localId;
+      const remote = new Y.Doc();
+      remote.clientID = remoteId;
+      const fragment = local.getXmlFragment("content");
+      appendParagraph(fragment, "Antwort.");
+      Y.applyUpdate(remote, Y.encodeStateAsUpdate(local));
+
+      const tracker = new AttributionTracker();
+      let sender = "local";
+      const unsubscribe = observePlainTextChanges(fragment, (change) => {
+        if (change.kind === "insert") {
+          tracker.recordInsert(change.index, change.length, sender);
+        } else {
+          tracker.recordDelete(change.index, change.length, sender);
+        }
+      });
+
+      // The local author starts a new line and types its first characters...
+      const mine = new Y.XmlText();
+      const element = new Y.XmlElement("paragraph");
+      element.insert(0, [mine]);
+      fragment.insert(1, [element]);
+      for (const character of "Same start ") {
+        mine.insert(mine.length, character);
+      }
+      // ...while a line made concurrently at the same index, beginning the same way, arrives...
+      const theirs = new Y.XmlElement("paragraph");
+      theirs.insert(0, [new Y.XmlText("Same start, theirs.")]);
+      remote.getXmlFragment("content").insert(1, [theirs]);
+      sender = "remote";
+      Y.applyUpdate(local, Y.encodeStateAsUpdate(remote, Y.encodeStateVector(local)));
+      // ...and the local author goes on typing.
+      sender = "local";
+      for (const character of "mine.") {
+        mine.insert(mine.length, character);
+      }
+
+      // Every character of each line, its "\n" boundaries aside, is its one author's.
+      const text = getPlainText(fragment);
+      const authorAt = (index: number) =>
+        tracker.ranges.find((range) => range.start <= index && index < range.end)?.authorId;
+      for (const [line, author] of [
+        ["Same start mine.", "local"],
+        ["Same start, theirs.", "remote"],
+      ] as const) {
+        const start = text.indexOf(line);
+        const authors = new Set(Array.from(line, (_, k) => authorAt(start + k)));
+        expect([...authors], `"${line}", client ids ${localId}/${remoteId}`).toEqual([author]);
+      }
+      const theirsEnd = text.indexOf("Same start, theirs.") + "Same start, theirs.".length;
+      expect(tracker.lastEditBySender.get("remote"), `client ids ${localId}/${remoteId}`).toBe(
+        text[theirsEnd] === "\n" ? theirsEnd + 1 : theirsEnd,
+      );
+      unsubscribe();
+    }
+  });
+
+  it("removes the deleted paragraph's own attribution when the paragraph after it begins with the same text", () => {
+    const doc = createDocument();
+    const fragment = getFragment(doc);
+    const text0 = firstText(fragment);
+    const text1 = appendParagraph(fragment);
+    const text2 = appendParagraph(fragment);
+
+    const tracker = new AttributionTracker();
+    let sender = "alice";
+    const unsubscribe = observePlainTextChanges(fragment, (change) => {
+      if (change.kind === "insert") {
+        tracker.recordInsert(change.index, change.length, sender);
+      } else {
+        tracker.recordDelete(change.index, change.length, sender);
+      }
+    });
+
+    transact(doc, () => text0.insert(0, "first"));
+    transact(doc, () => text1.insert(0, "Same start, alice"));
+    sender = "bob";
+    transact(doc, () => text2.insert(0, "Same start, bob"));
+
+    transact(doc, () => fragment.delete(1, 1)); // remove alice's paragraph entirely
+
+    const text = getPlainText(fragment);
+    expect(text).toBe("first\nSame start, bob");
+    expect(tracker.ranges).toEqual([
+      { start: 0, end: 5, authorId: "alice" },
+      { start: 6, end: 21, authorId: "bob" },
+    ]);
+
+    unsubscribe();
+  });
 });
 
 /** The first (and, at the point these tests use it, only) paragraph's `Y.XmlText` — `ensureParagraph` plus one field access, so multi-paragraph tests can get a stable reference to keep mutating. */
