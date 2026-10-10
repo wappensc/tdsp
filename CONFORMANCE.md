@@ -53,6 +53,7 @@ the specification says, not that two implementations interoperate.
 | LBI-6 | The status mappings of all three bridges are tested with faked errors; none has been provoked against a real provider's rate limit. For Signal the faked error follows `signal-cli`'s source (JSON-RPC code -5, with the stated wait in its send results), not a captured response |
 | LOS-1 … LOS-8 | Tested against the in-memory transport; not against a real messenger that actually loses a message. A bridge restart that falls entirely between two polls is not noticed (§10) |
 | §10, LOS-8: "ok" without evidence | By definition not a claim of completeness. A creator whose request expired unanswered may lack an offline member's change; the engine keeps the *unanswered* outcome observable |
+| INV-8 (application) | `invitationFromUrl` reads an invitation from a whole link as INV-8 says — the fragment when it carries `tdsp`, the query otherwise, never the two combined; tested at L0. Whether an application reads links through it is the application's part |
 | CTL-12, SND-8 (application) | The engine sends no control frame the application could not persist, and marks changes it could not distribute until a resync; both tested. Keeping either across a restart is the application's part, and this repository contains no application |
 
 ## Known gaps

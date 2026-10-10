@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { encodeInvitation, type Invitation, parseInvitation } from "./invitation";
+import {
+  encodeInvitation,
+  type Invitation,
+  invitationFromUrl,
+  parseInvitation,
+} from "./invitation";
 import { decodeSyncPolicyParam } from "./sync-policy";
 
 const MATRIX: Invitation = {
@@ -121,5 +126,42 @@ describe("policy text has one spelling per value (SPECIFICATION.md §11.2)", () 
     ["four values", "30000,120000,0,inf@0"],
   ])("treats %s as no policy", (_name, text) => {
     expect(decodeSyncPolicyParam(text)).toBeUndefined();
+  });
+});
+
+describe("an invitation in a whole link: fragment or query (SPECIFICATION.md INV-8)", () => {
+  const form = encodeInvitation(MATRIX);
+  const other = encodeInvitation({ ...MATRIX, documentId: "doc-other" });
+  const documentOf = (link: string | URL) => {
+    const parsed = invitationFromUrl(link);
+    return parsed.ok ? parsed.invitation.documentId : parsed.problem;
+  };
+
+  it("reads the form from the query, and from the fragment", () => {
+    expect(documentOf(`https://example.org/join?${form}`)).toBe("doc-1");
+    expect(documentOf(`https://example.org/join#${form}`)).toBe("doc-1");
+    expect(documentOf(new URL(`https://example.org/join#${form}`))).toBe("doc-1");
+  });
+
+  it("takes the fragment when both carry tdsp, and combines nothing from the two", () => {
+    expect(documentOf(`https://example.org/join?${other}#${form}`)).toBe("doc-1");
+    // A parameter added to the visible query changes nothing in the fragment's invitation...
+    expect(documentOf(`https://example.org/join?documentId=doc-evil#${form}`)).toBe("doc-1");
+    // ...and the fragment's own form stays whole: no field is filled in from the query.
+    const withoutChannel = form.replace(/&channelId=[^&]*/, "");
+    const parsed = invitationFromUrl(
+      `https://example.org/join?channelId=%21evil%3Aexample.org#${withoutChannel}`,
+    );
+    expect(parsed).toMatchObject({ ok: false, problem: "missing-field" });
+  });
+
+  it("reads the query when the fragment carries no tdsp, such as an application's own anchor", () => {
+    expect(documentOf(`https://example.org/join?${form}#top`)).toBe("doc-1");
+  });
+
+  it("finds no invitation in a link that carries none, or in text that is no link", () => {
+    expect(documentOf("https://example.org/join")).toBe("not-an-invitation");
+    expect(documentOf("https://example.org/join#top")).toBe("not-an-invitation");
+    expect(documentOf("not a link")).toBe("not-an-invitation");
   });
 });
