@@ -61,8 +61,9 @@ the specification says, not that two implementations interoperate.
 What this version does not yet specify precisely or has not built. None of it is hidden
 behind a claim elsewhere in the specification.
 
-- **Resource budgets.** Hard, interoperable limits for decoding (input size, nesting,
-  work) are given as recommended values (Appendix B), not normative bounds.
+- **Resource budgets.** Hard, interoperable limits for decoding input size and work are
+  given as recommended values (Appendix B), not normative bounds; nesting depth is
+  bounded normatively (§1.6).
 - **Channel versus control membership.** Who is in the messenger channel and who holds a
   permission in the document are separate states; the specification describes both but
   does not yet define every combination (a grant to a non-member, a member without a
