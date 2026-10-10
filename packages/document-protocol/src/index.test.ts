@@ -185,6 +185,27 @@ describe("DocumentEngine convergence", () => {
   });
 
   describe("fault injection and lifecycle", () => {
+    it("refuses to create a document anew from persisted control state, before anything is sent (LIF-5)", async () => {
+      const alice = await DocumentEngine.create(
+        DOCUMENT_ID,
+        "alice",
+        messenger,
+        undefined,
+        IMMEDIATE,
+      );
+      const controlState = alice.controlState;
+      alice.dispose();
+      const before = await messenger.receive(DOCUMENT_ID, "bob");
+
+      await expect(
+        DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+          ...IMMEDIATE,
+          controlState,
+        }),
+      ).rejects.toThrow(/LIF-5.*join\(/);
+      expect(await messenger.receive(DOCUMENT_ID, "bob")).toEqual(before);
+    });
+
     it("converges after an offline client reconnects (R5)", async () => {
       const alice = await DocumentEngine.create(
         DOCUMENT_ID,
@@ -2594,13 +2615,18 @@ describe("send scheduling and retry", () => {
         expect(persisted?.policy?.minIntervalMs).toBe(33_000);
         expect(persisted?.policySequence).toBe(1);
 
-        const again = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, {
-          ...AS_ALICE,
-          controlState: persisted,
-        });
+        // Rejoins as creator (LIF-5). Its join sends a resync request and answers bob's, which
+        // it finds in the channel's history: the second message waits for the restored floor.
+        const again = await afterFloor(
+          DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, {
+            ...AS_ALICE,
+            controlState: persisted,
+          }),
+          33_000,
+        );
         expect(again.syncPolicy.minIntervalMs).toBe(33_000);
         expect(again.invitationPolicy?.sequence).toBe(1);
-        await afterFloor(again.setSyncPolicy({ minIntervalMs: 44_000 }), 33_000); // after its seed's floor
+        await afterFloor(again.setSyncPolicy({ minIntervalMs: 44_000 }), 33_000); // after its resync request's floor
         expect(again.controlSequence).toBe(2); // continued, not restarted at 1
         await bob.sync();
         expect(bob.syncPolicy.minIntervalMs).toBe(44_000);
