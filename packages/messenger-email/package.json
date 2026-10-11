@@ -1,6 +1,6 @@
 {
   "name": "@tdsp/messenger-email",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "TDSP adapter for email, speaking to a local email bridge.",
   "license": "MIT",
   "private": true,
