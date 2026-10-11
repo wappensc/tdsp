@@ -162,6 +162,18 @@ export class InMemoryMessengerPort implements MessengerPort {
     return channels;
   }
 
+  /**
+   * The members `seedChannel()` gave `channelId` (SPECIFICATION.md TRN-17): a snapshot. The mock
+   * has no account of its own to be a member, so it refuses only a channel it does not know.
+   */
+  async channelMembers(channelId: string): Promise<readonly MemberId[]> {
+    const channel = this.#rawChannels.get(channelId);
+    if (channel === undefined) {
+      throw new Error(`channelMembers: no channel ${channelId} (seedChannel() it first)`);
+    }
+    return [...channel.members];
+  }
+
   // --- fault injection (mock-only, not part of MessengerPort) ---
 
   /** Simulates the member losing connectivity: their sends fail and their receive() view freezes now. */

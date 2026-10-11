@@ -25,6 +25,14 @@ export interface SignalRpc {
 export interface GroupSummary {
   readonly groupId: string;
   readonly name: string;
+  /**
+   * The group's members by ACI (their `MemberId`, SPECIFICATION.md SIG-2), as `signal-cli`
+   * lists them now: `members[].uuid` — the members, not the invited or requesting ones.
+   * Verified against signal-cli's source (0.14.9, `ListGroupsCommand`), not a captured response.
+   */
+  readonly members: readonly string[];
+  /** `false` for a group this account has left, which signal-cli still lists. */
+  readonly isMember: boolean;
 }
 
 /** `signal-cli listGroups` — every group this account is currently a member of. */
@@ -37,6 +45,12 @@ export async function listGroups(
     .map((group) => ({
       groupId: typeof group.id === "string" ? group.id : "",
       name: typeof group.name === "string" ? group.name : "",
+      members: Array.isArray(group.members)
+        ? group.members
+            .map((member) => (member as { uuid?: unknown } | null)?.uuid)
+            .filter((uuid): uuid is string => typeof uuid === "string" && uuid.length > 0)
+        : [],
+      isMember: group.isMember !== false,
     }))
     .filter((group) => group.groupId.length > 0);
 }

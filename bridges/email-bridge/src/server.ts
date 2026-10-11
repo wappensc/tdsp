@@ -12,7 +12,7 @@ import {
 import { type Logger, loggerFromEnv } from "@tdsp/bridge-log";
 import { isLoopbackOrigin } from "@tdsp/loopback";
 import type { Delivery } from "@tdsp/messenger-port";
-import { type BindRecord, getBindRecord, setBindRecord } from "./bind-store.ts";
+import { type BindRecord, getBindRecord, loadBindStore, setBindRecord } from "./bind-store.ts";
 import {
   canonicalMemberId,
   composeInviteBody,
@@ -362,6 +362,25 @@ export function createServer(deps: ServerDependencies): Server {
       // {id}, as every bridge's /whoami answers (SPECIFICATION.md §12.6);
       // deps.address stays this bridge's own configuration vocabulary.
       sendJson(res, 200, { id: normalizeAddress(deps.address) });
+      return;
+    }
+
+    // A thread is this binding's channel, named by its root Message-ID; its members are the
+    // participant set fixed when it started (EML-1), as this bridge holds it (TRN-17).
+    if (method === "GET" && path === "/members") {
+      const channelId = new URLSearchParams(query).get("channelId");
+      if (channelId === null || channelId === "") {
+        sendJson(res, 400, { error: "channelId is required" });
+        return;
+      }
+      const thread = Object.values(loadBindStore(deps.bindStorePath)).find(
+        (record) => record.threadRootMessageId === channelId,
+      );
+      if (thread === undefined) {
+        sendJson(res, 404, { error: `this mailbox holds no thread ${channelId}` });
+        return;
+      }
+      sendJson(res, 200, thread.recipients.map(normalizeAddress));
       return;
     }
 

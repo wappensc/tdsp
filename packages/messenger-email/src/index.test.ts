@@ -114,6 +114,24 @@ function startFakeBridge(): Promise<{ server: Server; url: string; requests: unk
         );
         return;
       }
+      if (req.method === "GET" && path === "/members") {
+        const channelId = new URLSearchParams((req.url ?? "").split("?", 2)[1] ?? "").get(
+          "channelId",
+        );
+        if (channelId === "not-a-list") {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ members: ["x"] }));
+          return;
+        }
+        if (channelId !== MEMBERS_CHANNEL) {
+          res.writeHead(404, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "this account is not in that channel" }));
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(MEMBERS));
+        return;
+      }
       if (req.method === "GET" && path === "/whoami") {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ id: "me@example.org" }));
@@ -206,6 +224,10 @@ function startFakeBridge(): Promise<{ server: Server; url: string; requests: unk
     });
   });
 }
+
+/** A channel the fake bridge's account is in, and its members. */
+const MEMBERS_CHANNEL = "<root@example.org>";
+const MEMBERS = ["alice@example.org", "bob@example.org"];
 
 describe("emailMessengerProvider", () => {
   it('registers as "email", matching VITE_MESSENGER_PROVIDER=email', () => {
@@ -437,6 +459,18 @@ describe("EmailMessengerPort", () => {
     await expect(port.createDocument("doc-1", "bob@example.org")).rejects.toThrow(
       /creator mismatch/,
     );
+  });
+
+  it("channelMembers() asks the bridge for a channel's members and refuses what is not a list of ids (TRN-17)", async () => {
+    await expect(port.channelMembers(MEMBERS_CHANNEL)).resolves.toEqual(MEMBERS);
+    expect(bridge.requests).toContainEqual(
+      expect.objectContaining({
+        method: "GET",
+        url: `/members?channelId=${encodeURIComponent(MEMBERS_CHANNEL)}`,
+      }),
+    );
+    await expect(port.channelMembers("elsewhere")).rejects.toThrow(/404/);
+    await expect(port.channelMembers("not-a-list")).rejects.toThrow(/not a list/);
   });
 
   it("whoami() returns the bridge mailbox's own address as MemberId", async () => {

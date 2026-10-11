@@ -47,6 +47,11 @@ class FakeMatrixRoomReader implements MatrixRoomReader {
   async whoami(): Promise<{ id: string }> {
     return { id: this.userId };
   }
+
+  members = new Map<string, readonly string[]>();
+  async joinedMembers(roomId: string): Promise<readonly string[] | undefined> {
+    return this.joinedRoomIds.has(roomId) ? (this.members.get(roomId) ?? []) : undefined;
+  }
 }
 
 // `encrypted` is accepted (MatrixRoomWriter's real interface) but
@@ -167,6 +172,28 @@ describe("matrix-bridge HTTP API", () => {
     } finally {
       await new Promise<void>((resolve) => withDevice.close(() => resolve()));
     }
+  });
+
+  it("GET /members answers a joined room's members, refuses one this account is not in, and needs a channelId (TRN-17)", async () => {
+    rooms.joinedRoomIds.add("!joined:example.org");
+    rooms.members.set("!joined:example.org", [
+      "@fake-bridge-account:tdsp.test",
+      "@bob:example.org",
+    ]);
+    rooms.members.set("!other:example.org", ["@mallory:example.org"]);
+    const members = (channelId: string) =>
+      fetch(`${baseUrl}/members?channelId=${encodeURIComponent(channelId)}`);
+
+    const joined = await members("!joined:example.org");
+    expect(joined.status).toBe(200);
+    await expect(joined.json()).resolves.toEqual([
+      "@fake-bridge-account:tdsp.test",
+      "@bob:example.org",
+    ]);
+    const other = await members("!other:example.org");
+    expect(other.status).toBe(404);
+    expect(await other.text()).not.toContain("mallory");
+    expect((await fetch(`${baseUrl}/members`)).status).toBe(400);
   });
 
   it("GET /channels returns the room reader's raw room list", async () => {

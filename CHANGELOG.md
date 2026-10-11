@@ -24,6 +24,10 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
   device of its own member, passing on its control state when it holds it without a gap; the
   other device takes it only as an answer to its own request, and is then bootstrapped. A
   request is one's own by its `requestId` (#31).
+- TRN-17 (§3.2, §12.6): an optional `channelMembers(channelId)` in the transport contract,
+  and `GET /members?channelId=` on the local bridge interface: a channel's members as the
+  messenger reports them now, this account included; a channel this account is not in is
+  refused. A snapshot — joins and leaves are not reported (#28).
 - MTX-4: a Matrix bridge shares each room key with its own account's other devices too, and
   delivers what they send; the reference bridge already did, now tested (#31).
 - EML-12: an email bridge makes sure a copy of every frame mail it sends is in its account's
@@ -33,6 +37,8 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
 
 ### Added
 
+- `channelMembers()` in `@tdsp/messenger-port`'s `MessengerPort` (optional), the mock and the
+  three adapters, and `GET /members` in the three bridges (TRN-17; #28).
 - The email bridge's `EMAIL_SENT_COPY` setting: `append` (default), the bridge appends the
   copy itself; `provider`, for a provider that files sent mail on its own (EML-12; #31).
 

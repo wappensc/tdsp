@@ -60,7 +60,7 @@ describe.skipIf(!available)(
         creatorPort.bind(documentId, groupId, creatorId, "yjs-paragraphs/1"),
         memberPort.bind(documentId, groupId, creatorId, "yjs-paragraphs/1"),
       ]);
-      return { documentId, creatorPort, creatorId, memberPort, memberId };
+      return { documentId, creatorPort, creatorId, memberPort, memberId, channelId: groupId };
     }
 
     // Several real round trips per case; delivery over production Signal can take seconds

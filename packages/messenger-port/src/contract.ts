@@ -37,6 +37,8 @@ export interface MessengerPortContractFixture {
   /** A second member of the same channel, on its own port. */
   readonly memberPort: MessengerPort;
   readonly memberId: MemberId;
+  /** The channel both are members of, where the transport names one; checks `channelMembers`. */
+  readonly channelId?: string;
 }
 
 export type CreateContractFixture = () => Promise<MessengerPortContractFixture>;
@@ -117,6 +119,26 @@ export const messengerPortContractCases: readonly MessengerPortContractCase[] = 
         false,
         `send() for an unregistered document said it was worth retrying (${refusal.reason})`,
       );
+    },
+  },
+  {
+    // Optional (TRN-17): checked wherever the transport offers it and the fixture names its
+    // channel. A snapshot of the members, both of them included, the same from either side.
+    name: "channelMembers() names both members of their channel, where offered",
+    run: async ({ channelId, creatorPort, creatorId, memberPort, memberId }) => {
+      if (channelId === undefined) {
+        return;
+      }
+      for (const port of [creatorPort, memberPort]) {
+        if (port.channelMembers === undefined) {
+          continue;
+        }
+        const members = await port.channelMembers(channelId);
+        assert.ok(
+          members.includes(creatorId) && members.includes(memberId),
+          `channelMembers(${channelId}) did not name both ${creatorId} and ${memberId}: ${JSON.stringify(members)}`,
+        );
+      }
     },
   },
 ];

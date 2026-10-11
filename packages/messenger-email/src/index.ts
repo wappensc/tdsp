@@ -230,6 +230,27 @@ export class EmailMessengerPort implements MessengerPort {
   }
 
   /**
+   * `GET /members?channelId=` — the members of channel `channelId` as the bridge's messenger
+   * reports them now (SPECIFICATION.md TRN-17): a snapshot, the bridge's own account included.
+   * A channel that account is not in is refused, as is an answer that is not a list of ids.
+   */
+  async channelMembers(channelId: string): Promise<readonly MemberId[]> {
+    const response = await fetch(
+      `${this.#bridgeUrl}/members?channelId=${encodeURIComponent(channelId)}`,
+    );
+    if (!response.ok) {
+      throw new Error(`channelMembers failed: ${response.status} ${await response.text()}`);
+    }
+    const members: unknown = await response.json();
+    if (!Array.isArray(members) || !members.every((member) => typeof member === "string")) {
+      throw new Error(
+        "channelMembers: the bridge answered something that is not a list of member ids",
+      );
+    }
+    return members;
+  }
+
+  /**
    * Adapter-specific, like {@link startThread} — this bridge's own
    * `MemberId` is the configured mailbox's own address, never something
    * a caller picks. Returns `{ id }`, as every bridge's `/whoami` does

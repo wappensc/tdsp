@@ -340,6 +340,7 @@ type Permission = "read" | "write" | "creator";
 | `receive(documentId, member)` → `Delivery[]` | Returns the deliveries recorded for the document so far |
 | `listChannels(member)` → `RawChannel[]` | The channels this account can see, to populate a picker. Answers "which channels exist", never "which documents do I have" |
 | `transportProfile()` → `TransportProfile \| undefined` | Optional. The messenger's limits and suggested policies ([§3.5](#35-transport-profile)) |
+| `channelMembers(channelId)` → `MemberId[]` | Optional. The members of a channel this account belongs to, as the messenger reports them at the moment of the call (TRN-17); `channelId` as `listChannels` names it, so it can be asked before a document is bound |
 | `sendInvitation(documentId, sender, text)` → `DeliveryId` | Optional. Sends a human-readable invitation ([§11](#11-invitations)) into the document's bound channel as `sender`, who must be the bridge's own account and the document's creator (BRG-16). A binding whose invitation *is* how its channel begins — email: the thread's root message — has no separate step and omits it |
 
 - **TRN-5** · *adapter* — `createDocument` MUST NOT change the membership,
@@ -381,6 +382,17 @@ type Permission = "read" | "write" | "creator";
   silent no-op.
   *Rationale:* a messenger that is quietly less capable than the contract lets
   the application believe something happened that did not.
+- **TRN-17** · *adapter* — `channelMembers` MUST answer the channel's members as
+  the messenger reports them at the moment of the call, this account included,
+  and MUST refuse a channel this account is not in rather than answer for it. It
+  is a snapshot: who joined or left between two calls is not reported. An engine
+  MUST NOT call it.
+  *Rationale:* an application fills a participant list when it creates a
+  document, and notices someone who joined the channel later, from what the
+  messenger says now; that is as trustworthy as the bridge's own membership check
+  (BRG-5) and grants nothing by itself — a permission is still the creator's
+  control frame. Answering for a channel one is not in would reveal other
+  people's membership.
 
 ### 3.3 Delivery semantics
 
@@ -2037,6 +2049,7 @@ unknown route answers 404.
 | `GET /whoami` | The account's own MemberId | — | `{id}` |
 | `GET /transport-profile` | The transport profile ([§3.5](#35-transport-profile)) | — | the profile; 503 while unprovisioned |
 | `GET /channels` | Channels for the picker → `listChannels` | — | `[{id, name, encrypted?}]` |
+| `GET /members?channelId=` | A channel's members → `channelMembers`; by channel id, so not under `/channels/:documentId` | — | `[memberId]`; 404 for a channel this account is not in |
 | `POST /channels/:documentId/bind` | Bind a document to a channel → `createDocument` | `{channelId, creator, profile}` | the binding |
 | `POST /channels/:documentId/send` | → `send` | `{sender, payload}` — the frame's text; `sender` must be the bridge's own account (BRG-16), else 403 | `{deliveryId}` |
 | `GET /channels/:documentId/deliveries` | → `receive` | — | `[{id, documentId, sender, payload}]` |

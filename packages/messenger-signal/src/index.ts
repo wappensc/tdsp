@@ -138,6 +138,27 @@ export class SignalMessengerPort implements MessengerPort {
   }
 
   /**
+   * `GET /members?channelId=` — the members of channel `channelId` as the bridge's messenger
+   * reports them now (SPECIFICATION.md TRN-17): a snapshot, the bridge's own account included.
+   * A channel that account is not in is refused, as is an answer that is not a list of ids.
+   */
+  async channelMembers(channelId: string): Promise<readonly MemberId[]> {
+    const response = await fetch(
+      `${this.#bridgeUrl}/members?channelId=${encodeURIComponent(channelId)}`,
+    );
+    if (!response.ok) {
+      throw new Error(`channelMembers failed: ${response.status} ${await response.text()}`);
+    }
+    const members: unknown = await response.json();
+    if (!Array.isArray(members) || !members.every((member) => typeof member === "string")) {
+      throw new Error(
+        "channelMembers: the bridge answered something that is not a list of member ids",
+      );
+    }
+    return members;
+  }
+
+  /**
    * `GET /channels` — the account's raw, currently-known Signal groups
    * (D2a: "listGroups is used only to validate a binding at bind time,
    * not to enumerate documents"), for a picker only. No

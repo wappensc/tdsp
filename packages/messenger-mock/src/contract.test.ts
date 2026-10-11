@@ -20,12 +20,14 @@ describe("MessengerPort contract (mock)", () => {
   for (const { name, run } of messengerPortContractCases) {
     it(name, async () => {
       const port = new InMemoryMessengerPort();
+      port.seedChannel("contract-channel", "Contract", ["contract-creator", "contract-member"]);
       await run({
         documentId: `contract-doc-${counter++}`,
         creatorPort: port,
         creatorId: "contract-creator",
         memberPort: port,
         memberId: "contract-member",
+        channelId: "contract-channel",
       });
     });
   }
