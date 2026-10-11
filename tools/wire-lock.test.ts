@@ -95,7 +95,12 @@ describe("the specification's version, against the kind of change", () => {
     ["addition", "1.0", "2.0", false],
     ["specification", "1.0", "1.0", true],
     ["specification", "1.0", "1.0.1", true],
-    ["specification", "1.0", "1.1", false],
+    // A new requirement with every byte the same: the next minor version may carry it.
+    ["specification", "1.0.1", "1.1", true],
+    ["specification", "1.0.1", "1.1.1", false],
+    ["specification", "1.0.1", "1.2", false],
+    ["specification", "1.0.1", "2.0", false],
+    ["specification", "1.0.1", "1.0", false],
   ] as const)("%s from %s to %s fits: %s", (kind, from, to, fits) => {
     expect(versionProblem(kind, from, to) === undefined).toBe(fits);
   });
