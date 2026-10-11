@@ -592,7 +592,7 @@ Every frame has these three fields:
 | | `stateVector` | Base64 | The requester's state vector |
 | `resync-response` | `respondsTo` | 16 lowercase hex digits | The `requestId` of the request answered |
 | | `update` | Base64 | What the requester lacks |
-| | `control` | object or `null` | The creator's control snapshot, in the layout of [§7.4](#74-the-control-snapshot); `null` from anyone else |
+| | `control` | object or `null` | The creator's control snapshot, in the layout of [§7.4](#74-the-control-snapshot); from a device answering another device of its own member, its own control state in that layout (RSY-8); `null` otherwise |
 | | `attribution` | object or `null` | The responder's attribution overlay, in the layout of [§5.4](#54-attribution-overlay); `null` for none |
 | `control` | `sequence` | uint32, at least 1 | The creator's control sequence ([§7.2](#72-sequence-numbers-and-targets)) |
 | | `action` | `"membership"`, `"close"` or `"policy"` | |
@@ -1079,7 +1079,8 @@ Each frame has a **target**: the member it names (membership), the close
 ### 7.4 The control snapshot
 
 The creator's `resync-response` carries its whole control state as the frame's
-`control` object:
+`control` object. A device answering another device of its own member passes on
+the control state it holds in the same layout (RSY-8):
 
 ```json
 {
@@ -1116,14 +1117,17 @@ among the members — rejects the whole `resync-response` (FRM-6).
   confirms it, and content of a different profile must never be applied.
 
 - **CTL-11** · *engine* — A receiver MUST apply a control snapshot only from the
-  creator and only if its `sequence` is at least the highest sequence the receiver
-  has applied. Applying it MUST replace the membership map wholesale, MUST set
+  creator, or from another device of its own member in an answer to its own
+  request (RSY-12), and only if its `sequence` is at least the highest sequence
+  the receiver has applied. Applying it MUST replace the membership map wholesale, MUST set
   closed if the snapshot says closed and MUST NOT reopen (LIF-7), and MUST raise
   the snapshot floor to `sequence`: afterwards any control frame numbered at or
   below it is stale for every target.
   *Rationale:* a snapshot is how a joiner on a history-less transport, or an engine
-  that found a gap, learns current state — no peer can forward it, because it must
-  come from the creator. Raising the floor stops an old frame from undoing what
+  that found a gap, learns current state — no other member can forward it, because
+  it must come from the creator. A device of one's own member is the exception:
+  the messenger authenticates its MemberId like one's own, and whoever controls
+  an account controls all of its devices anyway. Raising the floor stops an old frame from undoing what
   the snapshot established.
 - **CTL-12** · *engine, application* — The creator's application MUST persist the
   creator's control state (sequence, members, closed, policy, policySequence)
@@ -1162,8 +1166,9 @@ among the members — rejects the whole `resync-response` (FRM-6).
 - **CTL-13** · *engine, application* — An engine MUST refuse to send an `edit`
   frame of its own (reporting the refusal, not retrying it) when the document is
   closed, when its own permission is explicitly `read`, or — for anyone but the
-  creator — before a creator's `resync-response` to one of its own requests has
-  bootstrapped it. Once bootstrapped, an *unknown* permission MUST NOT cause a
+  creator — before a `resync-response` to one of its own requests has
+  bootstrapped it: the creator's, or one from another device of its own member
+  that carries control state. Once bootstrapped, an *unknown* permission MUST NOT cause a
   refusal. An application MUST NOT let a person type while its engine would
   refuse the edit.
   *Rationale:* before its bootstrap a joiner has neither the document's content
@@ -1306,19 +1311,25 @@ and the answer is a targeted diff.
 
 - **RSY-6** · *engine* — The creator MUST answer resync requests from other
   members. A non-creator MUST NOT answer a resync request unless the requester is
-  the creator. An engine that does not know the creator MUST NOT answer any
-  request. An engine MUST NOT answer its own request.
+  the creator or its own member. Every engine MUST answer requests from another
+  device of its own member as the creator answers other members'. An engine that
+  does not know the creator MUST NOT answer any request. An engine MUST NOT answer
+  its own request, which it recognises by its `requestId`, not by its requester.
   *Rationale:* one possible responder makes a join cost exactly one answer instead
   of one per online member, removes every timing-dependent suppression rule, and
   leaves one attribution overlay. The exception exists because a creator may
   restart without the content it had — its application must persist the
   creator's control state (CTL-12) but need not persist content — and, even with
   persisted content, may lack what arrived while it was away; then only a peer
-  can give it back.
+  can give it back. A member may run several devices under one MemberId; one of
+  them can bring another up to date while the creator is offline, and only for
+  that device's own member.
 - **RSY-7** · *engine* — A responder MUST answer a request only if it holds content
-  the requester's state vector lacks or — for the creator only — it has issued a
-  control sequence greater than the requester's, or the request has `bootstrap:
-  true`. The creator MUST answer every request with `bootstrap: true`. Otherwise a responder
+  the requester's state vector lacks or — for the creator, or a device answering
+  another device of its own member with control state (RSY-8) — it holds a control
+  sequence greater than the requester's, or the request has `bootstrap: true`. The
+  creator MUST answer every request with `bootstrap: true`, and so MUST a device
+  that can pass control state to another device of its own member. Otherwise a responder
   MUST stay silent, and MUST keep the request to reconsider later (RSY-9), since
   that may change.
   *Rationale:* an engine that is up to date gets no answer, which keeps resync
@@ -1329,10 +1340,16 @@ and the answer is a targeted diff.
 - **RSY-8** · *engine* — An answer MUST be a `resync-response` whose `respondsTo`
   is the request's `requestId` and whose update is the responder's state since
   the requester's state vector. The creator's answer MUST carry its control
-  snapshot in `control`; a non-creator's answer MUST set `control` to `null`. The answer SHOULD carry the
-  responder's attribution overlay.
+  snapshot in `control`. A non-creator answering another device of its own member
+  MUST carry its own control state there if it has been bootstrapped and holds
+  every control frame up to the highest it has seen, and MUST set `control` to
+  `null` otherwise; every other non-creator answer MUST set it to `null`. The
+  answer SHOULD carry the responder's attribution overlay.
   *Rationale:* `respondsTo` lets the requester tell its own answer from answers to
-  others (RSY-13, ATR-1); only the creator can issue control state.
+  others (RSY-13, ATR-1); only the creator can issue control state. A device may
+  pass on what it holds to its own member's other device, but only without a
+  gap: a snapshot does not carry each target's sequence, so a frame missing
+  before it, arriving later, could otherwise undo a newer decision there.
 - **RSY-9** · *engine* — A responder MUST answer at most one request per
   throttle interval per document. It MUST keep every request it may have to
   answer and has not answered — throttled, or with nothing to offer yet (RSY-7) —
@@ -1367,15 +1384,16 @@ and the answer is a targeted diff.
 ### 8.4 Accepting an answer
 
 - **RSY-12** · *engine* — An engine that is not the creator MUST accept a
-  `resync-response` only if its sender is the creator. The creator MUST accept one
-  from another member only if its `respondsTo` names a request the creator itself
-  made. An engine that does not know the creator MUST accept none.
+  `resync-response` only if its sender is the creator, or its own member answering
+  a request the engine itself made. The creator MUST accept one from another
+  member only if its `respondsTo` names a request the creator itself made. An
+  engine that does not know the creator MUST accept none.
   *Rationale:* the counterpart of RSY-6. Without the `respondsTo` check anyone
   could push content at the creator by sending an unsolicited "response".
 - **RSY-13** · *engine* — An engine MUST apply the update of every accepted
   `resync-response`, including one that answers another member's request, and
-  MUST apply the control snapshot of every `resync-response` the creator sent
-  (CTL-11). It MUST consider the attribution overlay only of a response that
+  MUST apply the control snapshot of every `resync-response` the creator sent, and
+  of one from another device of its own member answering its own request (CTL-11). It MUST consider the attribution overlay only of a response that
   answers its own request (ATR-1, ATR-2), and MUST attribute content applied from
   any other response to the unattributed author.
   *Rationale:* content is a CRDT and harmless to apply twice; a snapshot from the
@@ -1383,8 +1401,8 @@ and the answer is a targeted diff.
   document of the member who asked, and the responder did not write everything
   it sends.
 - **RSY-14** · *engine* — An engine MUST consider its bootstrap complete once it
-  has applied an answer to its own request, and MUST make "not yet bootstrapped"
-  observable to the application.
+  has applied an answer to its own request that bootstraps it (CTL-13), and MUST
+  make "not yet bootstrapped" observable to the application.
   *Rationale:* a joiner whose creator is offline sees an empty document; the
   application must be able to say "waiting for the creator" rather than present
   an empty document as the real one.

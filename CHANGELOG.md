@@ -20,9 +20,15 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
   numbers another device used, but only after an unbroken run, issues nothing while it lacks
   a frame, and gives up a pending frame whose number another device took. Two devices acting
   at the same moment still collide (CTL-17) (#31).
+- RSY-6, RSY-7, RSY-8, RSY-12 to RSY-14, CTL-11, CTL-13: a device answers requests of another
+  device of its own member, passing on its control state when it holds it without a gap; the
+  other device takes it only as an answer to its own request, and is then bootstrapped. A
+  request is one's own by its `requestId` (#31).
 
 ### Changed
 
+- A device no longer waits for the creator when another device of its own member is online:
+  that device brings it up to date, control state included (#31).
 - A device of the creator no longer blocks for good after another device of the creator
   acted (`sequence-conflict` on every later action); it continues after that device's numbers
   (CTL-18; #31).
