@@ -36,6 +36,7 @@ import {
   type Frame,
   FrameDecodeError,
   frameByteLength,
+  isLayerId,
   newRandomId,
   utf8ToText,
 } from "./framing";
@@ -1066,6 +1067,15 @@ export class DocumentEngine {
   /** The document's profile id (SPECIFICATION.md §5), fixed for its life. */
   get profile(): string {
     return this.#profile.id;
+  }
+
+  /**
+   * The ids of the layers the document holds (SPECIFICATION.md §5.6), sorted: its top-level
+   * shared types named by a layer id. The engine keeps and passes on every one of them (LAY-1);
+   * an application that shows none of them should still tell the person they are there (LAY-2).
+   */
+  get layers(): readonly string[] {
+    return [...this.document.share.keys()].filter((name) => isLayerId(name)).sort();
   }
 
   get controlState(): ControlSnapshot {
@@ -2367,7 +2377,7 @@ type ControlFields =
   | { action: "membership"; member: MemberId; permission: ControlPermission }
   | { action: "policy"; policy: SyncPolicy };
 
-export { isProfileId } from "./framing";
+export { isLayerId, isProfileId } from "./framing";
 export {
   encodeInvitation,
   INVITATION_VERSION,

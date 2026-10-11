@@ -209,6 +209,14 @@ export function isProfileId(id: unknown): id is string {
   return typeof id === "string" && PROFILE_ID.test(id);
 }
 
+/**
+ * Whether `name` is a layer id (SPECIFICATION.md §5.6): of the same form as a profile id,
+ * `<name>/<major>`. A top-level shared type named otherwise is not a layer.
+ */
+export function isLayerId(name: unknown): name is string {
+  return isProfileId(name);
+}
+
 // ---- encoding -------------------------------------------------------------------------------
 
 function checkId(name: string, value: string): void {

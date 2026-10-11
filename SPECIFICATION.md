@@ -32,8 +32,9 @@ replaceable ([§2.1](#21-layers)).
 ### 1.2 Status of this document
 
 This is **TDSP 1.1**. It changes no byte of TDSP 1.0's wire; it states
-requirements more precisely and adds some: for a receiver's robustness, and for
-profiles defined outside this specification.
+requirements more precisely and adds some: for a receiver's robustness, for
+profiles defined outside this specification, and for layers beside a document's
+content.
 A later version changes the wire only as
 [§14](#14-versioning-and-extensibility) describes.
 
@@ -820,6 +821,51 @@ and when what it means reaches an engine the way the engine itself does.
   the application itself does, through its own distribution; a document whose
   profile an engine does not implement is refused (PRF-3) and can be declined
   ([§6.5](#65-declining-an-invitation)).
+
+### 5.6 Layers
+
+A **layer** is data beside a document's content — comments, review notes,
+embedded files — that every engine keeps and passes on and that an application
+may ignore. A participant whose application does not know a layer still reads and
+edits the content; one whose application knows it sees more.
+
+A layer is named by a layer id of the same form as a profile id, `<name>/<major>`.
+A layer defined outside this specification uses a reverse-DNS name under a domain
+its author controls (`com.example.comments/1`); this specification defines no
+layer. A profile says whether, and where, it admits layers; `yjs-paragraphs/1`
+does ([Appendix A](#appendix-a-profile-yjs-paragraphs1)). No frame, invitation or
+snapshot announces the layers a document uses: the document's state is the
+announcement.
+
+- **LAY-1** · *engine* — An engine MUST keep every layer of a document as part of
+  its state and MUST pass it on wherever it passes that state on: in edits, resync
+  answers, bootstrap and a resend of the whole state.
+  *Rationale:* a layer is part of the state the CRDT converges. An engine that
+  rebuilt a document from its content alone would strip the layer for everyone who
+  later receives the state from it.
+- **LAY-2** · *application* — An application MAY ignore a layer it does not
+  implement. It MUST NOT delete, rewrite or strip such a layer, also not when it
+  copies, restores or migrates a document, and SHOULD show the person that the
+  document holds data it does not display.
+  *Rationale:* what one participant cannot read, others still use; removing it
+  would be one person's edit of everyone's data. And a person who exports or
+  forwards a document should know that it carries more than they see.
+- **LAY-3** · *engine* — A layer MUST NOT be part of the plain-text projection and
+  MUST NOT change attribution ([§5.4](#54-attribution-overlay)).
+  *Rationale:* the projection and the overlay are exchanged between engines whose
+  applications implement different layers; counting a layer in either would shift
+  every offset between them.
+- **LAY-4** · *application* — An application MUST NOT use a layer unless the layer
+  has a public definition at a stable location, under terms that let anyone
+  implement it, stating its structure, what in the content it points into and how,
+  and what a reader shows when that content is gone or has moved. The definition
+  MUST come with test vectors and MUST NOT change incompatibly; an incompatible
+  change is a new major version, and a new layer id. A layer SHOULD point into the
+  content by the CRDT's own relative positions.
+  *Rationale:* as for a profile (PRF-7), a peer that implements a layer must be
+  able to find out what it means, and two implementations must be able to check
+  that they agree. A relative position follows edits to the text it points into;
+  where it cannot, the definition says what the reader does instead of guessing.
 
 ## 6. Documents and their lifecycle
 
@@ -2412,14 +2458,17 @@ interoperates, whichever Yjs release — or independent implementation — it us
 | Updates a state vector lacks | `Y.encodeStateAsUpdate(doc, stateVector)`; with the empty state vector this is byte-identical to the full state |
 | Initial state | One empty paragraph |
 | Plain-text projection | The paragraphs' texts in document order, joined by a single `"\n"`; offsets count **UTF-16 code units** |
+| Layers | Admitted: top-level shared types beside `content`, each named by a layer id ([§5.6](#56-layers)) |
 
 - **YJS-1** · *engine, application* — A document of this profile MUST keep all its
   content in one `Y.XmlFragment` named `content`, whose children are
   `Y.XmlElement`s named `paragraph`, each holding one `Y.XmlText`, and MUST NOT add
-  other top-level shared types, element names or attributes.
+  other element names or attributes. Beside `content` it MUST NOT hold a top-level
+  shared type except a layer, named by its layer id ([§5.6](#56-layers)).
   *Rationale:* a peer that does not know an element can still merge it, but cannot
   render, project or attribute it, so participants would see different documents
-  from the same state.
+  from the same state. A layer is different by definition: it is not content, and
+  every peer keeps it (LAY-1) whether or not it shows it.
 - **YJS-2** · *engine* — Updates MUST be Yjs update encoding version 1.
   *Rationale:* version 2 is a different byte format under the same library; mixing
   them fails to decode.
@@ -2428,6 +2477,14 @@ interoperates, whichever Yjs release — or independent implementation — it us
   *Rationale:* the overlay's offsets are exchanged between engines; the same
   document projected with a different separator or unit shifts every attribution
   after the first non-ASCII character.
+
+*Informative.* Splitting or joining paragraphs, as editors write it in this
+profile, deletes text and inserts it again as new items. A relative position into
+the moved text then no longer finds it and falls to the edge of what remained, and
+inline formatting a reader does not know is lost the same way. A layer that points
+into this profile's content says in its definition (LAY-4) what a reader shows
+then; an editor that implements the layer can re-anchor it in the same
+transaction.
 
 ## Appendix B. Recommended values
 
@@ -2563,7 +2620,8 @@ frame as a JSON string:
 2. Generate documentIds from a secure random source, and choose each document's
    profile. A profile from outside this specification needs a public definition
    with test vectors (PRF-7), and ships with the application, never with a
-   document (PRF-8).
+   document (PRF-8). Keep layers you do not implement, and show that they are
+   there (LAY-2).
 3. Persist the creator's control state and the list of documents the user has.
 4. Show the creator from an invitation and let the person confirm before joining;
    decline an invitation whose profile the engine does not implement, and show
