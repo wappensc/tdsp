@@ -2176,6 +2176,13 @@ file holding the frame's UTF-8 text; exactly one of the two is present.
 - **MTX-3** · *bridge* — In an encrypted room a bridge MUST encrypt an attachment
   before uploading it and MUST send the key only inside the encrypted event.
   *Rationale:* the homeserver stores the file; it must hold ciphertext only.
+- **MTX-4** · *bridge* — In an encrypted room a bridge MUST share each room key
+  with every device of every member, its own account's other devices included,
+  and MUST deliver an event its own account sent from another device like any
+  other.
+  *Rationale:* a member may run several devices, each a bridge of its own, under
+  one account; a key withheld from them, or an event filtered by its sender, would
+  leave one device of a person blind to what another wrote.
 
 ### 13.4 Email
 
