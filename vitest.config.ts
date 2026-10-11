@@ -24,6 +24,7 @@ const L2_TESTS = [
   "bridges/matrix-bridge/src/contract.test.ts",
   "bridges/matrix-bridge/src/invite.test.ts",
   "bridges/matrix-bridge/src/send-receive.test.ts",
+  "bridges/matrix-bridge/src/own-devices.test.ts",
   "bridges/matrix-bridge/src/crypto.security.test.ts",
   "bridges/matrix-bridge/src/device-confirmation.live.test.ts",
   "infra/matrix-testserver/matrix-testserver.test.ts",
