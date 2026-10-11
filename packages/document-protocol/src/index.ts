@@ -162,7 +162,8 @@ export class TransportProfileError extends Error {
  * nobody classified is exactly the fault this exists to remove.
  */
 function classifySendFailure(error: unknown): SendFailureClass {
-  if (error instanceof SendRefusedError) {
+  // A control frame whose number another device of the creator took is never worth sending.
+  if (error instanceof SendRefusedError || error instanceof ControlFrameRejectedError) {
     return { retryable: false };
   }
   if (error instanceof TransportSendError) {
@@ -2129,6 +2130,47 @@ export class DocumentEngine {
     });
   }
 
+  /**
+   * Control frames from the creator that this device did not issue come from another device of
+   * the creator (#31), or from this device before it lost its state: their numbers are taken.
+   * This device continues after them, but only after an unbroken run of them, so that what it
+   * knows of the control state, and what its snapshots say, holds every action up to there. A
+   * frame of this device still pending under a number another frame took can never go out
+   * (CTL-12, CTL-17): it is given up and reported, and a retry in progress stops. Two devices
+   * acting before either has seen the other still collide; that is a limit of this version.
+   */
+  #adoptNumbersOfOtherDevices(): void {
+    let advanced = false;
+    let givenUp = false;
+    for (;;) {
+      const text = this.#controlFrameTexts.get(this.#issuedControlSeq + 1);
+      if (text === undefined) {
+        break;
+      }
+      if (this.#pendingControl !== undefined) {
+        if (text === this.#pendingControl) {
+          break; // this device's own pending frame, seen delivered: the outbox resends it as is
+        }
+        this.#pendingControl = undefined;
+        givenUp = true;
+      }
+      this.#issuedControlSeq += 1;
+      advanced = true;
+    }
+    if (givenUp) {
+      this.#onError(
+        new ControlFrameRejectedError(
+          "sequence-conflict",
+          `this device's pending control frame ${this.#issuedControlSeq} was given up: another device of the creator used its number first`,
+        ),
+        "apply",
+      );
+    }
+    if (advanced || givenUp) {
+      this.#notifyControlStateChange();
+    }
+  }
+
   /** Runs `run` after every control action before it has settled, so no two take a number at once. */
   #onControlChain(run: () => Promise<void>): Promise<void> {
     const next = this.#controlChain.then(run, run);
@@ -2160,6 +2202,15 @@ export class DocumentEngine {
       validate?.();
       if (this.#closed) {
         throw new SendRefusedError("closed", `document is closed: ${this.documentId}`);
+      }
+      // Another device of the creator used a number this device has not seen the frame for:
+      // issuing now would take a number already taken, or act on control state that misses an
+      // action. It waits until the frames before it have arrived.
+      if (this.#highestControlSeq > this.#issuedControlSeq) {
+        throw new ControlFrameRejectedError(
+          "sequence-conflict",
+          `control sequence ${this.#highestControlSeq} is taken, but this device lacks a frame before it; resync first`,
+        );
       }
       const frameText = encodeControlFrame({
         documentId: this.documentId,
@@ -2212,7 +2263,17 @@ export class DocumentEngine {
       // A failure worth retrying is retried there (SND-7): such a send may have been delivered
       // all the same, so the frame must go out again, unchanged, until it is accepted.
       id = await this.#scheduler.submit(
-        () => this.#messenger.send(this.documentId, this.memberId, frameText),
+        () => {
+          // Each attempt, retries included: another device of the creator may have taken the
+          // number meanwhile (`#takeNumberOfAnotherDevice`).
+          if (this.#pendingControl !== frameText) {
+            throw new ControlFrameRejectedError(
+              "sequence-conflict",
+              `control frame ${frame.sequence} not sent: another device of the creator used its number first`,
+            );
+          }
+          return this.#messenger.send(this.documentId, this.memberId, frameText);
+        },
         { armsHeartbeat: true, retry: true },
       );
     } catch (error) {
@@ -2267,6 +2328,9 @@ export class DocumentEngine {
       );
     }
     this.#controlFrameTexts.set(frame.sequence, text);
+    if (this.#creatorMemberId === this.memberId) {
+      this.#adoptNumbersOfOtherDevices();
+    }
 
     // Recorded even when stale — a stale frame still proves the number arrived.
     if (frame.sequence > this.#controlFloor) {
