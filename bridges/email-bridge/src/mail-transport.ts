@@ -164,16 +164,7 @@ export function createNodemailerSender(
           `refusing to send with a malformed Message-ID: ${JSON.stringify(mail.messageId)}`,
         );
       }
-      const info = await transporter.sendMail({
-        from: config.address,
-        to: mail.to.join(", "),
-        subject: mail.subject,
-        text: mail.text,
-        headers: { [DOCUMENT_HEADER]: mail.documentId },
-        messageId: mail.messageId,
-        inReplyTo: mail.inReplyTo,
-        references: mail.references ? [...mail.references] : undefined,
-      });
+      const info = await transporter.sendMail(mailOptions(config.address, mail));
       requireEveryRecipient(info);
       return { messageId: info.messageId };
     },
@@ -193,6 +184,56 @@ export interface IncomingMail {
   readonly tooLarge?: true;
 }
 
+/** The options `send` hands the mail library for `mail` — and `composeMail` composes the copy from. */
+function mailOptions(from: string, mail: OutgoingMail) {
+  return {
+    from,
+    to: mail.to.join(", "),
+    subject: mail.subject,
+    text: mail.text,
+    headers: { [DOCUMENT_HEADER]: mail.documentId },
+    messageId: mail.messageId,
+    inReplyTo: mail.inReplyTo,
+    references: mail.references ? [...mail.references] : undefined,
+  };
+}
+
+/**
+ * Who puts a copy of every frame mail this bridge sends into the account's sent folder, where
+ * this address's other devices find it (SPECIFICATION.md EML-12): `append`, the bridge itself;
+ * `provider`, the mail provider, which files mail sent through it there on its own. `append`
+ * unless `EMAIL_SENT_COPY` says otherwise: a missing copy fails another device silently, a
+ * second one only fills the folder twice.
+ */
+export type SentCopyMode = "append" | "provider";
+
+export function parseSentCopyMode(value: string | undefined): SentCopyMode {
+  if (value === undefined || value === "" || value === "append") {
+    return "append";
+  }
+  if (value === "provider") {
+    return "provider";
+  }
+  throw new Error(`EMAIL_SENT_COPY must be "append" or "provider", not ${JSON.stringify(value)}`);
+}
+
+/**
+ * The message `send` sent as `messageId`, composed again for the sent folder: the same headers
+ * and body in RFC 5322 form, by nodemailer's own composer — a stream transport that sends
+ * nothing.
+ */
+export async function composeMail(
+  from: string,
+  mail: OutgoingMail,
+  messageId: string,
+): Promise<Buffer> {
+  const composer = createTransport({ streamTransport: true, buffer: true, newline: "windows" });
+  const info = (await composer.sendMail(mailOptions(from, { ...mail, messageId }))) as {
+    message: Buffer;
+  };
+  return info.message;
+}
+
 export interface MailReceiver {
   /** How this connection is secured — reported by `GET /mail/status`. */
   readonly tls: TlsMode;
@@ -205,6 +246,12 @@ export interface MailReceiver {
    * each incoming `GET /deliveries` request, not a background timer).
    */
   fetchThreadMessages(documentId: string): Promise<readonly IncomingMail[]>;
+  /**
+   * Appends `raw`, a message this bridge sent, to the account's sent folder (SPECIAL-USE
+   * `\Sent`), creating a folder `Sent` when the account has none (EML-12). Optional: a
+   * receiver that cannot store leaves the copy to the provider.
+   */
+  storeSentCopy?(raw: Buffer): Promise<void>;
 }
 
 function addressList(field: AddressObject | AddressObject[] | undefined): readonly string[] {
@@ -248,8 +295,13 @@ export function imapClientOptions(config: ImapConfig) {
  * just unsearched.
  */
 async function junkMailboxPath(client: ImapFlow): Promise<string | undefined> {
+  return specialMailboxPath(client, "\\Junk");
+}
+
+/** The account's mailbox with the SPECIAL-USE attribute `use` (RFC 6154), if it has one. */
+async function specialMailboxPath(client: ImapFlow, use: string): Promise<string | undefined> {
   const mailboxes = await client.list();
-  return mailboxes.find((mailbox) => mailbox.specialUse === "\\Junk")?.path;
+  return mailboxes.find((mailbox) => mailbox.specialUse === use)?.path;
 }
 
 async function fetchDocumentMessages(
@@ -332,7 +384,27 @@ export function createImapReceiver(config: ImapConfig): MailReceiver {
         const inbox = await fetchDocumentMessages(client, "INBOX", documentId, maxBytes);
         const junk = await junkMailboxPath(client);
         const spam = junk ? await fetchDocumentMessages(client, junk, documentId, maxBytes) : [];
-        return [...inbox, ...spam];
+        // What this address's other devices sent is in its sent folder (EML-12), and what this
+        // bridge sent itself too; the engine already knows its own sends by their Message-ID.
+        const sentPath = await specialMailboxPath(client, "\\Sent");
+        const sent = sentPath
+          ? await fetchDocumentMessages(client, sentPath, documentId, maxBytes)
+          : [];
+        return [...inbox, ...spam, ...sent];
+      } finally {
+        await client.logout();
+      }
+    },
+    async storeSentCopy(raw) {
+      const client = new ImapFlow(imapClientOptions(config));
+      await client.connect();
+      try {
+        let path = await specialMailboxPath(client, "\\Sent");
+        if (path === undefined) {
+          await client.mailboxCreate("Sent");
+          path = "Sent";
+        }
+        await client.append(path, raw, ["\\Seen"]);
       } finally {
         await client.logout();
       }

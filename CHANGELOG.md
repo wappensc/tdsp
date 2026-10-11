@@ -24,6 +24,15 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
   device of its own member, passing on its control state when it holds it without a gap; the
   other device takes it only as an answer to its own request, and is then bootstrapped. A
   request is one's own by its `requestId` (#31).
+- EML-12: an email bridge makes sure a copy of every frame mail it sends is in its account's
+  sent folder (`\Sent`), and searches that folder too, so another device of the same address
+  receives it; with PGP the mail is encrypted to the sender's key as well. The mail other
+  participants receive is unchanged (#31).
+
+### Added
+
+- The email bridge's `EMAIL_SENT_COPY` setting: `append` (default), the bridge appends the
+  copy itself; `provider`, for a provider that files sent mail on its own (EML-12; #31).
 
 ### Changed
 

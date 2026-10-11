@@ -11,6 +11,7 @@ import {
   type MailReceiver,
   type MailSender,
   type OutgoingMail,
+  parseSentCopyMode,
 } from "./mail-transport.ts";
 import { createServer, type ServerDependencies } from "./server.ts";
 import type { Rejection, SyncState } from "./sync-state.ts";
@@ -501,6 +502,67 @@ describe("bridges/email-bridge server", () => {
       expect(sender.sent[0]?.text).toBe(
         JSON.stringify({ tdsp: 1, kind: "frame", documentId: "doc-1", frame: "AQID" }),
       );
+    });
+
+    describe("a copy in the sent folder, for this address's other devices (EML-12)", () => {
+      /** Restarts the bridge with a receiver that files copies — or fails to, when told. */
+      async function restartWith(options: Partial<ServerDependencies>, failure?: Error) {
+        const stored: Buffer[] = [];
+        const receiver = new FakeMailReceiver();
+        Object.assign(receiver, {
+          async storeSentCopy(raw: Buffer) {
+            if (failure) throw failure;
+            stored.push(raw);
+          },
+        });
+        server.close();
+        start({ receiver, ...options });
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const address = server.address();
+        const url =
+          typeof address === "object" && address ? `http://127.0.0.1:${address.port}` : "";
+        const send = () =>
+          fetch(`${url}/channels/doc-1/send`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ sender: sender.address, payload: "AQID" }),
+          });
+        return { stored, send };
+      }
+
+      it("files a copy of the frame mail it sent: same Message-ID, thread and recipients", async () => {
+        const { stored, send } = await restartWith({});
+        expect((await send()).status).toBe(200);
+        expect(stored).toHaveLength(1);
+        const raw = stored[0]?.toString("utf8") ?? "";
+        expect(raw).toMatch(/^Message-ID: <sent-1@example\.org>\r$/im);
+        expect(raw).toMatch(/^x-tdsp-document: doc-1\r$/im);
+        expect(raw).toMatch(/^In-Reply-To: <root@example\.org>\r$/im);
+        expect(raw).toMatch(/^To: alice@example\.org, bob@example\.org\r$/im);
+        expect(raw).toContain(
+          JSON.stringify({ tdsp: 1, kind: "frame", documentId: "doc-1", frame: "AQID" }),
+        );
+      });
+
+      it("reads EMAIL_SENT_COPY strictly: append by default, provider on request, anything else refused", () => {
+        expect(parseSentCopyMode(undefined)).toBe("append");
+        expect(parseSentCopyMode("append")).toBe("append");
+        expect(parseSentCopyMode("provider")).toBe("provider");
+        expect(() => parseSentCopyMode("Provider")).toThrow(/EMAIL_SENT_COPY/);
+      });
+
+      it("leaves the copy to a provider that files sent mail itself (EMAIL_SENT_COPY=provider)", async () => {
+        const { stored, send } = await restartWith({ sentCopy: "provider" });
+        expect((await send()).status).toBe(200);
+        expect(stored).toEqual([]);
+      });
+
+      it("reports the send as made when the copy cannot be filed: the mail is out, a resend would duplicate it", async () => {
+        const { send } = await restartWith({}, new Error("APPEND failed"));
+        const response = await send();
+        expect(response.status).toBe(200);
+        expect(sender.sent).toHaveLength(1);
+      });
     });
 
     describe("says why a send failed, by status", () => {
