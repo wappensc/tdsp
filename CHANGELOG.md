@@ -14,7 +14,20 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
 
 ## Unreleased
 
-Nothing yet.
+### Specification: TDSP 1.2
+
+- CTL-18: the creator may run on several devices; a device continues after the control
+  numbers another device used, but only after an unbroken run, issues nothing while it lacks
+  a frame, and gives up a pending frame whose number another device took. Two devices acting
+  at the same moment still collide (CTL-17) (#31).
+
+### Changed
+
+- A device of the creator no longer blocks for good after another device of the creator
+  acted (`sequence-conflict` on every later action); it continues after that device's numbers
+  (CTL-18; #31).
+- A creator restarted without its persisted control state continues when it can read every
+  control frame it sent from 1 on, instead of reusing their numbers (CTL-12, CTL-18; #31).
 
 ## v1.2.0 — 2026-10-11 · implements TDSP 1.1
 

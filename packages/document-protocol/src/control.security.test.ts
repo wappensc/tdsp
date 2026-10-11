@@ -562,23 +562,56 @@ describe("control frames", () => {
       });
     }
 
-    it("without its persisted control state, a restarted creator's next frame is stale everywhere — the failure this option exists to prevent", async () => {
-      const messenger = new InMemoryMessengerPort();
-      const { alice, bob } = await pair(messenger);
+    it("without its persisted control state, a restarted creator's next frame is stale everywhere it cannot read its own earlier frames — the failure this option exists to prevent", async () => {
+      const messenger = new NoHistoryMessengerPort();
+      const alice = await DocumentEngine.create(
+        DOCUMENT_ID,
+        "alice",
+        messenger,
+        undefined,
+        AS_ALICE,
+      );
+      const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+      await alice.sync();
+      await bob.sync();
       await alice.setMembership("bob", "write"); // sequence 1
       await alice.setMembership("carol", "read"); // sequence 2
       await bob.sync();
 
-      const restarted = await restart(messenger); // counter back to 0
-      // Issued as sequence 1 — which carried another frame. On a transport with history the
-      // restarted creator has read its own earlier frames and refuses before sending (CTL-17);
-      // on one without, every receiver would drop the frame as stale.
-      const refusal = await restarted.setMembership("bob", "read").catch((error: unknown) => error);
-      expect(refusal).toBeInstanceOf(ControlFrameRejectedError);
-      expect((refusal as ControlFrameRejectedError).reason).toBe("sequence-conflict");
+      messenger.forgetHistory(DOCUMENT_ID, "alice");
+      const restarted = await DocumentEngine.join(
+        DOCUMENT_ID,
+        "alice",
+        messenger,
+        undefined,
+        AS_ALICE,
+      );
+      await restarted.setMembership("bob", "read"); // issued as 1 again: stale or a conflict
       await bob.sync();
 
       expect(bob.permissionOf("bob")).toBe("write"); // the demotion never took effect
+    });
+
+    it("without it, a restarted creator that reads every frame it sent continues after them", async () => {
+      const messenger = new InMemoryMessengerPort();
+      const { alice, bob, applyErrors } = await pair(messenger);
+      await alice.setMembership("bob", "write"); // 1
+      await alice.setMembership("carol", "read"); // 2
+      await bob.sync();
+
+      const restarted = await restart(messenger); // no state, but the transport keeps history
+      expect(restarted.controlSequence).toBe(2);
+      await restarted.setMembership("bob", "read"); // 3
+      await bob.sync();
+
+      expect(bob.permissionOf("bob")).toBe("read");
+      expect(bob.permissionOf("carol")).toBe("read");
+      expect(
+        applyErrors.filter(
+          (error) =>
+            error instanceof ControlFrameRejectedError && error.reason === "sequence-conflict",
+        ),
+      ).toEqual([]);
     });
 
     it("with it, the counter continues and the next frame counts", async () => {
@@ -965,6 +998,221 @@ describe("control frames", () => {
         expect(restarted.controlSequence).toBe(1);
         await bob.sync();
         expect(bob.permissionOf("bob")).toBe("write");
+      });
+    });
+
+    /**
+     * One creator on several devices (#31, option B). Each device runs an engine under the
+     * creator's member id; a device counts a number another device of the creator used as
+     * taken. Two devices acting at the very same moment still collide (CTL-17): a limit of 1.x.
+     */
+    describe("a creator on several devices", () => {
+      /** The creator's desktop granted bob `write` (1); a tablet starts from a copy of that state. */
+      async function desktopAndTablet(port: MessengerPort) {
+        const desktop = await DocumentEngine.create(
+          DOCUMENT_ID,
+          "alice",
+          port,
+          undefined,
+          AS_ALICE,
+        );
+        await desktop.setMembership("bob", "write"); // 1
+        const applyErrors: unknown[] = [];
+        const bob = await DocumentEngine.join(
+          DOCUMENT_ID,
+          "bob",
+          port,
+          (error, context) => {
+            if (context === "apply") applyErrors.push(error);
+          },
+          AS_ALICE,
+        );
+        const tabletErrors: unknown[] = [];
+        const tabletStates: PersistedControlState[] = [];
+        const tablet = await DocumentEngine.join(
+          DOCUMENT_ID,
+          "alice",
+          port,
+          (error) => tabletErrors.push(error),
+          {
+            ...AS_ALICE,
+            controlState: desktop.controlState,
+            onControlStateChange: (state) => tabletStates.push(structuredClone(state)),
+          },
+        );
+        await bob.sync();
+        return { desktop, tablet, bob, applyErrors, tabletErrors, tabletStates };
+      }
+
+      const conflicts = (errors: readonly unknown[]) =>
+        errors.filter(
+          (error) =>
+            error instanceof ControlFrameRejectedError && error.reason === "sequence-conflict",
+        );
+
+      it("a device takes the next number after one its other device used, and persists it", async () => {
+        const port = new InMemoryMessengerPort();
+        const { desktop, tablet, bob, applyErrors, tabletStates } = await desktopAndTablet(port);
+
+        await desktop.setMembership("carol", "write"); // 2, on the desktop
+        await tablet.sync();
+        expect(tablet.controlSequence).toBe(2);
+        expect(tablet.permissionOf("carol")).toBe("write");
+        expect(tabletStates.at(-1)?.sequence).toBe(2); // what a restart of the tablet resumes from
+
+        await tablet.setMembership("bob", "read"); // 3, on the tablet
+        await desktop.sync();
+        await bob.sync();
+        expect(tablet.controlSequence).toBe(3);
+        expect(desktop.controlSequence).toBe(3);
+        expect(bob.permissionOf("bob")).toBe("read");
+        expect(bob.permissionOf("carol")).toBe("write");
+        expect(conflicts(applyErrors)).toEqual([]);
+
+        await desktop.closeDocument(); // 4, the desktop again
+        await bob.sync();
+        expect(bob.closed).toBe(true);
+        expect(conflicts(applyErrors)).toEqual([]);
+      });
+
+      it("a pending frame whose number another device took is given up and reported, never sent", async () => {
+        const port = new InMemoryMessengerPort();
+        const { desktop, bob, applyErrors } = await desktopAndTablet(port);
+        // The tablet persisted a grant to dave as pending (2) and stopped before sending it...
+        const pending = encodeControlFrame({
+          documentId: DOCUMENT_ID,
+          sequence: 2,
+          action: "membership",
+          member: "dave",
+          permission: "write",
+        });
+        const tabletState = { ...desktop.controlState, pendingControl: pending };
+        // ...while the desktop used 2 for another action.
+        await desktop.setMembership("carol", "write"); // 2
+
+        const errors: unknown[] = [];
+        const states: PersistedControlState[] = [];
+        const tablet = await DocumentEngine.join(
+          DOCUMENT_ID,
+          "alice",
+          port,
+          (e) => errors.push(e),
+          {
+            ...AS_ALICE,
+            controlState: tabletState,
+            onControlStateChange: (state) => states.push(structuredClone(state)),
+          },
+        );
+        expect(conflicts(errors)).toHaveLength(1); // reported, once
+        expect(states.at(-1)?.pendingControl).toBeUndefined(); // given up for good
+        expect(tablet.controlSequence).toBe(2);
+        const sentUnderTwo = (await port.receive(DOCUMENT_ID, "x"))
+          .filter((d) => d.sender === "alice" && JSON.parse(d.payload).sequence === 2)
+          .map((d) => d.payload);
+        expect(sentUnderTwo).not.toContain(pending);
+
+        await tablet.setMembership("dave", "write"); // asked again: 3
+        await bob.sync();
+        expect(bob.permissionOf("dave")).toBe("write");
+        expect(bob.permissionOf("carol")).toBe("write");
+        expect(conflicts(applyErrors)).toEqual([]);
+      });
+
+      it("a device that lacks a frame another device sent issues nothing until it has it", async () => {
+        const inner = new InMemoryMessengerPort();
+        let hideFromTablet = new Set<string>();
+        let tabletReads = 0;
+        // The desktop and the tablet both read as "alice". Once hiding starts, only the tablet
+        // reads again, so whatever is hidden is hidden from the tablet.
+        const port: MessengerPort = {
+          createDocument: (d, c) => inner.createDocument(d, c),
+          listChannels: (m) => inner.listChannels(m),
+          transportProfile: () => inner.transportProfile(),
+          send: (d, sender, payload) => inner.send(d, sender, payload),
+          receive: async (d, m) => {
+            const all = await inner.receive(d, m);
+            return tabletReads > 0 && m === "alice"
+              ? all.filter((delivery) => !hideFromTablet.has(delivery.id))
+              : all;
+          },
+        };
+        const { desktop, tablet, bob, applyErrors } = await desktopAndTablet(port);
+        tabletReads = 1;
+        await desktop.setMembership("carol", "write"); // 2
+        hideFromTablet = new Set(
+          (await inner.receive(DOCUMENT_ID, "x")).map((d) => d.id).slice(-1),
+        );
+        await desktop.setMembership("dave", "write"); // 3
+        await tablet.sync(); // sees 3, not 2
+
+        const sentBefore = (await inner.receive(DOCUMENT_ID, "x")).length;
+        const refusal = await tablet.setMembership("erin", "read").catch((error: unknown) => error);
+        expect((refusal as ControlFrameRejectedError).reason).toBe("sequence-conflict");
+        expect((await inner.receive(DOCUMENT_ID, "x")).length).toBe(sentBefore); // nothing sent
+
+        hideFromTablet = new Set(); // 2 arrives after all
+        await tablet.sync();
+        expect(tablet.controlSequence).toBe(3);
+        await tablet.setMembership("erin", "read"); // 4
+        await bob.sync();
+        expect(bob.permissionOf("erin")).toBe("read");
+        expect(bob.permissionOf("dave")).toBe("write");
+        expect(
+          applyErrors.filter(
+            (error) =>
+              error instanceof ControlFrameRejectedError && error.reason === "sequence-conflict",
+          ),
+        ).toEqual([]);
+      });
+
+      it("a frame still being retried is given up as soon as another device's frame takes its number", async () => {
+        vi.useFakeTimers();
+        try {
+          const inner = new InMemoryMessengerPort();
+          let tabletOffline = false;
+          let tabletSends = 0;
+          // Only the tablet's sends fail; it still reads what arrives.
+          const port: MessengerPort = {
+            createDocument: (d, c) => inner.createDocument(d, c),
+            receive: (d, m) => inner.receive(d, m),
+            listChannels: (m) => inner.listChannels(m),
+            transportProfile: () => inner.transportProfile(),
+            send: async (d, sender, payload) => {
+              if (sender === "alice" && tabletOffline) {
+                tabletSends += 1;
+                throw new TransportSendError("unavailable", "tablet offline");
+              }
+              return inner.send(d, sender, payload);
+            },
+          };
+          const { desktop, tablet, bob, applyErrors } = await desktopAndTablet(port);
+
+          tabletOffline = true;
+          const grant = tablet.setMembership("dave", "write").catch((error: unknown) => error); // 2, retrying
+          await vi.advanceTimersByTimeAsync(2_000);
+          tabletOffline = false; // the desktop may send; so may the tablet, from here on
+          const desktopsTwo = desktop.setMembership("carol", "write"); // 2, sent
+          await desktopsTwo;
+          tabletOffline = true;
+          await tablet.sync(); // the tablet sees the desktop's 2
+          tabletOffline = false;
+          const attemptsBefore = tabletSends;
+          await vi.advanceTimersByTimeAsync(60_000); // the next retry would be due
+
+          const outcome = await grant;
+          expect(outcome).toBeInstanceOf(ControlFrameRejectedError);
+          expect((outcome as ControlFrameRejectedError).reason).toBe("sequence-conflict");
+          expect(tabletSends).toBe(attemptsBefore);
+          await bob.sync();
+          expect(bob.permissionOf("dave")).toBeUndefined(); // never sent under 2
+          expect(conflicts(applyErrors)).toEqual([]);
+
+          await tablet.setMembership("dave", "write"); // 3
+          await bob.sync();
+          expect(bob.permissionOf("dave")).toBe("write");
+        } finally {
+          vi.useRealTimers();
+        }
       });
     });
 

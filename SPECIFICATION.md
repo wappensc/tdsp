@@ -1,6 +1,6 @@
 # TDSP — Together Document Sync Protocol
 
-**Specification · TDSP 1.1 · 11 October 2026**
+**Specification · TDSP 1.2 · 11 October 2026**
 
 ## 1. Introduction
 
@@ -31,10 +31,10 @@ replaceable ([§2.1](#21-layers)).
 
 ### 1.2 Status of this document
 
-This is **TDSP 1.1**. It changes no byte of TDSP 1.0's wire; it states
+This is **TDSP 1.2**. It changes no byte of TDSP 1.0's wire; it states
 requirements more precisely and adds some: for a receiver's robustness, for
-profiles defined outside this specification, and for layers beside a document's
-content.
+profiles defined outside this specification, for layers beside a document's
+content, and for a participant on several devices.
 A later version changes the wire only as
 [§14](#14-versioning-and-extensibility) describes.
 
@@ -1145,8 +1145,10 @@ among the members — rejects the whole `resync-response` (FRM-6).
   accept restored control state only when it is the creator; a non-creator MUST
   re-learn control state from the creator. A creator whose persisted state is
   lost restarts from sequence 0, and its next frames are stale or conflicts
-  (CTL-17) wherever the old ones arrived; this version does not recover that
-  state, so an application SHOULD tell the person rather than resume silently.
+  (CTL-17) wherever the old ones arrived, unless it can read every control frame
+  it sent, from 1 on, and continues after them (CTL-18); this version does not
+  otherwise recover that state, so an application SHOULD tell the person rather
+  than resume silently.
   *Rationale:* a creator that restarts at sequence 1 has every frame rejected,
   and one that forgot its grants sends joiners an empty membership map. The
   outbox closes the gap between "the messenger accepted the frame" and "the
@@ -1213,6 +1215,21 @@ target, because an invitation also carries a policy with a sequence
   disagree without anyone noticing. Seeing it and reporting it is all a receiver
   can do; a creator that has read its own earlier frames can refuse before
   sending.
+- **CTL-18** · *engine* — The creator may run on several devices, one engine each,
+  under its one MemberId. An engine of the creator MUST count a control frame
+  from the creator that it did not issue as issued once it holds every control
+  frame numbered before it, and MUST continue after the last of that unbroken
+  run, persisting it (CTL-12). It MUST NOT issue a control frame while it holds a
+  frame from the creator numbered above that run. A frame of its own pending
+  under a number such a frame took MUST be given up and reported, and MUST NOT
+  be sent, on any later attempt either.
+  *Rationale:* every device of the creator speaks for it, so a number another
+  device used is taken. Continuing only after an unbroken run keeps what the
+  device knows of the control state, and what its snapshots say, complete up to
+  its own next number. Two devices that act before either has seen the other
+  still issue different frames under one number, which receivers report as a
+  conflict (CTL-17); this version does not resolve that, and an application
+  SHOULD let the person manage a document from one device at a time.
 
 ## 8. Bootstrap and resync
 
