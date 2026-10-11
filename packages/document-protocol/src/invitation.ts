@@ -2,7 +2,7 @@ import { isProfileId } from "./framing";
 import { decodeSyncPolicyParam } from "./sync-policy";
 
 /**
- * An invitation as a link's query (SPECIFICATION.md §11.3): what an application writes
+ * An invitation as a link's query or fragment (SPECIFICATION.md §11.3, INV-8): what an application writes
  * into the chat message that invites a participant, and what another application — possibly
  * another implementation — reads back to fill in its join step. A convenience, not a
  * capability: nothing in it grants access, and the creator's own answer confirms what it
@@ -110,6 +110,24 @@ export function encodeInvitation(invitation: Invitation): string {
     throw new Error(`not a valid invitation: ${back.message}`);
   }
   return text;
+}
+
+/**
+ * Reads an invitation from a whole link (SPECIFICATION.md INV-8): from its fragment when the
+ * fragment carries a `tdsp` parameter, from its query otherwise — never from parameters of the
+ * two combined, so nothing added to the visible query reaches an invitation in the fragment.
+ * An application that puts the form into the fragment of an `https` link keeps it from every
+ * server on the way. Text that is no URL holds no invitation.
+ */
+export function invitationFromUrl(link: string | URL): ParsedInvitation {
+  let url: URL;
+  try {
+    url = typeof link === "string" ? new URL(link) : link;
+  } catch {
+    return { ok: false, problem: "not-an-invitation", message: "not a link" };
+  }
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  return parseInvitation(fragment.has("tdsp") ? fragment : new URLSearchParams(url.search));
 }
 
 /**

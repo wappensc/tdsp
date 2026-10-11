@@ -2355,6 +2355,7 @@ export {
   INVITATION_VERSION,
   type Invitation,
   type InvitationProblem,
+  invitationFromUrl,
   MAX_INVITATION_RECIPIENTS,
   type ParsedInvitation,
   parseInvitation,

@@ -1659,8 +1659,9 @@ Example: `30000,120000,0,inf,60000@0`. The field order is `minIntervalMs`,
 
 ### 11.3 Invitation as a link
 
-An application that expresses an invitation as a URL query MUST use this form,
-so that one application can open another's invitations. The query is
+An application that expresses an invitation as a URL query — or as a URL
+fragment (INV-8) — MUST use this form, so that one application can open
+another's invitations. The query is
 `application/x-www-form-urlencoded` as the WHATWG URL standard defines it (what
 `URLSearchParams` reads and writes), and every value is UTF-8.
 
@@ -1694,6 +1695,17 @@ so that one application can open another's invitations. The query is
   *Rationale:* a link can be forwarded into any conversation and edited by anyone
   who holds it, so it cannot prove which channel it came from; everything it
   claims is checked by something that can.
+- **INV-8** · *application* — An application MAY carry this form as a link's
+  fragment instead of its query. A reader SHOULD look for the form in both
+  places; one that does MUST read the fragment when the fragment carries a
+  `tdsp` parameter and the query otherwise, and MUST NOT combine parameters
+  from the two.
+  *Rationale:* a link's query reaches every server and log on its way, and
+  link-preview fetchers read it; for an `https` link the fragment never leaves
+  the browser or the application, though the page the link opens can read it.
+  A reader that looks in one place only cannot open the other kind of link,
+  and combining the two would let a parameter added to the visible query change
+  an invitation carried in the fragment.
 
 For a PGP email document the invitation additionally carries a signed and
 encrypted block ([§13.4](#134-email)); where the block and the link disagree,
