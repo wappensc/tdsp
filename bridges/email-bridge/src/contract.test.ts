@@ -153,6 +153,7 @@ describe.skipIf(!available)("MessengerPort contract (email, live against a real 
       creatorId: ALICE.address,
       memberPort,
       memberId: BOB.address,
+      channelId: threadRootMessageId,
     };
   }
 

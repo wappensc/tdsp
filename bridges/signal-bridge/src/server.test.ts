@@ -48,6 +48,13 @@ class FakeGroups implements GroupReader {
   async isMember(groupId: string): Promise<boolean> {
     return this.groups.some((group) => group.id === groupId);
   }
+
+  memberAcis = new Map<string, readonly string[]>();
+  async members(groupId: string): Promise<readonly string[] | undefined> {
+    return this.groups.some((group) => group.id === groupId)
+      ? (this.memberAcis.get(groupId) ?? [])
+      : undefined;
+  }
 }
 
 interface SentMessage {
@@ -158,6 +165,22 @@ describe("signal-bridge HTTP API", () => {
     const after = await fetch(`${baseUrl}/whoami`);
     expect(after.status).toBe(200);
     await expect(after.json()).resolves.toEqual({ id: "+15551234567" });
+  });
+
+  it("GET /members answers a group's members by ACI, refuses one this account is not in, and needs a channelId (TRN-17)", async () => {
+    groups.groups = [{ id: "group-1", name: "Team" }];
+    groups.memberAcis.set("group-1", ["aci-alice", "aci-bob"]);
+    groups.memberAcis.set("group-2", ["aci-mallory"]);
+    const members = (channelId: string) =>
+      fetch(`${baseUrl}/members?channelId=${encodeURIComponent(channelId)}`);
+
+    const ours = await members("group-1");
+    expect(ours.status).toBe(200);
+    await expect(ours.json()).resolves.toEqual(["aci-alice", "aci-bob"]);
+    const other = await members("group-2");
+    expect(other.status).toBe(404);
+    expect(await other.text()).not.toContain("mallory");
+    expect((await fetch(`${baseUrl}/members`)).status).toBe(400);
   });
 
   it("GET /channels lists groups from the group reader", async () => {

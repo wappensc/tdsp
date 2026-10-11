@@ -37,8 +37,31 @@ describe("listGroups", () => {
     const rpc = new FakeRpc();
     rpc.results.set("listGroups", [{ id: "g1", name: "Team chat" }, { name: "no id, dropped" }]);
     const groups = await listGroups(rpc, "+15551234567");
-    expect(groups).toEqual([{ groupId: "g1", name: "Team chat" }]);
+    expect(groups).toEqual([{ groupId: "g1", name: "Team chat", members: [], isMember: true }]);
     expect(rpc.calls[0]).toEqual({ method: "listGroups", params: { account: "+15551234567" } });
+  });
+});
+
+describe("listGroups' members (TRN-17)", () => {
+  it("names each member by ACI, drops members without one, and marks a group this account left", async () => {
+    const rpc = new FakeRpc();
+    rpc.results.set("listGroups", [
+      {
+        id: "g1",
+        name: "Team chat",
+        isMember: true,
+        members: [
+          { number: "+15550000001", uuid: "aci-alice", isAdmin: true },
+          { number: "+15550000002", uuid: "aci-bob", isAdmin: false },
+          { number: "+15550000003" },
+        ],
+        pendingMembers: [{ number: "+15550000004", uuid: "aci-invited" }],
+      },
+      { id: "g2", name: "Left", isMember: false, members: [{ uuid: "aci-carol" }] },
+    ]);
+    const groups = await listGroups(rpc, "+15551234567");
+    expect(groups[0]).toMatchObject({ members: ["aci-alice", "aci-bob"], isMember: true });
+    expect(groups[1]).toMatchObject({ isMember: false });
   });
 });
 

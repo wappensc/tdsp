@@ -171,6 +171,16 @@ export interface MessengerPort {
   listChannels(member: MemberId): Promise<readonly RawChannel[]>;
 
   /**
+   * The members of channel `channelId` as the messenger reports them at the moment of the call
+   * (SPECIFICATION.md §3.2, TRN-17): a snapshot, this account included — not who joined or left
+   * in between, which no transport reports yet. `channelId` is a `RawChannel.id`, so it can be
+   * asked before a document is bound. Optional. A channel this account is not in is refused,
+   * never answered. Information for the application only: it grants nothing, and the engine
+   * never calls it.
+   */
+  channelMembers?(channelId: string): Promise<readonly MemberId[]>;
+
+  /**
    * What this transport can say about its own limits (SPECIFICATION.md §3.5): the send
    * policies it suggests, and the hard bounds no policy may cross. Optional — a port
    * that has nothing to say (the mock) omits it, or resolves to `undefined`, and the

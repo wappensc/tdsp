@@ -504,6 +504,16 @@ describe("bridges/email-bridge server", () => {
       );
     });
 
+    it("GET /members answers a thread's participants by its root Message-ID, and refuses an unknown one (TRN-17)", async () => {
+      const members = (channelId: string) =>
+        fetch(`${baseUrl}/members?channelId=${encodeURIComponent(channelId)}`);
+      const known = await members("<root@example.org>");
+      expect(known.status).toBe(200);
+      await expect(known.json()).resolves.toEqual(["alice@example.org", "bob@example.org"]);
+      expect((await members("<elsewhere@example.org>")).status).toBe(404);
+      expect((await fetch(`${baseUrl}/members`)).status).toBe(400);
+    });
+
     describe("a copy in the sent folder, for this address's other devices (EML-12)", () => {
       /** Restarts the bridge with a receiver that files copies — or fails to, when told. */
       async function restartWith(options: Partial<ServerDependencies>, failure?: Error) {

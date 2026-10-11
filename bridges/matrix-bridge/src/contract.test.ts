@@ -145,6 +145,7 @@ describe.skipIf(!available)("MessengerPort contract (Matrix, live against a loca
       creatorId: aliceLogin.userId,
       memberPort,
       memberId: bobLogin.userId,
+      channelId: accounts.rooms.plain,
     };
   }
 

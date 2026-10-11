@@ -77,6 +77,12 @@ export interface MatrixRoomReader {
    * bridge's `/whoami` answers.
    */
   whoami(): Promise<{ id: string }>;
+  /**
+   * The joined members of `roomId` now (SPECIFICATION.md TRN-17), or `undefined` when this
+   * account is not in the room: nobody else's membership is revealed. Optional: a reader that
+   * cannot tell answers `GET /members` with 501.
+   */
+  joinedMembers?(roomId: string): Promise<readonly string[] | undefined>;
 }
 
 /** The real implementation, backed by `matrix-api.ts`'s live `fetch()` calls. */
@@ -101,6 +107,13 @@ export function createMatrixRoomReader(config: MatrixApiConfig): MatrixRoomReade
     async whoami() {
       const { userId } = await whoami(config);
       return { id: userId };
+    },
+    async joinedMembers(roomId: string) {
+      // Asked only for a room this account is in: Synapse would answer for some others too.
+      if (!(await getJoinedRooms(config)).includes(roomId)) {
+        return undefined;
+      }
+      return getJoinedMembers(config, roomId);
     },
   };
 }
@@ -413,6 +426,32 @@ export function createServer(deps: ServerDependencies): Server {
       deps.rooms
         .listJoinedRoomSummaries()
         .then((rooms) => sendJson(res, 200, rooms))
+        .catch((error: unknown) => {
+          sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
+        });
+      return;
+    }
+
+    // Not under /channels/:documentId: a channel's members are asked by its channel id, also
+    // before any document is bound to it (SPECIFICATION.md §12.6, TRN-17).
+    if (method === "GET" && path === "/members") {
+      const channelId = new URLSearchParams(query).get("channelId");
+      const joinedMembers = deps.rooms.joinedMembers;
+      if (channelId === null || channelId === "") {
+        sendJson(res, 400, { error: "channelId is required" });
+        return;
+      }
+      if (joinedMembers === undefined) {
+        sendJson(res, 501, { error: "this bridge cannot list a room's members" });
+        return;
+      }
+      joinedMembers
+        .call(deps.rooms, channelId)
+        .then((members) =>
+          members === undefined
+            ? sendJson(res, 404, { error: `this account is not in ${channelId}` })
+            : sendJson(res, 200, members),
+        )
         .catch((error: unknown) => {
           sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
         });

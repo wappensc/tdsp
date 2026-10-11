@@ -66,6 +66,12 @@ export interface GroupSummary {
 export interface GroupReader {
   listGroups(): Promise<readonly GroupSummary[]>;
   isMember(groupId: string): Promise<boolean>;
+  /**
+   * The members of `groupId` now, by ACI (SPECIFICATION.md TRN-17), or `undefined` when this
+   * account is not in the group: nobody else's membership is revealed. Optional: a reader that
+   * cannot tell answers `GET /members` with 501.
+   */
+  members?(groupId: string): Promise<readonly string[] | undefined>;
 }
 
 /** `signal-cli`'s own local account selector — never the `MemberId` (see `auth.ts`). */
@@ -96,6 +102,11 @@ export function createGroupReader(rpc: SignalRpc, auth: AuthStatusSource): Group
     async isMember(groupId: string) {
       const groups = await listGroupsApi(rpc, requirePhoneNumber(auth));
       return groups.some((group) => group.groupId === groupId);
+    },
+    async members(groupId: string) {
+      const groups = await listGroupsApi(rpc, requirePhoneNumber(auth));
+      const group = groups.find((candidate) => candidate.groupId === groupId && candidate.isMember);
+      return group?.members;
     },
   };
 }
@@ -322,6 +333,32 @@ export function createServer(deps: ServerDependencies): Server {
       deps.groups
         .listGroups()
         .then((groups) => sendJson(res, 200, groups))
+        .catch((error: unknown) => {
+          sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
+        });
+      return;
+    }
+
+    // Not under /channels/:documentId: a channel's members are asked by its channel id, also
+    // before any document is bound to it (SPECIFICATION.md §12.6, TRN-17).
+    if (method === "GET" && path === "/members") {
+      const channelId = new URLSearchParams(query).get("channelId");
+      const members = deps.groups.members;
+      if (channelId === null || channelId === "") {
+        sendJson(res, 400, { error: "channelId is required" });
+        return;
+      }
+      if (members === undefined) {
+        sendJson(res, 501, { error: "this bridge cannot list a group's members" });
+        return;
+      }
+      members
+        .call(deps.groups, channelId)
+        .then((found) =>
+          found === undefined
+            ? sendJson(res, 404, { error: `this account is not in ${channelId}` })
+            : sendJson(res, 200, found),
+        )
         .catch((error: unknown) => {
           sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
         });
