@@ -1,6 +1,6 @@
 # TDSP — Together Document Sync Protocol
 
-**Specification · TDSP 1.0 · 26 September 2026**
+**Specification · TDSP 1.0.1 · 11 October 2026**
 
 ## 1. Introduction
 
@@ -31,7 +31,9 @@ replaceable ([§2.1](#21-layers)).
 
 ### 1.2 Status of this document
 
-This is **TDSP 1.0**. A later version changes the wire only as
+This is **TDSP 1.0.1**. It changes no byte of TDSP 1.0's wire; it states
+requirements more precisely and adds some that make a receiver more robust.
+A later version changes the wire only as
 [§14](#14-versioning-and-extensibility) describes.
 
 TDSP adds no security layer of its own; its security properties are those of
@@ -1040,7 +1042,11 @@ among the members — rejects the whole `resync-response` (FRM-6).
   whenever it changes and MUST restore it when the creator's engine restarts. It
   MUST also persist each control frame the creator is about to send — the
   complete frame — *before* the frame is handed to the transport, and keep it
-  until the transport has accepted or refused it (the **outbox**). A restarted
+  until the transport has accepted it or refused it for good, with `too-large` or
+  `rejected` (the **outbox**). A send that failed in any other way — `unavailable`,
+  `rate-limited`, or a failure the engine treats as `unavailable` (TRN-12) — may
+  have been delivered all the same: the frame stays pending, and the engine
+  retries it as SND-7 retries any send. A restarted
   creator whose persisted state holds such a pending frame MUST send that very
   frame again, byte for byte, before it issues any other control frame, and MUST
   NOT issue a different frame under the pending frame's number. Persisting is
@@ -1059,8 +1065,9 @@ among the members — rejects the whole `resync-response` (FRM-6).
   application recorded that it did": a crash there leaves a number that may
   already be delivered, and giving it to another action would show receivers two
   different statements under one version. Resending the identical frame is
-  harmless — receivers drop the copy as stale — while a refused send frees the
-  number, since the messenger took nothing. A non-creator's persisted sequence may
+  harmless — receivers drop the copy as stale — while a send refused for good
+  frees the number, since the messenger took nothing; one that merely failed,
+  after a timeout say, may have reached receivers, so it frees nothing. A non-creator's persisted sequence may
   sit above a gap it never noticed and would mark the lost frame stale forever.
 - **CTL-13** · *engine, application* — An engine MUST refuse to send an `edit`
   frame of its own (reporting the refusal, not retrying it) when the document is
@@ -2195,7 +2202,7 @@ Three things carry a version, deliberately separate:
 | The envelope and bindings | `tdsp` in every envelope ([§13](#13-messenger-bindings)) | An envelope field or a carrier changes incompatibly |
 | A document profile | The major version in its id ([§5](#5-document-profiles)) | What the profile's bytes mean changes incompatibly |
 
-All three are 1 in TDSP 1.0.
+All three are 1 in TDSP 1.0 and 1.0.1.
 
 - **VER-1** · *all* — An incompatible change MUST increment the version that
   governs it. A receiver that does not implement a version MUST fail loudly — by

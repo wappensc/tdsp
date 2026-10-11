@@ -6,7 +6,7 @@ time, in the manner of RFC 7942. It is not part of the protocol: the protocol is
 tests in this repository; what it says is not verified is a known gap, not an oversight
 waiting to be found.
 
-**Status as of TDSP 1.0 (26 September 2026).**
+**Status as of TDSP 1.0.1 (11 October 2026).**
 
 ## How it is verified
 
@@ -54,7 +54,7 @@ the specification says, not that two implementations interoperate.
 | LOS-1 … LOS-8 | Tested against the in-memory transport; not against a real messenger that actually loses a message. A bridge restart that falls entirely between two polls is not noticed (§10) |
 | §10, LOS-8: "ok" without evidence | By definition not a claim of completeness. A creator whose request expired unanswered may lack an offline member's change; the engine keeps the *unanswered* outcome observable |
 | SND-8, restored content | `join()` can start from persisted content (`restore`): shown at once, not sent as a local edit, counted as undistributed until the engine has sent the whole state once it may edit — at once for the creator, after the bootstrap for anyone else, never while read-only; a change that never left before the restart arrives that way. Tested against the in-memory transport |
-| CTL-12, SND-8 (application) | The engine sends no control frame the application could not persist, and marks changes it could not distribute until a resync; both tested. Keeping either across a restart is the application's part, and this repository contains no application |
+| CTL-12, SND-8 (application) | The engine sends no control frame the application could not persist, keeps a control frame whose send failed for now pending and retries it — after a restart too, and without waiting for the creator's next action — and marks changes it could not distribute until a resync; all tested against the in-memory transport. Keeping either across a restart is the application's part, and this repository contains no application |
 
 ## Known gaps
 
