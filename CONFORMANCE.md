@@ -85,10 +85,11 @@ behind a claim elsewhere in the specification.
   is lost restarts from sequence 0. An application that restores persisted content through
   `join()` need not keep the undistributed mark: the engine treats restored content as
   undistributed, at the cost of one message per restart.
-- **Matrix device verification.** The Matrix bridge does not cross-sign its device.
-  Element is moving its clients to exclude such devices by default (MSC4153: their
-  messages hidden, no room keys sent to them), announced for October 2026; people using
-  Element would then not see what the bridge posts. Between bridges of this repository
-  nothing changes. Not tried against Element ([#27](https://github.com/wappensc/tdsp/issues/27)).
+- **Matrix device verification.** Element is moving its clients to exclude devices their
+  account has not signed (MSC4153), announced for October 2026. The Matrix bridge's device
+  can be signed with the account's recovery key (`pnpm run matrix:confirm-device`,
+  [docs/matrix-device-confirmation.md](docs/matrix-device-confirmation.md)); tested against
+  a local Synapse, **not tried against Element itself**. Interactive (emoji) verification is
+  not built: the crypto library the bridge uses offers none.
 - **The email bridge's memory of seen messages** grows with the thread (a few hundred
   bytes per mail); bounding it needs an IMAP UID position.

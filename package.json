@@ -41,6 +41,7 @@
     "matrix:up": "node --experimental-strip-types infra/matrix-testserver/generate-config.ts && docker compose -f infra/matrix-testserver/docker-compose.yml up -d && node --experimental-strip-types infra/matrix-testserver/wait-for-health.ts && node --experimental-strip-types infra/matrix-testserver/provision-test-accounts.ts",
     "matrix:down": "docker compose -f infra/matrix-testserver/docker-compose.yml down",
     "matrix:reset": "docker compose -f infra/matrix-testserver/docker-compose.yml down && rm -rf infra/matrix-testserver/credentials",
+    "matrix:confirm-device": "pnpm --filter @tdsp/matrix-bridge run confirm-device",
     "email:up": "docker compose -f infra/email-testserver/docker-compose.yml up -d && node --experimental-strip-types infra/email-testserver/wait-for-health.ts",
     "email:down": "docker compose -f infra/email-testserver/docker-compose.yml down",
     "test:l4-email": "L4_EMAIL=1 vitest run bridges/email-bridge/src/l4-provider.test.ts",

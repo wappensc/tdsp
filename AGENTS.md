@@ -179,6 +179,8 @@ Run from the repo root:
 - `pnpm run test:l4-signal`, `test:l4-email`, `test:l4-email-bridges` — against real
   accounts, only with their configuration; `pnpm run signal:link <bridge url>` links a
   Signal bridge by QR code.
+- `pnpm run matrix:confirm-device [bridge url]` — signs a running Matrix bridge's device
+  with the account's recovery key ([docs/matrix-device-confirmation.md](docs/matrix-device-confirmation.md)).
 - `pnpm run wire:lock` — compare the wire with `wire/wire-lock.json`; accepting a change is
   the CI role's (CONTRIBUTING.md).
 - `pnpm run repo:settings` — the full check of the GitHub settings, as the admin or CI

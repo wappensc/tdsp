@@ -341,6 +341,54 @@ export async function claimKeys(config: MatrixApiConfig, rawBody: string): Promi
   return postJson(config, "/_matrix/client/v3/keys/claim", rawBody);
 }
 
+/**
+ * `GET /_matrix/client/v3/user/{userId}/account_data/{type}` — the content as JSON text, or
+ * `undefined` when the account holds none of that type (a 404, verified against Synapse).
+ * Read for the account's Secret Storage (`device-confirmation.ts`).
+ */
+export async function getAccountData(
+  config: MatrixApiConfig,
+  userId: string,
+  type: string,
+): Promise<string | undefined> {
+  const response = await get(
+    config,
+    `/_matrix/client/v3/user/${encodeURIComponent(userId)}/account_data/${encodeURIComponent(type)}`,
+  );
+  if (response.status === 404) {
+    return undefined;
+  }
+  const text = await response.text();
+  if (!response.ok) {
+    throw new MatrixApiError(
+      response.status,
+      `account data ${type} failed: ${response.status} ${text}`,
+    );
+  }
+  return text;
+}
+
+/**
+ * `POST /_matrix/client/v3/keys/signatures/upload` with `signedKeys`, the map of user id →
+ * key id → signed object the specification's request body is. Synapse answers 200 even when
+ * it refuses a signature and lists the refusal under `failures` (verified), so any failure
+ * listed there is thrown.
+ */
+export async function uploadSignatures(
+  config: MatrixApiConfig,
+  signedKeys: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+): Promise<void> {
+  const text = await postJson(
+    config,
+    "/_matrix/client/v3/keys/signatures/upload",
+    JSON.stringify(signedKeys),
+  );
+  const failures = (JSON.parse(text) as { failures?: Record<string, unknown> }).failures ?? {};
+  if (Object.keys(failures).length > 0) {
+    throw new MatrixApiError(200, `signatures upload refused: ${JSON.stringify(failures)}`);
+  }
+}
+
 export async function sendToDevice(
   config: MatrixApiConfig,
   eventType: string,
