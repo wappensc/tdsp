@@ -185,6 +185,27 @@ describe("DocumentEngine convergence", () => {
   });
 
   describe("fault injection and lifecycle", () => {
+    it("refuses to resume a creator under another profile than its persisted control state names (PRF-6)", async () => {
+      const alice = await DocumentEngine.create(
+        DOCUMENT_ID,
+        "alice",
+        messenger,
+        undefined,
+        IMMEDIATE,
+      );
+      const persisted = { ...alice.controlState, profile: "com.example.other/1" };
+      alice.dispose();
+      const before = await messenger.receive(DOCUMENT_ID, "bob");
+
+      await expect(
+        DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+          ...JOIN_ALICE,
+          controlState: persisted,
+        }),
+      ).rejects.toThrow(/PRF-6/);
+      expect(await messenger.receive(DOCUMENT_ID, "bob")).toEqual(before);
+    });
+
     it("refuses to create a document anew from persisted control state, before anything is sent (LIF-5)", async () => {
       const alice = await DocumentEngine.create(
         DOCUMENT_ID,
