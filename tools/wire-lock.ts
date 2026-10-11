@@ -15,8 +15,9 @@ import { readFileSync, writeFileSync } from "node:fs";
  * - **addition** — only new entries: older implementations are unaffected (a compatible
  *   addition, §14). Needs a new minor version of the specification.
  * - **specification** — a wire section's text changed while every byte stayed the same:
- *   either editorial (a patch version, or none) or a change of meaning that the frozen
- *   entries have not caught up with.
+ *   either editorial or a clarification (a patch version, or none), or a new requirement
+ *   that changes no byte (the next minor version). Which one it is, the CI role decides when
+ *   it accepts, by the version it gives the specification.
  *
  * Only the CI role may accept a change (`pnpm run wire:lock -- --accept <kind>`), and the
  * lock checks that the specification's version moved accordingly. Both this file and the lock
@@ -199,7 +200,8 @@ const parseVersion = (version: string): [number, number, number] => {
 /**
  * Whether moving the specification from `from` to `to` fits a change of `kind`: an
  * incompatible change a new major version, an addition a new minor one, a specification-only
- * change the same major and minor version (a patch, or none). `undefined` when it fits.
+ * change the same major and minor version (a patch, or none) or the next minor one (a new
+ * requirement, every byte the same). `undefined` when it fits.
  */
 export function versionProblem(kind: ChangeKind, from: string, to: string): string | undefined {
   const [fromMajor, fromMinor, fromPatch] = parseVersion(from);
@@ -209,7 +211,9 @@ export function versionProblem(kind: ChangeKind, from: string, to: string): stri
       ? toMajor === fromMajor + 1 && toMinor === 0 && toPatch === 0
       : kind === "addition"
         ? toMajor === fromMajor && toMinor === fromMinor + 1 && toPatch === 0
-        : toMajor === fromMajor && toMinor === fromMinor && toPatch >= fromPatch;
+        : toMajor === fromMajor &&
+          ((toMinor === fromMinor && toPatch >= fromPatch) ||
+            (toMinor === fromMinor + 1 && toPatch === 0));
   if (fits) {
     return undefined;
   }
@@ -218,7 +222,7 @@ export function versionProblem(kind: ChangeKind, from: string, to: string): stri
       ? `${fromMajor + 1}.0`
       : kind === "addition"
         ? `${fromMajor}.${fromMinor + 1}`
-        : `${fromMajor}.${fromMinor}.${fromPatch + 1} (or unchanged)`;
+        : `${fromMajor}.${fromMinor}.${fromPatch + 1} (or unchanged), or ${fromMajor}.${fromMinor + 1} for a new requirement`;
   return `an ${kind} change needs SPECIFICATION.md at version ${expected}, not ${to} (from ${from})`;
 }
 

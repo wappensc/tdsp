@@ -77,7 +77,7 @@ the text of a normative wire section of the specification. The report names the 
 | --- | --- | --- | --- |
 | **incompatible** | a frozen entry changed or was removed, or a constant or version | the next major, `2.0` — and the wire version with it (§14, VER-1) | `pnpm run wire:lock -- --accept incompatible` |
 | **addition** | only new entries (a new frame kind, a new profile) | the next minor, `1.1` | `pnpm run wire:lock -- --accept addition` |
-| **specification** | a wire section's text, with every byte the same | unchanged, or the next patch, `1.0.1` | `pnpm run wire:lock -- --accept specification` |
+| **specification** | a wire section's text, with every byte the same | unchanged or the next patch, `1.0.1`, for an editorial change or a clarification; the next minor, `1.1`, for a new requirement | `pnpm run wire:lock -- --accept specification` |
 
 Only the CI role may run the acceptance: it rewrites `wire/wire-lock.json`, and refuses when
 the specification's version (its header line) does not match the kind. Within a version,
