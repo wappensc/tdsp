@@ -24,9 +24,16 @@ No byte on the wire changes; the new requirements are why this is a minor versio
   because a document, an invitation or a frame names it (§5.5; #32).
 - PRF-6: a creator's engine refuses restored control state that names another profile than
   the document's (§5.2; #32).
+- Layers (§5.6): data beside a document's content, named by a layer id, that every engine
+  keeps and passes on (LAY-1) and an application may ignore but never strip, showing that
+  it is there (LAY-2); it counts in neither projection nor attribution (LAY-3), and needs a
+  public definition with test vectors (LAY-4). YJS-1 admits layers beside `content` in
+  `yjs-paragraphs/1`, which stays the same profile (#33).
 
 ### Added
 
+- `DocumentEngine.layers` and `isLayerId()`: the layers a document holds, for an application
+  to show (#33).
 - The engine's `profiles` option: an application supplies document profiles besides the
   built-in `yjs-paragraphs/1`, and `profile` may name one of them. A supplied profile with a
   built-in id, or one given twice, is refused (#32).
