@@ -1,6 +1,6 @@
 {
   "name": "@tdsp/messenger-matrix",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "TDSP adapter for Matrix, speaking to a local Matrix bridge.",
   "license": "MIT",
   "private": true,
