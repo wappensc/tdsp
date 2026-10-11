@@ -6,7 +6,7 @@ time, in the manner of RFC 7942. It is not part of the protocol: the protocol is
 tests in this repository; what it says is not verified is a known gap, not an oversight
 waiting to be found.
 
-**Status as of TDSP 1.0 (26 September 2026).**
+**Status as of TDSP 1.0.1 (11 October 2026).**
 
 ## How it is verified
 

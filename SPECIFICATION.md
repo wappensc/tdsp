@@ -1,6 +1,6 @@
 # TDSP — Together Document Sync Protocol
 
-**Specification · TDSP 1.0 · 26 September 2026**
+**Specification · TDSP 1.0.1 · 11 October 2026**
 
 ## 1. Introduction
 
@@ -31,7 +31,9 @@ replaceable ([§2.1](#21-layers)).
 
 ### 1.2 Status of this document
 
-This is **TDSP 1.0**. A later version changes the wire only as
+This is **TDSP 1.0.1**. It changes no byte of TDSP 1.0's wire; it states
+requirements more precisely and adds some that make a receiver more robust.
+A later version changes the wire only as
 [§14](#14-versioning-and-extensibility) describes.
 
 TDSP adds no security layer of its own; its security properties are those of
@@ -2200,7 +2202,7 @@ Three things carry a version, deliberately separate:
 | The envelope and bindings | `tdsp` in every envelope ([§13](#13-messenger-bindings)) | An envelope field or a carrier changes incompatibly |
 | A document profile | The major version in its id ([§5](#5-document-profiles)) | What the profile's bytes mean changes incompatibly |
 
-All three are 1 in TDSP 1.0.
+All three are 1 in TDSP 1.0 and 1.0.1.
 
 - **VER-1** · *all* — An incompatible change MUST increment the version that
   governs it. A receiver that does not implement a version MUST fail loudly — by
