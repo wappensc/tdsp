@@ -149,11 +149,11 @@
   },
   "sections": {
     "## 4. The payload frame": "9046e55d063383bf7f61ad9e42429fe21c8eefbca3708723098f6f722eb1bdd8",
-    "## 5. Document profiles": "96d706e647f5f4988d8238da67baa63fed053cde62bcf5438629245c3a10d485",
+    "## 5. Document profiles": "b246095945278e98b691860f45339f086262e549ae21632b188e7f741a46fede",
     "## 7. Control state": "af98234509d9258482ac3099e33dd8d87884edb032134007cf6be9071676334d",
     "## 11. Invitations": "c8ef5e1b0c77345d91134575d670189b94cf7af886e403e9f4d6d37fbcfb390a",
     "## 13. Messenger bindings": "3855e778a9ea42812c8185f7588180b75fd7fe262d5cd31f58987e0ef7adb928",
-    "## Appendix A. Profile `yjs-paragraphs/1`": "6f611a44ed24d58c580a16a9496423a80c70f5aeeaa7d28eab46355445737a16",
+    "## Appendix A. Profile `yjs-paragraphs/1`": "6ad7e9d4c72bfc4a280f2f6a69fac39e2c43399c824e2e6e9dbef49985ac4bdd",
     "## Appendix B. Recommended values": "bbe6c76dc13b949c15a20900fe6bb1bf202ac836841d13dffc0dc2191ae53f33"
   }
 }
