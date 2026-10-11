@@ -870,6 +870,18 @@ export class DocumentEngine {
     }
     // Refused before anything is sent (PRF-3): the application can decline instead.
     const profile = profileFor(options.profile ?? YJS_PARAGRAPHS_1);
+    // The creator's persisted state names the document's profile; resuming under another
+    // would read the content wrongly and announce a profile everyone rejects (PRF-6).
+    const persistedProfile = options.controlState?.profile;
+    if (
+      options.creatorMemberId === memberId &&
+      persistedProfile !== undefined &&
+      persistedProfile !== profile.id
+    ) {
+      throw new Error(
+        `cannot resume ${documentId} as ${profile.id}: its persisted control state names ${persistedProfile} (SPECIFICATION.md PRF-6)`,
+      );
+    }
     // Persisted content goes in before the engine observes the document: it is neither an
     // edit to send nor text this client just wrote. Refused before anything is sent.
     const document = profile.createEmpty();

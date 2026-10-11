@@ -1,6 +1,6 @@
 # TDSP — Together Document Sync Protocol
 
-**Specification · TDSP 1.0.1 · 11 October 2026**
+**Specification · TDSP 1.1 · 11 October 2026**
 
 ## 1. Introduction
 
@@ -31,8 +31,9 @@ replaceable ([§2.1](#21-layers)).
 
 ### 1.2 Status of this document
 
-This is **TDSP 1.0.1**. It changes no byte of TDSP 1.0's wire; it states
-requirements more precisely and adds some that make a receiver more robust.
+This is **TDSP 1.1**. It changes no byte of TDSP 1.0's wire; it states
+requirements more precisely and adds some: for a receiver's robustness, and for
+profiles defined outside this specification.
 A later version changes the wire only as
 [§14](#14-versioning-and-extensibility) describes.
 
@@ -725,6 +726,12 @@ a new major version, and a new profile id. This specification defines one profil
   projection of a document by that document's profile alone.
   *Rationale:* frames carry no profile of their own; the document's does not
   change, so a per-message copy would only restate it.
+- **PRF-6** · *engine* — A creator's engine MUST refuse restored control state
+  (CTL-12) that names a profile other than the one it is given for the document,
+  and MUST NOT resume the document then.
+  *Rationale:* the creator's snapshot confirms the profile to everyone else
+  (CTL-10); a creator resumed under another profile would read the content wrongly
+  and announce a profile every participant rejects, without noticing either.
 
 The profile travels in the invitation ([§11](#11-invitations)) and in the
 creator's control snapshot ([§7.4](#74-the-control-snapshot)), which lets a joiner
@@ -784,6 +791,35 @@ overlay that breaks this rejects the whole frame (FRM-6).
   *Rationale:* the overlay is the responder's claim about *other people's* text,
   and nothing verifies it; only a delivery's own sender is authenticated, and
   only as far as the messenger is ([§15](#15-security-considerations)).
+
+### 5.5 Profiles defined outside this specification
+
+A frame, an invitation and a snapshot name a profile by its id and nothing else.
+That is enough only when everyone who meets the id can find out what it means,
+and when what it means reaches an engine the way the engine itself does.
+
+- **PRF-7** · *application* — An application MUST NOT use a profile defined
+  outside this specification unless the profile has a public definition at a
+  stable location, under terms that let anyone implement it. The definition MUST
+  cover every item of PRF-1 and the document's structure, at the level of detail
+  of [Appendix A](#appendix-a-profile-yjs-paragraphs1), and MUST come with test
+  vectors: updates, the state they yield together, and that state's plain-text
+  projection. A published definition MUST NOT change incompatibly; an
+  incompatible change is a new major version, and a new profile id.
+  *Rationale:* the id is all a peer is told about the content. An id whose meaning
+  cannot be looked up is the covert extension point FRM-5 rules out for frames,
+  and without test vectors two implementations of one id cannot tell whether
+  they agree; if they do not, their documents diverge silently.
+- **PRF-8** · *engine, application* — An engine MUST NOT obtain, load or run a
+  profile's implementation because a document, an invitation or a frame names it:
+  the profiles an engine implements are fixed by its application before it
+  creates or joins a document. An application MUST NOT install a profile's
+  implementation because an invitation or a document asks for it.
+  *Rationale:* otherwise anyone who can send an invitation could make another
+  participant run code of their choosing. A profile reaches an application the way
+  the application itself does, through its own distribution; a document whose
+  profile an engine does not implement is refused (PRF-3) and can be declined
+  ([§6.5](#65-declining-an-invitation)).
 
 ## 6. Documents and their lifecycle
 
@@ -2221,7 +2257,7 @@ Three things carry a version, deliberately separate:
 | The envelope and bindings | `tdsp` in every envelope ([§13](#13-messenger-bindings)) | An envelope field or a carrier changes incompatibly |
 | A document profile | The major version in its id ([§5](#5-document-profiles)) | What the profile's bytes mean changes incompatibly |
 
-All three are 1 in TDSP 1.0 and 1.0.1.
+All three are 1 in every TDSP 1.x.
 
 - **VER-1** · *all* — An incompatible change MUST increment the version that
   governs it. A receiver that does not implement a version MUST fail loudly — by
@@ -2525,7 +2561,9 @@ frame as a JSON string:
 1. Everything goes through the transport contract; a socket "just for presence"
    ends the security model.
 2. Generate documentIds from a secure random source, and choose each document's
-   profile.
+   profile. A profile from outside this specification needs a public definition
+   with test vectors (PRF-7), and ships with the application, never with a
+   document (PRF-8).
 3. Persist the creator's control state and the list of documents the user has.
 4. Show the creator from an invitation and let the person confirm before joining;
    decline an invitation whose profile the engine does not implement, and show

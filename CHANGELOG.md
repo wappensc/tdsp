@@ -14,6 +14,17 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
 
 ## Unreleased
 
+### Specification: TDSP 1.1
+
+No byte on the wire changes; the new requirements are why this is a minor version.
+
+- PRF-7: a profile defined outside this specification needs a public definition, covering
+  every item of PRF-1, with test vectors, and never changes incompatibly (§5.5; #32).
+- PRF-8: neither an engine nor an application loads or installs a profile's implementation
+  because a document, an invitation or a frame names it (§5.5; #32).
+- PRF-6: a creator's engine refuses restored control state that names another profile than
+  the document's (§5.2; #32).
+
 ### Added
 
 - `pnpm run matrix:confirm-device [bridge url]` signs the Matrix bridge's device with the
