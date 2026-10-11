@@ -83,6 +83,8 @@ Keep metadata accurate when the document changes.
   history. A cited ID must exist.
 - A change that verifies something new, or finds that a claim no longer holds, updates
   CONFORMANCE.md.
+- A change an application or another implementation can notice adds a line under
+  "Unreleased" in CHANGELOG.md (CONTRIBUTING.md says which).
 
 ## Architecture constraints
 
