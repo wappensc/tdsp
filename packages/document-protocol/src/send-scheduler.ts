@@ -113,13 +113,15 @@ interface OutboxEntry {
 
 /**
  * A message that is not a local edit, submitted whole: it waits for the floor and a back-off
- * like any message, goes ahead of everything else queued, and is not retried here — whoever
- * submitted it is told the outcome and decides.
+ * like any message and goes ahead of everything else queued. Unless submitted with `retry`, it
+ * is not retried here — whoever submitted it is told the outcome and decides.
  */
 interface PriorityEntry {
   readonly run: () => Promise<unknown>;
   /** Whether receivers expect a follow-up to it, so the heartbeat is owed after it (SND-11). */
   readonly armsHeartbeat: boolean;
+  /** Kept at the front after a retryable failure and sent again after the back-off (SND-7). */
+  readonly retry: boolean;
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: unknown) => void;
 }
@@ -269,11 +271,18 @@ export class SendScheduler {
    * Sends a whole message that is not a local edit — the seed, a control message, a resync
    * request or answer — through the same floor as everything else (SPECIFICATION.md
    * SND-2): as soon as the floor and a back-off permit, ahead of anything else queued. Resolves
-   * with what `run` resolved to once it has gone out; rejects with its error, without a retry.
+   * with what `run` resolved to once it has gone out. Without `retry` it rejects with its error,
+   * without a retry. With `retry` a failure worth retrying keeps it at the front, to be sent
+   * again after the back-off as an edit is (SND-7), and it rejects only when it is refused for
+   * good, at a final flush, or when the scheduler stops — for a message whose number may already
+   * have been delivered, such as a control frame (CTL-12).
    * `armsHeartbeat` says whether receivers expect a follow-up to it: yes for an edit or a
    * control message, no for a resync request or answer.
    */
-  submit<T>(run: () => Promise<T>, options: { armsHeartbeat: boolean }): Promise<T> {
+  submit<T>(
+    run: () => Promise<T>,
+    options: { armsHeartbeat: boolean; retry?: boolean },
+  ): Promise<T> {
     if (this.#stopped) {
       return Promise.reject(new Error("the send scheduler has stopped"));
     }
@@ -281,6 +290,7 @@ export class SendScheduler {
       this.#priority.push({
         run,
         armsHeartbeat: options.armsHeartbeat,
+        retry: options.retry === true,
         resolve: resolve as (value: unknown) => void,
         reject,
       });
@@ -300,6 +310,8 @@ export class SendScheduler {
    * nothing is left or one fails. A failure is thrown to the caller either way; what
    * happens to the change differs: a retryable failure keeps it for the scheduler's own
    * retry (unless `final`, where there will be no next attempt), a permanent one drops it.
+   * A submitted message kept for a retry is treated the same way; one submitted without
+   * `retry` tells only its submitter of its failure.
    * Nothing pending resolves at once.
    */
   async flush(options: { final?: boolean } = {}): Promise<void> {
@@ -309,7 +321,10 @@ export class SendScheduler {
     }
     this.#clearTimer();
     while (this.#priority.length > 0) {
-      await this.#sendPriority();
+      const failure = await this.#sendPriority(final);
+      if (failure?.kept === true) {
+        throw failure.error;
+      }
     }
     while (this.hasPending) {
       const failure = await this.#attempt(final);
@@ -422,24 +437,46 @@ export class SendScheduler {
     this.#timerDueAt = null;
   }
 
-  /** Sends the first submitted message. Its outcome goes to whoever submitted it, never to `onDropped`. */
-  async #sendPriority(): Promise<void> {
+  /**
+   * Sends the first submitted message. Its outcome goes to whoever submitted it, never to
+   * `onDropped`: a success or a failure it settles with, or — for one submitted with `retry`
+   * that failed in a way worth retrying — nothing yet, since it is kept at the front for
+   * the next attempt. Resolves to the failure, and whether the message was kept.
+   */
+  async #sendPriority(final = false): Promise<{ error: unknown; kept: boolean } | undefined> {
     const entry = this.#priority.shift();
     if (entry === undefined) {
-      return;
+      return undefined;
     }
     this.#lastSendAt = Date.now();
+    let outcome: { error: unknown; kept: boolean } | undefined;
     try {
-      entry.resolve(await entry.run());
+      const value = await entry.run();
+      if (entry.retry) {
+        this.#endFailureStreak();
+      }
+      entry.resolve(value);
       if (entry.armsHeartbeat) {
         this.#heartbeatOwed = true;
       }
     } catch (error) {
-      entry.reject(error);
+      const failure = this.#classify(error);
+      if (entry.retry && failure.retryable && !final && !this.#stopped) {
+        this.#priority.unshift(entry);
+        this.#backOff(error, failure);
+        outcome = { error, kept: true };
+      } else {
+        if (entry.retry) {
+          this.#endFailureStreak();
+        }
+        entry.reject(error);
+        outcome = { error, kept: false };
+      }
     }
     this.#reschedule();
     this.#armHeartbeat();
     this.#onStatusChange?.();
+    return outcome;
   }
 
   /**
@@ -620,9 +657,7 @@ export class SendScheduler {
         this.#groupWaiters.delete(outgoing.entry.group);
       }
       this.#droppedCount += 1;
-      this.#failures = 0;
-      this.#blockedUntil = 0;
-      this.#lastError = null;
+      this.#endFailureStreak();
       this.#reschedule();
       this.#onStatusChange?.();
       return { error, dropped: true };
@@ -634,6 +669,25 @@ export class SendScheduler {
     } else {
       this.#updates.unshift(outgoing.item);
     }
+    this.#backOff(error, failure);
+    this.#reschedule();
+    this.#onStatusChange?.();
+    return { error, dropped: false };
+  }
+
+  /** The message that failed is gone, sent or dropped: the failure streak and its back-off end with it. */
+  #endFailureStreak(): void {
+    this.#failures = 0;
+    this.#blockedUntil = 0;
+    this.#lastError = null;
+  }
+
+  /**
+   * Counts a retryable failure and holds the next attempt back: the exponential back-off,
+   * or what the provider asked for if that is longer (SND-7); a rate-limit refusal also
+   * widens the spacing between later sends (SND-9).
+   */
+  #backOff(error: unknown, failure: SendFailureClass): void {
     this.#failures += 1;
     this.#successStreak = 0;
     this.#lastError = error instanceof Error ? error.message : String(error);
@@ -655,9 +709,6 @@ export class SendScheduler {
         ? 0
         : Math.min(Math.max(failure.retryAfterMs, 0), RETRY_AFTER_MAX_MS);
     this.#blockedUntil = now + Math.max(backoff, providerAsked);
-    this.#reschedule();
-    this.#onStatusChange?.();
-    return { error, dropped: false };
   }
 
   #retryCap(): number {
