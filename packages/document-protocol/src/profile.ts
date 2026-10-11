@@ -6,9 +6,12 @@ import {
   encodeUpdateSince,
   ensureParagraph,
   getFragment,
+  getPlainText,
   hasUpdatesSince,
   isEmptyStateVector,
   lacksUpdatesOf,
+  observePlainTextChanges,
+  type PlainTextChange,
   pendingGapClients,
   type ReconciledDocument,
   transact,
@@ -17,14 +20,50 @@ import {
 import { isProfileId } from "./framing";
 
 /**
+ * A document's plain-text projection (SPECIFICATION.md PRF-1, item 6): what attribution counts
+ * offsets in (§5.4). Offsets are UTF-16 code units of `text()`.
+ */
+export interface ProfileProjection {
+  /** The projection of the document as it is now. Deterministic: equal states, equal text. */
+  text(document: ReconciledDocument): string;
+  /**
+   * Reports every later change to the projection, in order, as inserts and deletes at offsets
+   * into the projection as it stood just before that change — whoever made it, locally or by an
+   * applied update. A change that leaves the projection as it was reports nothing. Returns the
+   * function that stops reporting.
+   */
+  observe(document: ReconciledDocument, listener: (change: PlainTextChange) => void): () => void;
+}
+
+/**
+ * The projection of a profile whose content is paragraphs of text in the `Y.XmlFragment`
+ * named `content`, as in `yjs-paragraphs/1` (Appendix A): the paragraphs' text joined by
+ * `"\n"`. What the engine uses for a profile that names no projection of its own.
+ */
+export const PARAGRAPH_PROJECTION: ProfileProjection = {
+  text: (document) => getPlainText(getFragment(document)),
+  observe: (document, listener) => observePlainTextChanges(getFragment(document), listener),
+};
+
+/**
  * A document profile (SPECIFICATION.md §5): what a document's content bytes mean.
  * The engine moves updates and state vectors without looking inside them, and asks its
  * document's profile the few questions PRF-1 lists — nothing else about the CRDT reaches the
  * engine.
  *
- * This reference engine implements one profile, `yjs-paragraphs/1` (Appendix A), and its
- * `document` is therefore always a Yjs document, which the editor binds to directly. A second
- * profile would bring its own document type with it.
+ * **Built in:** `yjs-paragraphs/1` (Appendix A). **Supplied by an application** (the engine's
+ * `profiles` option): any other, which SPECIFICATION.md PRF-7 requires to be publicly defined,
+ * with test vectors. Whoever supplies a profile answers for it: convergence, loss evidence and
+ * attribution are only as right as its answers, and this repository neither ships nor tests
+ * profiles it does not define. It ships with the application — never loaded because a document
+ * names it (PRF-8).
+ *
+ * **A Yjs contract.** `ReconciledDocument` is a Yjs document: a profile defines a document
+ * structure on Yjs, its update encoding version 1 and Yjs state vectors, as `yjs-paragraphs/1`
+ * does. A profile on another CRDT would need a different engine.
+ *
+ * **Stable within a major version** (docs/versioning.md): an application implements this
+ * interface, so a later 1.x adds only optional members, as `projection` is.
  */
 export interface DocumentProfile {
   /** `<name>/<major>`, as the invitation and the creator's snapshot name it. */
@@ -50,6 +89,13 @@ export interface DocumentProfile {
   pendingGapClients(document: ReconciledDocument): number[];
   /** Whose updates one update carries, as the CRDT names them. */
   updateClientIds(update: Uint8Array): number[];
+  /**
+   * The plain-text projection (PRF-1, item 6). Optional: without one the engine uses
+   * `PARAGRAPH_PROJECTION`, which fits a profile keeping paragraphs of text in `content`, as
+   * one that adds headings, lists or marks to `yjs-paragraphs/1` does. A profile whose text
+   * lives elsewhere, or counts more than paragraphs, brings its own.
+   */
+  readonly projection?: ProfileProjection;
 }
 
 /** The one profile this specification defines (Appendix A). */
@@ -72,13 +118,17 @@ const yjsParagraphs1: DocumentProfile = {
   lacksUpdatesOf: (document, stateVector) => lacksUpdatesOf(document, stateVector),
   pendingGapClients: (document) => pendingGapClients(document),
   updateClientIds: (update) => updateClientIds(update),
+  projection: PARAGRAPH_PROJECTION,
 };
 
 const PROFILES: ReadonlyMap<string, DocumentProfile> = new Map([
   [yjsParagraphs1.id, yjsParagraphs1],
 ]);
 
-/** The ids of the profiles this engine implements — what a decline lists (§6.5). */
+/**
+ * The ids of the profiles this engine has built in — what a decline lists (§6.5), together
+ * with the ids of the profiles the application supplies, if any.
+ */
 export const SUPPORTED_PROFILES: readonly string[] = [...PROFILES.keys()];
 
 /**
@@ -87,10 +137,10 @@ export const SUPPORTED_PROFILES: readonly string[] = [...PROFILES.keys()];
  */
 export class UnsupportedProfileError extends Error {
   readonly profile: string;
-  constructor(profile: string) {
+  constructor(profile: string, implemented: readonly string[] = SUPPORTED_PROFILES) {
     super(
       isProfileId(profile)
-        ? `this engine does not implement the document profile ${profile} (it implements ${SUPPORTED_PROFILES.join(", ")})`
+        ? `this engine does not implement the document profile ${profile} (it implements ${implemented.join(", ")})`
         : `not a document profile id: ${JSON.stringify(profile)}`,
     );
     this.name = "UnsupportedProfileError";
@@ -98,11 +148,36 @@ export class UnsupportedProfileError extends Error {
   }
 }
 
-/** The implementation of `id`, or `UnsupportedProfileError`. */
-export function profileFor(id: string): DocumentProfile {
-  const profile = PROFILES.get(id);
+/**
+ * The implementation of `id` among the built-in profiles and those the application `supplied`,
+ * or `UnsupportedProfileError` (PRF-3). A supplied profile that is not a valid profile id,
+ * takes a built-in profile's id, or is supplied twice is a mistake of the application and is
+ * refused whatever `id` asks for: one id has one meaning in an engine.
+ */
+export function profileFor(id: string, supplied: readonly DocumentProfile[] = []): DocumentProfile {
+  const available = new Map(PROFILES);
+  for (const profile of supplied) {
+    if (!isProfileId(profile.id)) {
+      throw new Error(
+        `a supplied document profile has no valid profile id: ${JSON.stringify(profile.id)}`,
+      );
+    }
+    if (PROFILES.has(profile.id)) {
+      throw new Error(`a supplied document profile may not replace the built-in ${profile.id}`);
+    }
+    if (available.has(profile.id)) {
+      throw new Error(`the document profile ${profile.id} is supplied twice`);
+    }
+    available.set(profile.id, profile);
+  }
+  const profile = available.get(id);
   if (profile === undefined) {
-    throw new UnsupportedProfileError(id);
+    throw new UnsupportedProfileError(id, [...available.keys()]);
   }
   return profile;
+}
+
+/** The projection the engine uses for `profile`: its own, or the paragraph projection. */
+export function projectionOf(profile: DocumentProfile): ProfileProjection {
+  return profile.projection ?? PARAGRAPH_PROJECTION;
 }

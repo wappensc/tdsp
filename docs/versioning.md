@@ -36,7 +36,9 @@ Within one major version, nothing in the following breaks:
   incompatible change of the implementation.
 - **The exports** of `@tdsp/document-protocol`, `@tdsp/reconciliation`,
   `@tdsp/messenger-port`, `@tdsp/messenger-mock` and the adapters
-  `@tdsp/messenger-signal`, `-matrix` and `-email`.
+  `@tdsp/messenger-signal`, `-matrix` and `-email`. An interface an application
+  implements itself — `DocumentProfile` — gains only optional members within a major
+  version, since a new required one would break every implementation of it.
 - **Persisted engine state**: a `PersistedControlState` an earlier version of the same
   major wrote can be read again.
 
