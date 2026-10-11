@@ -27,6 +27,12 @@ No byte on the wire changes; the new requirements are why this is a minor versio
 
 ### Added
 
+- The engine's `profiles` option: an application supplies document profiles besides the
+  built-in `yjs-paragraphs/1`, and `profile` may name one of them. A supplied profile with a
+  built-in id, or one given twice, is refused (#32).
+- `DocumentProfile.projection` (optional), `ProfileProjection` and `PARAGRAPH_PROJECTION`: a
+  profile may bring its own plain-text projection for attribution (PRF-1, item 6); without one
+  the engine projects the paragraphs in `content`, as before (#32).
 - `pnpm run matrix:confirm-device [bridge url]` signs the Matrix bridge's device with the
   account's self-signing key, read from Secret Storage with the recovery key typed into the
   terminal. Element hides messages from devices their account has not signed (MSC4153).

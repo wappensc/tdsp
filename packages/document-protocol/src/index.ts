@@ -13,8 +13,6 @@ import {
   type AttributionSnapshot,
   AttributionTracker,
   getFragment,
-  getPlainText,
-  observePlainTextChanges,
   observeUpdates,
   type ReconciledDocument,
   type ReconciledFragment,
@@ -42,7 +40,7 @@ import {
   utf8ToText,
 } from "./framing";
 import { LossDetector, lossGraceMs, type SyncSuspicion } from "./loss-detector";
-import { type DocumentProfile, profileFor, YJS_PARAGRAPHS_1 } from "./profile";
+import { type DocumentProfile, profileFor, projectionOf, YJS_PARAGRAPHS_1 } from "./profile";
 import { ResyncGate, type ResyncOutcome, type ResyncStatus } from "./resync-gate";
 import { type SendFailureClass, SendScheduler, type SendStatus } from "./send-scheduler";
 import {
@@ -318,9 +316,17 @@ export interface DocumentEngineOptions {
    * The document's profile (SPECIFICATION.md §5): chosen by the creator's application,
    * carried to a joiner in the invitation, fixed for the document's life. `create()` and
    * `join()` refuse one this engine does not implement (`UnsupportedProfileError`).
-   * Defaults to `yjs-paragraphs/1`, the one this engine implements.
+   * Defaults to `yjs-paragraphs/1`, the one this engine has built in.
    */
   profile?: string;
+  /**
+   * Document profiles the application brings besides the built-in `yjs-paragraphs/1`
+   * (SPECIFICATION.md §5.5): `profile` may then name one of them. Each needs a public
+   * definition with test vectors (PRF-7) and ships with the application; nothing a document
+   * says ever adds one (PRF-8). One that takes a built-in id, or is given twice, is refused.
+   * What a decline lists (DCL-1) is `SUPPORTED_PROFILES` and these ids.
+   */
+  profiles?: readonly DocumentProfile[];
   /**
    * The quiet time of the send scheduler: after each local
    * update, waits up to `batchWindowMs` with no *further* local update before
@@ -642,7 +648,7 @@ export class DocumentEngine {
     const onSendStatusChange = options.onSendStatusChange;
     this.#resyncResponseThrottleMs = options.resyncResponseThrottleMs ?? 1000;
     this.#creatorMemberId = options.creatorMemberId;
-    this.#profile = profileFor(options.profile ?? YJS_PARAGRAPHS_1);
+    this.#profile = profileFor(options.profile ?? YJS_PARAGRAPHS_1, options.profiles);
     this.#autoResync = options.autoResync ?? true;
     this.#onControlStateChange = options.onControlStateChange;
     this.#onDecline = options.onDecline;
@@ -719,7 +725,7 @@ export class DocumentEngine {
       this.#scheduler.enqueue(update, chars);
     });
 
-    this.#unobserveAttribution = observePlainTextChanges(getFragment(this.document), (change) => {
+    this.#unobserveAttribution = projectionOf(this.#profile).observe(this.document, (change) => {
       if (!this.#applyingRemote) {
         this.#localChars += change.length;
       }
@@ -768,7 +774,7 @@ export class DocumentEngine {
       );
     }
     // Refused before anything is registered or sent (PRF-3).
-    const profile = profileFor(options.profile ?? YJS_PARAGRAPHS_1);
+    const profile = profileFor(options.profile ?? YJS_PARAGRAPHS_1, options.profiles);
     await messenger.createDocument(documentId, memberId);
     // Asked before anything is sent, and allowed to fail the call: falling back to
     // the library's defaults would be sending faster than the transport allows.
@@ -869,7 +875,7 @@ export class DocumentEngine {
       );
     }
     // Refused before anything is sent (PRF-3): the application can decline instead.
-    const profile = profileFor(options.profile ?? YJS_PARAGRAPHS_1);
+    const profile = profileFor(options.profile ?? YJS_PARAGRAPHS_1, options.profiles);
     // The creator's persisted state names the document's profile; resuming under another
     // would read the content wrongly and announce a profile everyone rejects (PRF-6).
     const persistedProfile = options.controlState?.profile;
@@ -1322,7 +1328,7 @@ export class DocumentEngine {
     if (attribution !== undefined) {
       this.attribution.restore(attribution);
     } else {
-      const length = getPlainText(getFragment(this.document)).length;
+      const length = projectionOf(this.#profile).text(this.document).length;
       if (length > 0) {
         this.attribution.recordInsert(0, length, UNATTRIBUTED_AUTHOR_ID);
       }
@@ -2374,6 +2380,8 @@ export {
 } from "./invitation";
 export {
   type DocumentProfile,
+  PARAGRAPH_PROJECTION,
+  type ProfileProjection,
   SUPPORTED_PROFILES,
   UnsupportedProfileError,
   YJS_PARAGRAPHS_1,
