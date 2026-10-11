@@ -26,7 +26,9 @@ This repository contains
 - **a reference implementation** in TypeScript of every conformance class the
   specification defines;
 - **[CONFORMANCE.md](CONFORMANCE.md)** — what of the specification that implementation
-  has verified, and against what, and what it has not.
+  has verified, and against what, and what it has not;
+- **[CHANGELOG.md](CHANGELOG.md)** — what changed from one release, and one version of the
+  specification, to the next.
 
 > [!IMPORTANT]
 > **TDSP adds no security layer of its own.** It does not encrypt, sign or

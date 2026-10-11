@@ -94,6 +94,11 @@ exist; when a requirement changes, the tests that cite it change too.
 [CONFORMANCE.md](CONFORMANCE.md) says what is verified. A change that verifies something
 new — or finds that a claim there no longer holds — updates it.
 
+[CHANGELOG.md](CHANGELOG.md) says what changed from release to release. A pull request that
+changes the specification or the wire, the exports or options of a package, what a bridge
+offers, or behaviour an application can notice adds a line under "Unreleased", with its
+number; one that changes none of that does not.
+
 ## Before you open a pull request
 
 ```sh
