@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   decodeEnvelope,
+  decodeInvite,
   encodeEnvelope,
+  foreignEnvelopeVersion,
   isValidMessageId,
   recipientHeadersMatchClosedSet,
   subjectForDocument,
@@ -138,5 +140,28 @@ describe("isValidMessageId", () => {
 
   it.each([undefined, null, 42, {}, ["<a@b.org>"]])("rejects the non-string %p", (value) => {
     expect(isValidMessageId(value)).toBe(false);
+  });
+});
+
+describe("the nesting limit (SPECIFICATION.md §1.6, BND-2)", () => {
+  // `fields` plus one field the binding ignores, holding `levels` nested arrays: the message is level 1.
+  const nested = (fields: string, levels: number) =>
+    `{${fields},"x":${"[".repeat(levels)}${"]".repeat(levels)}}`;
+  const frame = '"tdsp":1,"kind":"frame","documentId":"doc-1","frame":"AQID"';
+
+  it("reads an envelope nested 32 deep, and takes one nested 33 deep for none", () => {
+    expect(decodeEnvelope(nested(frame, 31))?.documentId).toBe("doc-1");
+    expect(decodeEnvelope(nested(frame, 32))).toBeUndefined();
+    expect(decodeEnvelope(nested(frame, 1_000_000))).toBeUndefined();
+  });
+
+  it("does not report a deeper text as an envelope of another version", () => {
+    const other = '"tdsp":2,"kind":"frame","documentId":"doc-1"';
+    expect(foreignEnvelopeVersion(nested(other, 31))).toEqual({ documentId: "doc-1", version: 2 });
+    expect(foreignEnvelopeVersion(nested(other, 32))).toBeUndefined();
+  });
+
+  it("takes an invitation's plaintext nested 33 deep for none, before parsing it", () => {
+    expect(decodeInvite(nested('"tdsp":1,"kind":"invite"', 1_000_000))).toBeUndefined();
   });
 });

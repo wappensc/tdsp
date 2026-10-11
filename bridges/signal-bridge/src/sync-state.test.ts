@@ -5,7 +5,7 @@ import { createLogger } from "@tdsp/bridge-log";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setBindRecord } from "./bind-store.ts";
 import type { SignalRpc } from "./signal-api.ts";
-import { createSyncState } from "./sync-state.ts";
+import { createSyncState, parseEnvelope } from "./sync-state.ts";
 
 /**
  * L0 — a fake `SignalRpc` whose `onNotification` just records the
@@ -224,5 +224,17 @@ describe("createSyncState (push-driven)", () => {
     const rpc = new FakeRpc();
     const sync = createSyncState(rpc, bindStorePath);
     await expect(sync.pollOnce()).resolves.toBeUndefined();
+  });
+});
+
+describe("parseEnvelope and the nesting limit (SPECIFICATION.md §1.6, BND-2)", () => {
+  // An envelope with one field the binding ignores, holding `levels` nested arrays: the envelope is level 1.
+  const envelope = (levels: number) =>
+    `{"tdsp":1,"kind":"frame","documentId":"doc-1","frame":"{}","x":${"[".repeat(levels)}${"]".repeat(levels)}}`;
+
+  it("reads an envelope nested 32 deep, and takes one nested 33 deep for none", () => {
+    expect(parseEnvelope(envelope(31))?.documentId).toBe("doc-1");
+    expect(parseEnvelope(envelope(32))).toBeNull();
+    expect(parseEnvelope(envelope(1_000_000))).toBeNull();
   });
 });

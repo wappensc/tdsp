@@ -126,7 +126,13 @@ it, and no one else.
 
 - JSON is RFC 8259, restricted to I-JSON (RFC 7493) in what matters for a single
   reading: no object names a member twice, and no string holds an unpaired
-  surrogate. Base64 is the standard alphabet with padding (RFC 4648 §4), and only
+  surrogate. Every JSON text this specification defines — a frame, an envelope,
+  a binding's other messages — nests arrays and objects at most **32** deep (the
+  outermost object is the first level); a receiver treats a deeper one as not
+  that message, and SHOULD find out in one pass over the text before handing it
+  to a parser that recurses once per level, since such a parser can exhaust its
+  stack on a few kilobytes. No message this specification defines needs more
+  than a handful of levels. Base64 is the standard alphabet with padding (RFC 4648 §4), and only
   its canonical form: the bits the padding discards are zero, so one text encodes
   one byte string.
 - Strings are **UTF-8** (RFC 3629). A length "in bytes" is the length of that
@@ -625,7 +631,7 @@ report — and a test — can tell a version mismatch from a malformed message:
 
 | Reason | When |
 |---|---|
-| `not-json` | The payload is not valid UTF-8, not valid JSON, not a JSON object, or not I-JSON: an object names a member twice, or a string holds an unpaired surrogate ([§1.6](#16-notation)) |
+| `not-json` | The payload is not valid UTF-8, not valid JSON, not a JSON object, or not I-JSON: an object names a member twice, or a string holds an unpaired surrogate; or it nests arrays and objects more than 32 deep ([§1.6](#16-notation)) |
 | `unsupported-version` | `tdsp` is missing or is not 1 |
 | `unknown-kind` | `kind` is not one of §4.2 |
 | `missing-field` | A field the kind requires is absent |
@@ -1967,8 +1973,9 @@ file holding the frame's UTF-8 text; exactly one of the two is present.
   another version** — `tdsp` a number other than 1 and `documentId` a string — for a
   document the bridge has bound MUST NOT be delivered and MUST be reported locally
   (VER-1), in the bridge's log at least. Everything else that is not a valid
-  envelope — `tdsp` missing or not a number, `kind` not `"frame"` (where the
-  binding has a `kind`), `documentId` or `frame` not a string, both or neither of
+  envelope — nested deeper than [§1.6](#16-notation) allows, `tdsp` missing or not
+  a number, `kind` not `"frame"` (where the binding has a `kind`), `documentId` or
+  `frame` not a string, both or neither of
   `frame` and `attachment`, or another version for a document the bridge has not
   bound — it MUST ignore silently (BRG-10).
   *Rationale:* the envelope has one reading. A version mismatch in a document the

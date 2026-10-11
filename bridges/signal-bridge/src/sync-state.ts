@@ -6,6 +6,7 @@ import {
   type Delivery,
   type DeliveryRetention,
   type DocumentId,
+  jsonTextTooDeep,
   retainNewest,
 } from "@tdsp/messenger-port";
 import {
@@ -77,8 +78,14 @@ function foreignEnvelopeVersion(
     : undefined;
 }
 
-/** `raw` parsed as JSON, or `undefined` for text that is not JSON — an ordinary chat message. */
+/**
+ * `raw` parsed as JSON, or `undefined` for text that is not JSON — an ordinary chat message —
+ * or nests deeper than any TDSP message may (SPECIFICATION.md §1.6).
+ */
 function parseJson(raw: string): unknown {
+  if (jsonTextTooDeep(raw)) {
+    return undefined;
+  }
   try {
     return JSON.parse(raw);
   } catch {
@@ -87,6 +94,10 @@ function parseJson(raw: string): unknown {
 }
 
 export function parseEnvelope(raw: string): Envelope | null {
+  // Deeper than any envelope may nest: not one, and never handed to the parser (§1.6, BND-2).
+  if (jsonTextTooDeep(raw)) {
+    return null;
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
