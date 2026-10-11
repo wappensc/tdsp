@@ -14,6 +14,12 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
 
 ## Unreleased
 
+Nothing yet.
+
+## v1.2.0 — 2026-10-11 · implements TDSP 1.1
+
+No byte on the wire changes from v1.1.0.
+
 ### Specification: TDSP 1.1
 
 No byte on the wire changes; the new requirements are why this is a minor version.
@@ -50,6 +56,8 @@ No byte on the wire changes; the new requirements are why this is a minor versio
 
 ### Changed
 
+- `join()` refuses a creator whose persisted control state names another profile than the
+  one it is given, before anything is sent (PRF-6; #38).
 - Repository process: a change to the text of a normative wire section that changes no byte
   may now take the next minor version of the specification, for a new requirement, as well
   as a patch, for a clarification (`tools/wire-lock.ts`, CONTRIBUTING.md; #35).
