@@ -30,6 +30,7 @@ const L2_TESTS = [
   "bridges/signal-bridge/src/signal-daemon.test.ts",
   "bridges/email-bridge/src/mail-transport.test.ts",
   "bridges/email-bridge/src/contract.test.ts",
+  "bridges/email-bridge/src/sent-copy.test.ts",
   "bridges/email-bridge/src/pgp-live.security.test.ts",
   "infra/email-testserver/email-testserver.test.ts",
 ];

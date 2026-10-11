@@ -5,6 +5,7 @@ import {
   createNodemailerSender,
   type MailReceiver,
   type MailSender,
+  parseSentCopyMode,
 } from "./mail-transport.ts";
 import { createServer, type ServerDependencies } from "./server.ts";
 import { createSyncState, type SyncState } from "./sync-state.ts";
@@ -36,6 +37,9 @@ const imapPort = Number(process.env.IMAP_PORT ?? 993);
 const imapSecure = process.env.IMAP_SECURE !== "false";
 const imapAuthUser = process.env.IMAP_AUTH_USER || address;
 const imapPass = process.env.IMAP_PASS;
+// Who files a copy of every frame mail in the sent folder (EML-12): `append` (the bridge, by
+// default) or `provider` (a provider that files mail sent through it there on its own).
+const sentCopy = parseSentCopyMode(process.env.EMAIL_SENT_COPY);
 
 // gpg's own availability is independent of SMTP/IMAP config — no
 // mailbox credentials are needed to read the local keyring. A one-shot
@@ -86,6 +90,7 @@ const deps: ServerDependencies = {
   sync,
   gpg,
   bindStorePath,
+  sentCopy,
   logger: log,
 };
 const server = createServer(deps);

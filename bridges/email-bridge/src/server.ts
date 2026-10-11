@@ -28,7 +28,12 @@ import type { GpgInvoker } from "./gpg-invoke.ts";
 import { acceptInvite, createInvite } from "./invite.ts";
 import { buildKeyReport } from "./key-report.ts";
 import { commitKeyring, discardKeyring, keyringPathFor } from "./keyring-store.ts";
-import type { MailReceiver, MailSender } from "./mail-transport.ts";
+import {
+  composeMail,
+  type MailReceiver,
+  type MailSender,
+  type SentCopyMode,
+} from "./mail-transport.ts";
 import { classifySendFailure } from "./send-failure.ts";
 import type { SyncState } from "./sync-state.ts";
 import { transportProfileFor } from "./transport-profile.ts";
@@ -62,6 +67,8 @@ export interface ServerDependencies {
   readonly bindStorePath: string;
   /** Reads the invitation a participant joins from. `undefined` while the mailbox is unconfigured. */
   readonly receiver?: MailReceiver | undefined;
+  /** Who files a copy of each frame mail in the sent folder (EML-12); `append` by default. */
+  readonly sentCopy?: SentCopyMode;
   /** Defaults to the environment-configured logger. */
   readonly logger?: Logger;
 }
@@ -195,13 +202,11 @@ async function preparePgpSend(
     };
   }
   const keyring = deps.gpg.withKeyring(bound.keyringPath);
-  const self = normalizeAddress(deps.address);
   const missing: string[] = [];
   const recipientFingerprints: string[] = [];
+  // Encrypted to this address's own key too: another device of it opens the copy in the sent
+  // folder (SPECIFICATION.md EML-12).
   for (const address of bound.recipients) {
-    if (normalizeAddress(address) === self) {
-      continue; // never encrypted to oneself: this bridge never reads its own outbox
-    }
     const pinned = bound.pinnedFingerprints[normalizeAddress(address)];
     // Sequential, not Promise.all: keeps this loop from spawning
     // `bound.recipients.length` gpg processes at once per send.
@@ -892,9 +897,8 @@ export function createServer(deps: ServerDependencies): Server {
             return;
           }
           const self = normalizeAddress(deps.address);
-          const to = bound.recipients.filter((r) => normalizeAddress(r) !== self);
-          const { messageId } = await deps.sender.send({
-            to,
+          const mail = {
+            to: bound.recipients.filter((r) => normalizeAddress(r) !== self),
             subject: subjectForDocument(documentId),
             text: await buildEnvelopeText(
               {
@@ -908,7 +912,21 @@ export function createServer(deps: ServerDependencies): Server {
             documentId,
             inReplyTo: bound.threadRootMessageId,
             references: [bound.threadRootMessageId],
-          });
+          };
+          const { messageId } = await deps.sender.send(mail);
+          // The copy this address's other devices read (EML-12). The mail is out either way:
+          // a failed copy is logged, never reported as a failed send, which would resend it.
+          if ((deps.sentCopy ?? "append") === "append" && deps.receiver?.storeSentCopy) {
+            try {
+              await deps.receiver.storeSentCopy(await composeMail(deps.address, mail, messageId));
+            } catch (error) {
+              logger.warn("sent-copy-failed", {
+                documentId,
+                messageId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
           sendJson(res, 200, { deliveryId: messageId });
         })
         .catch((error: unknown) => sendSendFailure(res, error));

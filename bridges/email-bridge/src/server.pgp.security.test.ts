@@ -356,12 +356,15 @@ describe("bridges/email-bridge server: PGP and identity", () => {
         expect(gpg.encrypted[0]?.recipients).toEqual([KEY_ALICE, KEY_BOB]);
       });
 
-      it("never encrypts to its own address — this bridge never reads its own outbox", async () => {
+      it("encrypts to its own address's key too, for its other devices, yet addresses only the others (EML-12)", async () => {
         await restartWithGpg({ address: "alice@example.org" });
         const response = await sendEdit();
         expect(response.status).toBe(200);
-        expect(gpg.encrypted[0]?.recipients).toEqual([KEY_BOB]);
+        // Another device of alice reads the copy in the sent folder and must be able to open it.
+        expect(gpg.encrypted[0]?.recipients).toEqual([KEY_ALICE, KEY_BOB]);
         expect(gpg.encrypted[0]?.signer).toBe(KEY_ALICE);
+        // The mail itself still goes to the others only: what they receive is unchanged.
+        expect(sender.sent[0]?.to).toEqual(["bob@example.org"]);
       });
 
       it("never checks keys, and sends plain unprotected JSON, for a PGP-off document even with gpg configured", async () => {

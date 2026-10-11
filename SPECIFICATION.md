@@ -2190,7 +2190,8 @@ thread starts and checks every message against them.
 | Channel | A thread: a closed set of participants fixed when the thread starts, rooted at the invitation's `Message-ID` |
 | Carrier | One email per frame. `Subject: tdsp document <documentId>`; header `x-tdsp-document: <documentId>`; `In-Reply-To` and `References` name the thread root; `To`/`Cc` name every participant but the sender |
 | Body, PGP off | The envelope JSON as plain text |
-| Body, PGP on | The same JSON, signed and encrypted to every participant as one inline ASCII-armoured OpenPGP message |
+| Body, PGP on | The same JSON, signed and encrypted to every participant, the sender included, as one inline ASCII-armoured OpenPGP message |
+| Own devices | A copy of every frame mail in the sender's own sent folder, which every device of the address searches (EML-12) |
 | MemberId, sender | The email address in its canonical form (EML-10); the `From` address, canonicalised |
 | Delivery id | The `Message-ID` |
 | Message-ID | `<local@domain>`, at most 200 characters, local part and domain from `[A-Za-z0-9._~+-]` and `[A-Za-z0-9.-]` |
@@ -2324,6 +2325,19 @@ thread starts and checks every message against them.
   who accepted a failed invitation holds one for a document that was never bound;
   joining it gets no answer from the creator, which is safe, and the creator
   sees the failure.
+- **EML-12** · *bridge* — A bridge MUST make sure that a copy of every frame mail
+  it sends is in its account's sent folder, the mailbox with the IMAP SPECIAL-USE
+  attribute `\Sent` (RFC 6154): it relies on its provider where the provider
+  files mail sent through it there itself, and appends the copy otherwise,
+  creating the folder if the account has none. A receiving bridge MUST search
+  that folder too. The mail itself is unchanged: `To`/`Cc` still name every
+  participant but the sender.
+  *Rationale:* every device of one address reads the same mailbox, but a mail
+  never comes into the mailbox it was sent from. The sent folder is where mail
+  programs already keep what they send; naming the sender as a recipient instead
+  would change what every other participant receives. With PGP the mail is
+  encrypted to every participant, the sender included, so another device of the
+  sender can open the copy.
 
 The email binding without PGP is the weakest on every axis: `From` is as
 forgeable as any header, and a document is as confidential as plain email.

@@ -461,13 +461,22 @@ describe.skipIf(!available)("PGP-enabled documents, live (Greenmail + real gpg)"
           expect(fixture.bob.sync.getRejections(fixture.documentId)).toEqual([]);
           // … and so does his to Alice, encrypted to the key he was given for her.
           await fixture.bob.port.send(fixture.documentId, BOB.address, "from bob");
-          let toAlice = await fixture.alice.port.receive(fixture.documentId, ALICE.address);
+          const fromBob = async () =>
+            (await fixture.alice.port.receive(fixture.documentId, ALICE.address)).filter(
+              (delivery) => delivery.sender === BOB.address,
+            );
+          let toAlice = await fromBob();
           for (let i = 0; i < 20 && toAlice.length === 0; i++) {
-            toAlice = await fixture.alice.port.receive(fixture.documentId, ALICE.address);
+            toAlice = await fromBob();
           }
           expect(toAlice).toHaveLength(1);
-          expect(toAlice[0]?.sender).toBe(BOB.address);
           expect(fixture.alice.sync.getRejections(fixture.documentId)).toEqual([]);
+          // Alice's own frame comes back as well, from her sent folder, opened with her own key
+          // and verified like any other (EML-12): what another device of hers reads.
+          const ownCopies = (
+            await fixture.alice.port.receive(fixture.documentId, ALICE.address)
+          ).filter((delivery) => delivery.sender === ALICE.address);
+          expect(ownCopies).toHaveLength(1);
 
           // The user's own keyring learnt nothing: Alice's key is still not in it.
           await expect(fixture.bob.gpg.listKeys(ALICE.address)).resolves.toEqual([]);
