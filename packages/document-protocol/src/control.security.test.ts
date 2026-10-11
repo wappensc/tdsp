@@ -1216,6 +1216,158 @@ describe("control frames", () => {
       });
     });
 
+    /**
+     * A member on several devices (#31, option B; RSY-6, RSY-8, RSY-12, CTL-11, CTL-13): a
+     * device brings another device of its own member up to date, its control state included,
+     * so it need not wait for the creator. Nobody else takes that control state.
+     */
+    describe("a member on several devices", () => {
+      async function phoneOnline(permission: "read" | "write") {
+        const port = new InMemoryMessengerPort();
+        const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
+        await alice.setMembership("bob", permission);
+        alice.edit((fragment) => insertPlainText(fragment, 0, "from alice"));
+        const phone = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
+        await alice.sync(); // answers the phone; from here on alice is offline
+        await phone.sync();
+        expect(phone.hasCompletedBootstrap).toBe(true);
+        return { port, alice, phone };
+      }
+
+      it("a new device is brought up to date by its other device while the creator is offline, and may write", async () => {
+        const { port, phone } = await phoneOnline("write");
+        const laptop = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
+        expect(laptop.hasCompletedBootstrap).toBe(false);
+        await phone.sync(); // answers its own member's other device
+        await laptop.sync();
+
+        expect(laptop.hasCompletedBootstrap).toBe(true);
+        expect(laptop.permissionOf("bob")).toBe("write");
+        expect(getPlainText(laptop.fragment)).toBe("from alice");
+        laptop.edit((fragment) => insertPlainText(fragment, 0, "laptop: "));
+        await phone.sync();
+        expect(getPlainText(phone.fragment)).toBe("laptop: from alice");
+      });
+
+      it("a read-only member's new device learns it is read-only from its other device", async () => {
+        const { port, phone } = await phoneOnline("read");
+        const laptop = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
+        await phone.sync();
+        await laptop.sync();
+
+        expect(laptop.hasCompletedBootstrap).toBe(true);
+        expect(laptop.permissionOf("bob")).toBe("read");
+        const errors: unknown[] = [];
+        const refusing = await DocumentEngine.join(
+          DOCUMENT_ID,
+          "bob",
+          port,
+          (e) => errors.push(e),
+          {
+            ...AS_ALICE,
+          },
+        );
+        await phone.sync();
+        await refusing.sync();
+        refusing.edit((fragment) => insertPlainText(fragment, 0, "not allowed"));
+        await refusing.flush().catch(() => {});
+        expect(errors.some((e) => e instanceof SendRefusedError && e.reason === "read-only")).toBe(
+          true,
+        );
+      });
+
+      it("a device that lacks a control frame passes on content only, and does not bootstrap the other", async () => {
+        const inner = new InMemoryMessengerPort();
+        let hidden = new Set<string>();
+        const port: MessengerPort = {
+          createDocument: (d, c) => inner.createDocument(d, c),
+          listChannels: (m) => inner.listChannels(m),
+          transportProfile: () => inner.transportProfile(),
+          send: (d, sender, payload) => inner.send(d, sender, payload),
+          receive: async (d, m) => (await inner.receive(d, m)).filter((x) => !hidden.has(x.id)),
+        };
+        const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
+        await alice.setMembership("bob", "write"); // 1
+        const phone = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
+        await alice.sync();
+        await phone.sync();
+        await alice.setMembership("carol", "read"); // 2: the phone will not see it
+        hidden = new Set((await inner.receive(DOCUMENT_ID, "x")).map((x) => x.id).slice(-1));
+        await alice.setMembership("dave", "read"); // 3
+        alice.edit((fragment) => insertPlainText(fragment, 0, "text"));
+        await phone.sync();
+        expect(phone.controlGaps).toEqual([2]);
+
+        const laptop = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
+        await phone.sync();
+        await laptop.sync();
+        expect(getPlainText(laptop.fragment)).toBe("text"); // content, yes
+        expect(laptop.hasCompletedBootstrap).toBe(false); // but it waits for the creator
+      });
+
+      it("a control snapshot from any other member is ignored, even as an answer to one's own request", async () => {
+        const { port, alice } = await phoneOnline("write");
+        await alice.setMembership("carol", "read");
+        const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", port, undefined, AS_ALICE);
+        await alice.sync();
+        await carol.sync();
+        expect(carol.permissionOf("carol")).toBe("read");
+
+        await carol.requestResync();
+        const request = (await port.receive(DOCUMENT_ID, "x"))
+          .filter((d) => d.sender === "carol")
+          .map((d) => JSON.parse(d.payload))
+          .filter((frame) => frame.kind === "resync-request")
+          .at(-1);
+        // bob, another member, answers carol's request with control state granting carol write.
+        await port.send(
+          DOCUMENT_ID,
+          "bob",
+          encodeResyncResponseFrame({
+            documentId: DOCUMENT_ID,
+            respondsTo: request.requestId,
+            update: encodeUpdate(createDocument()),
+            attribution: null,
+            control: {
+              profile: "yjs-paragraphs/1",
+              sequence: 99,
+              closed: false,
+              members: { bob: "write", carol: "write" },
+            },
+          }),
+        );
+        await carol.sync();
+        expect(carol.permissionOf("carol")).toBe("read");
+        expect(carol.controlSequence).toBeLessThan(99);
+      });
+
+      it("a new device of the creator is brought up to date by its other device and continues after its number", async () => {
+        const port = new NoHistoryMessengerPort(); // the tablet can learn nothing from history
+        // Answers right away, so the desktop answers the tablet and then bob without waiting.
+        const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, {
+          ...AS_ALICE,
+          resyncResponseThrottleMs: 0,
+        });
+        await alice.setMembership("bob", "write"); // 1
+        await alice.setMembership("carol", "read"); // 2
+        await alice.sync();
+
+        const tablet = await DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
+        expect(tablet.controlSequence).toBe(0);
+        await alice.sync(); // the desktop answers the tablet, its own member's other device
+        await tablet.sync();
+        expect(tablet.permissionOf("carol")).toBe("read");
+        expect(tablet.controlSequence).toBe(2);
+
+        await tablet.setMembership("carol", "write"); // 3
+        const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
+        await alice.sync();
+        await bob.sync();
+        expect(bob.permissionOf("carol")).toBe("write");
+        expect(bob.controlSequence).toBe(3);
+      });
+    });
+
     it("reports every change to the control state, so the application can persist it", async () => {
       const messenger = new InMemoryMessengerPort();
       const seen: number[] = [];

@@ -1255,11 +1255,14 @@ export class DocumentEngine {
         }
         // The creator confirms the document's profile in its snapshot, and content of another
         // profile must never be applied — none of this response is (SPECIFICATION.md CTL-10).
-        if (
+        // The snapshot counts from the creator, and — relayed — from another device of this
+        // member answering this engine's own request (CTL-11); from nobody else.
+        const snapshotCounts =
           frame.kind === "resync-response" &&
           frame.control !== null &&
-          delivery.sender === this.#creatorMemberId
-        ) {
+          (delivery.sender === this.#creatorMemberId ||
+            (delivery.sender === this.memberId && this.#ownResyncRequestIds.has(frame.respondsTo)));
+        if (frame.kind === "resync-response" && frame.control !== null && snapshotCounts) {
           if (frame.control.profile !== this.#profile.id) {
             throw new FrameDecodeError(
               "profile-mismatch",
@@ -1268,7 +1271,10 @@ export class DocumentEngine {
           }
           // The one snapshot rule the decoder cannot check, since only the engine knows who
           // the creator is — checked here, before anything of the frame is applied (FRM-6).
-          if (Object.hasOwn(frame.control.members, delivery.sender)) {
+          if (
+            this.#creatorMemberId !== undefined &&
+            Object.hasOwn(frame.control.members, this.#creatorMemberId)
+          ) {
             throw new FrameDecodeError(
               "invalid-field",
               "the creator's snapshot lists the creator as a member; its role is fixed (CTL-4)",
@@ -1297,10 +1303,16 @@ export class DocumentEngine {
           this.#profile.applyUpdate(this.document, frame.update, REMOTE_ORIGIN);
           applied.push(delivery);
           if (frame.kind === "resync-response") {
-            if (frame.control !== null && delivery.sender === this.#creatorMemberId) {
+            if (frame.control !== null && snapshotCounts) {
               this.#applyControlSnapshot(frame.control);
             }
-            if (isOwnResyncResponse) {
+            // Bootstrapped by the creator's answer, or by another device of this member that
+            // passed on its control state with it (CTL-13); content alone does not.
+            const bootstraps =
+              delivery.sender === this.#creatorMemberId ||
+              this.#creatorMemberId === this.memberId ||
+              (frame.control !== null && snapshotCounts);
+            if (isOwnResyncResponse && bootstraps) {
               this.#historyTruncatedSince = undefined;
               this.#resyncGate.answered();
               this.#detector.answered();
@@ -1918,14 +1930,16 @@ export class DocumentEngine {
     respondsTo: ResyncRequestId,
     update: Uint8Array,
     attribution: object,
+    control: ControlSnapshot | null,
   ): Promise<void> {
     const frame = encodeResyncResponseFrame({
       documentId: this.documentId,
       respondsTo,
       update,
       attribution,
-      // Only the creator can issue control state; nobody else's snapshot would be accepted.
-      control: this.#creatorMemberId === this.memberId ? this.controlState : null,
+      // The creator's control state; or, to another device of this member, the one this device
+      // holds without a gap (RSY-8); otherwise none, which nobody else would accept anyway.
+      control,
     });
     // A full-state answer scales with the document, not the send window, so it is the
     // frame most likely to exceed a transport's message size (analysis section 6.4).
@@ -1947,7 +1961,12 @@ export class DocumentEngine {
     if (sender === this.#creatorMemberId) {
       return true;
     }
-    return this.#creatorMemberId === this.memberId && this.#ownResyncRequestIds.has(respondsTo);
+    // Another device of this member, answering this engine's own request (RSY-12); or a peer
+    // answering a request of the creator's, the creator's own restart exception.
+    if (sender === this.memberId || this.#creatorMemberId === this.memberId) {
+      return this.#ownResyncRequestIds.has(respondsTo);
+    }
+    return false;
   }
 
   /**
@@ -1985,18 +2004,20 @@ export class DocumentEngine {
       this.#creatorMemberId !== undefined && this.memberId === this.#creatorMemberId;
 
     for (const request of requests) {
-      if (request.requester === this.memberId) {
+      // This engine's own request is recognised by its id, not by its requester: another
+      // device of this member asks under the same MemberId (RSY-6).
+      if (this.#ownResyncRequestIds.has(request.id) || this.#seenResyncRequestIds.has(request.id)) {
         this.#seenResyncRequestIds.add(request.id);
-        this.#pendingResyncRequests.delete(request.requester);
-        continue;
-      }
-      if (this.#seenResyncRequestIds.has(request.id)) {
         this.#pendingResyncRequests.delete(request.requester);
         continue;
       }
       const requesterIsCreator =
         this.#creatorMemberId !== undefined && request.requester === this.#creatorMemberId;
-      if (!isCreator && !requesterIsCreator) {
+      // Another device of this member: answered as the creator answers everyone (RSY-6), with
+      // this device's control state if it holds every control frame up to its highest.
+      const requesterIsOwnDevice =
+        this.#creatorMemberId !== undefined && request.requester === this.memberId;
+      if (!isCreator && !requesterIsCreator && !requesterIsOwnDevice) {
         this.#seenResyncRequestIds.add(request.id); // not ours to answer: only the creator answers
         this.#pendingResyncRequests.delete(request.requester);
         continue;
@@ -2005,12 +2026,16 @@ export class DocumentEngine {
         controlSequence: request.controlSequence,
         stateVector: request.stateVector,
       };
-      // Something to offer is either content the requester lacks, or — for the
-      // creator only — control state it is behind on: a lost
-      // membership change leaves the content diff empty and still needs healing.
+      const relayedControl = isCreator ? undefined : this.#relayableControlState(request);
+      // Something to offer is either content the requester lacks, or control state it is
+      // behind on — the creator's, or the one this device relays to another device of its own
+      // member: a lost membership change leaves the content diff empty and still needs healing.
       const hasContent = this.#profile.hasUpdatesSince(this.document, requested.stateVector);
-      const hasControl = isCreator && this.#issuedControlSeq > requested.controlSequence;
-      if (!hasContent && !hasControl && !(isCreator && request.bootstrap)) {
+      const hasControl =
+        (isCreator && this.#issuedControlSeq > requested.controlSequence) ||
+        (relayedControl !== undefined && relayedControl.sequence > requested.controlSequence);
+      const mustAnswerBootstrap = request.bootstrap && (isCreator || relayedControl !== undefined);
+      if (!hasContent && !hasControl && !mustAnswerBootstrap) {
         continue; // nothing to offer yet — may change by a later tick
       }
       if (
@@ -2033,9 +2058,12 @@ export class DocumentEngine {
         const attributionOverlay = this.attribution.toJSON();
         // Not awaited: the answer waits for the floor in the scheduler (RSY-11), and a poll
         // must not wait with it. Best-effort, like the rest of this method.
-        this.#broadcastResyncResponse(request.id, update, attributionOverlay).catch(
-          (error: unknown) => this.#keepRequestAfterFailedAnswer(request, error),
-        );
+        this.#broadcastResyncResponse(
+          request.id,
+          update,
+          attributionOverlay,
+          isCreator ? this.controlState : (relayedControl ?? null),
+        ).catch((error: unknown) => this.#keepRequestAfterFailedAnswer(request, error));
       } catch {
         // best-effort — see this method's own doc comment.
       }
@@ -2386,6 +2414,25 @@ export class DocumentEngine {
    * it. What a resync request reports as this client's progress, so that a gap
    * makes the creator answer and a client with none does not.
    */
+  /**
+   * The control state this device, not the creator, may pass to another device of its own
+   * member (RSY-8, CTL-11): only when it holds every control frame up to the highest it has
+   * seen, so that a frame older than the snapshot can never undo a newer decision at the
+   * receiver; and only for a request from its own member. `undefined` otherwise.
+   */
+  #relayableControlState(request: { readonly requester: MemberId }): ControlSnapshot | undefined {
+    if (
+      this.#creatorMemberId === undefined ||
+      request.requester !== this.memberId ||
+      this.memberId === this.#creatorMemberId ||
+      !this.#hasCompletedBootstrap ||
+      this.controlGaps.length > 0
+    ) {
+      return undefined;
+    }
+    return this.controlState;
+  }
+
   #contiguousControlSeq(): number {
     let n = this.#controlFloor;
     while (this.#controlReceivedSeqs.has(n + 1)) {
@@ -2431,6 +2478,23 @@ export class DocumentEngine {
       snapshot.policySequence > (this.#policy?.sequence ?? -1)
     ) {
       this.#adoptPolicy(snapshot.policy, snapshot.policySequence);
+    }
+    // A device of the creator brought up to date by another of its devices continues after the
+    // snapshot's number (CTL-18). A frame of its own pending under a number the snapshot covers
+    // can no longer go out under it.
+    if (this.#creatorMemberId === this.memberId && snapshot.sequence > this.#issuedControlSeq) {
+      if (this.#pendingControl !== undefined) {
+        this.#pendingControl = undefined;
+        this.#onError(
+          new ControlFrameRejectedError(
+            "sequence-conflict",
+            `this device's pending control frame was given up: another device of the creator reached control sequence ${snapshot.sequence} first`,
+          ),
+          "apply",
+        );
+      }
+      this.#issuedControlSeq = snapshot.sequence;
+      this.#adoptNumbersOfOtherDevices();
     }
     this.#notifyControlStateChange();
   }
