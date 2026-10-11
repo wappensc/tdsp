@@ -17,7 +17,11 @@ import {
   sha256Hex,
 } from "./attachment.ts";
 import { type BindRecord, getBindRecord, setBindRecord } from "./bind-store.ts";
-import { type CryptoMachine, createCryptoMachine } from "./crypto-machine.ts";
+import {
+  type CryptoMachine,
+  createCryptoMachine,
+  type LiveCryptoMachine,
+} from "./crypto-machine.ts";
 import {
   getJoinedMembers,
   getJoinedRooms,
@@ -222,6 +226,12 @@ export interface ServerDependencies {
   readonly writer: MatrixRoomWriter;
   readonly sync: SyncState;
   readonly bindStorePath: string;
+  /**
+   * This bridge's own Matrix device, public keys only — what `GET /device` reports, so that
+   * `pnpm run matrix:confirm-device` signs this device and no other
+   * (docs/matrix-device-confirmation.md). Absent while no access token is configured.
+   */
+  readonly ownDevice?: { readonly deviceId: string; readonly ed25519: string };
 }
 
 /**
@@ -236,7 +246,7 @@ export interface ServerDependencies {
 export async function createLiveServerDependencies(
   config: MatrixApiConfig,
   bindStorePath: string,
-): Promise<Pick<ServerDependencies, "rooms" | "writer" | "sync"> & { crypto: CryptoMachine }> {
+): Promise<Pick<ServerDependencies, "rooms" | "writer" | "sync"> & { crypto: LiveCryptoMachine }> {
   const cryptoStorePath = `${bindStorePath.replace(/\/[^/]*$/, "")}/crypto`;
   const crypto = await createCryptoMachine(config, cryptoStorePath);
   return {
@@ -378,6 +388,17 @@ export function createServer(deps: ServerDependencies): Server {
         .catch((error: unknown) => {
           sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
         });
+      return;
+    }
+
+    // Not part of SPECIFICATION.md §12.6: this bridge's own device and its public Ed25519 key,
+    // for confirming the device with the account's cross-signing identity.
+    if (method === "GET" && path === "/device") {
+      if (deps.ownDevice === undefined) {
+        sendJson(res, 503, { error: "MATRIX_ACCESS_TOKEN is not configured" });
+      } else {
+        sendJson(res, 200, deps.ownDevice);
+      }
       return;
     }
 

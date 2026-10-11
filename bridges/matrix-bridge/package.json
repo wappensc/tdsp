@@ -9,7 +9,8 @@
     "node": ">=22.6.0"
   },
   "scripts": {
-    "start": "node --experimental-strip-types --env-file-if-exists=.env src/index.ts"
+    "start": "node --experimental-strip-types --env-file-if-exists=.env src/index.ts",
+    "confirm-device": "node --experimental-strip-types --env-file-if-exists=.env src/confirm-device-cli.ts"
   },
   "dependencies": {
     "@matrix-org/matrix-sdk-crypto-nodejs": "^0.6.6",

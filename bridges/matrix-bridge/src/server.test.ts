@@ -144,6 +144,31 @@ describe("matrix-bridge HTTP API", () => {
     await expect(response.json()).resolves.toEqual({ id: rooms.userId });
   });
 
+  it("GET /device reports this bridge's own device and public key, and 503 while unconfigured", async () => {
+    const unconfigured = await fetch(`${baseUrl}/device`);
+    expect(unconfigured.status).toBe(503);
+    await unconfigured.text();
+
+    const withDevice = createServer({
+      homeserverUrl: "http://localhost:18008",
+      accessToken: "fake-token",
+      rooms,
+      writer,
+      sync,
+      bindStorePath,
+      ownDevice: { deviceId: "BRIDGEDEV", ed25519: "pubkey" },
+    });
+    await new Promise<void>((resolve) => withDevice.listen(0, resolve));
+    try {
+      const { port } = withDevice.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/device`);
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ deviceId: "BRIDGEDEV", ed25519: "pubkey" });
+    } finally {
+      await new Promise<void>((resolve) => withDevice.close(() => resolve()));
+    }
+  });
+
   it("GET /channels returns the room reader's raw room list", async () => {
     rooms.rooms = [
       { id: "!plain:example.org", name: "Plain room", encrypted: false },

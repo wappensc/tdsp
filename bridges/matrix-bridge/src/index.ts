@@ -1,5 +1,5 @@
 import { loggerFromEnv } from "@tdsp/bridge-log";
-import type { CryptoMachine } from "./crypto-machine.ts";
+import type { LiveCryptoMachine } from "./crypto-machine.ts";
 import {
   createLiveServerDependencies,
   createServer,
@@ -28,7 +28,7 @@ const unconfigured: {
   rooms: MatrixRoomReader;
   writer: MatrixRoomWriter;
   sync: SyncState;
-  crypto: CryptoMachine | undefined;
+  crypto: LiveCryptoMachine | undefined;
 } = {
   rooms: {
     listJoinedRoomSummaries: notConfiguredError,
@@ -53,7 +53,17 @@ const { rooms, writer, sync, crypto } =
     ? unconfigured
     : await createLiveServerDependencies({ homeserverUrl, accessToken }, bindStorePath);
 
-const server = createServer({ homeserverUrl, accessToken, rooms, writer, sync, bindStorePath });
+const server = createServer({
+  homeserverUrl,
+  accessToken,
+  rooms,
+  writer,
+  sync,
+  bindStorePath,
+  ...(crypto === undefined
+    ? {}
+    : { ownDevice: { deviceId: crypto.deviceId, ed25519: crypto.ed25519 } }),
+});
 
 // 127.0.0.1 explicitly (SPECIFICATION.md LBI-1), not the default all-interfaces
 // bind. This process holds a real Matrix access token and answers

@@ -32,6 +32,12 @@
       "reason": "The bridge's own inbound HTTP interface, bound to 127.0.0.1 only, reflecting a CORS origin only when that origin is itself loopback (SPECIFICATION.md LBI-1, LBI-3). Accepts connections; never opens one."
     },
     {
+      "file": "bridges/matrix-bridge/src/confirm-device-cli.ts",
+      "zone": "B",
+      "destination": "loopback",
+      "reason": "pnpm run matrix:confirm-device: asks the running Matrix bridge on 127.0.0.1 which device it is (GET /device) before signing that device with the account's self-signing key. bridgeUrl() refuses any non-loopback URL; the homeserver calls go through matrix-api.ts, the bridge's one configured messenger endpoint."
+    },
+    {
       "file": "bridges/signal-bridge/src/server.ts",
       "zone": "B",
       "destination": "loopback-listener",

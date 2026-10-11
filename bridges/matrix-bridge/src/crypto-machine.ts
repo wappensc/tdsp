@@ -74,6 +74,12 @@ export interface CryptoMachine {
   close(): void;
 }
 
+/** The machine `createCryptoMachine` makes: also names this device's public Ed25519 identity key. */
+export interface LiveCryptoMachine extends CryptoMachine {
+  /** Unpadded Base64; public, what `GET /device` reports (docs/matrix-device-confirmation.md). */
+  readonly ed25519: string;
+}
+
 async function processOutgoingRequests(
   machine: OlmMachine,
   config: MatrixApiConfig,
@@ -118,7 +124,7 @@ async function processOutgoingRequests(
 export async function createCryptoMachine(
   config: MatrixApiConfig,
   storePath: string,
-): Promise<CryptoMachine> {
+): Promise<LiveCryptoMachine> {
   const { userId, deviceId } = await whoami(config);
   const machine = await OlmMachine.initialize(
     new UserId(userId),
@@ -140,6 +146,7 @@ export async function createCryptoMachine(
   return {
     userId,
     deviceId,
+    ed25519: machine.identityKeys.ed25519.toBase64(),
 
     async ensureRoomKeyShared(roomId, memberUserIds) {
       const memberIds = memberUserIds.map((id) => new UserId(id));
