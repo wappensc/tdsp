@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type Delivery,
+  jsonTextTooDeep,
+  jsonValueTooDeep,
+  MAX_JSON_NESTING,
   parseTransportProfile,
   retainNewest,
   TransportSendError,
@@ -222,5 +225,44 @@ describe("retainNewest (SPECIFICATION.md BRG-17)", () => {
     const list = [delivery("a", 1), delivery("b", 500)];
     retainNewest(list, { maxCount: 10, maxPayloadChars: 100 });
     expect(list.map((d) => d.id)).toEqual(["b"]);
+  });
+});
+
+describe("the nesting limit of TDSP's JSON (SPECIFICATION.md §1.6)", () => {
+  const nested = (levels: number, inner = "") => "[".repeat(levels) + inner + "]".repeat(levels);
+
+  it("allows 32 levels and refuses 33, in text and in a parsed value alike", () => {
+    expect(MAX_JSON_NESTING).toBe(32);
+    expect(jsonTextTooDeep(nested(32))).toBe(false);
+    expect(jsonTextTooDeep(nested(33))).toBe(true);
+    expect(jsonValueTooDeep(JSON.parse(nested(32)))).toBe(false);
+    expect(jsonValueTooDeep(JSON.parse(nested(33)))).toBe(true);
+  });
+
+  it("counts objects and arrays together, and the outermost one as the first level", () => {
+    const mixed = (levels: number) => '{"a":'.repeat(levels) + "1" + "}".repeat(levels);
+    expect(jsonTextTooDeep(`[${mixed(31)}]`)).toBe(false);
+    expect(jsonTextTooDeep(`[${mixed(32)}]`)).toBe(true);
+    expect(jsonValueTooDeep({ frame: "x", attachment: { file: { hashes: {} } } })).toBe(false);
+    expect(jsonTextTooDeep("1")).toBe(false);
+    expect(jsonValueTooDeep(null)).toBe(false);
+  });
+
+  it("does not count brackets inside a string, escaped quotes included", () => {
+    const text = JSON.stringify({ frame: `"${"[{".repeat(1000)}\\"` });
+    expect(jsonTextTooDeep(text)).toBe(false);
+  });
+
+  it("measures depth, not size: many shallow siblings pass", () => {
+    const wide = `[${Array.from({ length: 10_000 }, () => "[[]]").join(",")}]`;
+    expect(jsonTextTooDeep(wide)).toBe(false);
+    expect(jsonValueTooDeep(JSON.parse(wide))).toBe(false);
+  });
+
+  it("answers for a million levels without recursing, and for text that is not JSON at all", () => {
+    expect(jsonTextTooDeep(nested(1_000_000))).toBe(true);
+    expect(jsonTextTooDeep("[".repeat(1_000_000))).toBe(true); // never closed
+    expect(jsonValueTooDeep(JSON.parse(nested(1_000_000)))).toBe(true);
+    expect(jsonTextTooDeep("hello, not JSON ]]]")).toBe(false);
   });
 });

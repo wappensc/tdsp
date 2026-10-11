@@ -19,7 +19,7 @@ release from Git.
 | What | Where | Moves when |
 | --- | --- | --- |
 | The reference implementation | The tag `vX.Y.Z`, and `version` in every `package.json` | This document, below |
-| The specification | Its header line, "TDSP 1.0" | [CONTRIBUTING.md](../CONTRIBUTING.md), "A change to the wire" |
+| The specification | Its header line, "TDSP 1.0.1" | [CONTRIBUTING.md](../CONTRIBUTING.md), "A change to the wire" |
 | The wire | `tdsp` in every frame and envelope, the profile id | SPECIFICATION.md §14 |
 
 A tag names the implementation, not the specification. Its release notes say which

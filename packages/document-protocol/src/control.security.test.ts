@@ -6,8 +6,9 @@ import type {
   MessengerPort,
   RawChannel,
 } from "@tdsp/messenger-port";
+import { TransportSendError } from "@tdsp/messenger-port";
 import { createDocument, encodeUpdate, getPlainText, insertPlainText } from "@tdsp/reconciliation";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { encodeControlFrame, encodeResyncResponseFrame } from "./framing";
 import {
   ControlFrameRejectedError,
@@ -278,12 +279,29 @@ describe("control frames", () => {
     expect(bob.controlSequence).toBe(2);
   });
 
-  it("a failed control send does not consume a sequence number", async () => {
+  it("a control send refused for good does not consume a sequence number", async () => {
     const messenger = new InMemoryMessengerPort();
     const { alice, bob } = await pair(messenger);
-    messenger.disconnect("alice");
-    await expect(alice.setMembership("bob", "write")).rejects.toThrow();
-    messenger.reconnect("alice");
+    const refusing: MessengerPort = {
+      createDocument: (documentId, creator) => messenger.createDocument(documentId, creator),
+      receive: (documentId, member) => messenger.receive(documentId, member),
+      listChannels: (member) => messenger.listChannels(member),
+      transportProfile: () => messenger.transportProfile(),
+      send: async () => {
+        throw new TransportSendError("rejected", "the provider refused it");
+      },
+    };
+    const persisted: PersistedControlState[] = [];
+    const refused = await DocumentEngine.join(DOCUMENT_ID, "alice", refusing, () => {}, {
+      ...AS_ALICE,
+      controlState: alice.controlState,
+      onControlStateChange: (state) => persisted.push(state),
+    });
+    await expect(refused.setMembership("bob", "write")).rejects.toThrow("refused");
+    // The messenger took nothing, so the number is free again (CTL-12).
+    expect(persisted.at(-1)?.pendingControl).toBeUndefined();
+    expect(refused.controlSequence).toBe(0);
+
     await alice.setMembership("bob", "write");
     await bob.sync();
 
@@ -774,6 +792,179 @@ describe("control frames", () => {
               error instanceof ControlFrameRejectedError && error.reason === "sequence-conflict",
           ),
         ).toBe(true);
+      });
+    });
+
+    /**
+     * SPECIFICATION.md CTL-12, SND-7: a send that failed only for now — `unavailable`,
+     * `rate-limited`, or anything unclassified (TRN-12) — may have been delivered all the
+     * same. Its frame stays pending and is retried until the transport accepts it or refuses
+     * it for good; its number never goes to another action.
+     */
+    describe("a control send that fails for now", () => {
+      beforeEach(() => {
+        vi.useFakeTimers();
+      });
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      /** The creator granted bob `write` as control frame 1, and crashed before recording that it was sent. */
+      async function crashAfterSend(messenger: MessengerPort) {
+        const states: PersistedControlState[] = [];
+        const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+          ...AS_ALICE,
+          onControlStateChange: (state) => states.push(structuredClone(state)),
+        });
+        const applyErrors: unknown[] = [];
+        const bob = await DocumentEngine.join(
+          DOCUMENT_ID,
+          "bob",
+          messenger,
+          (error, context) => {
+            if (context === "apply") applyErrors.push(error);
+          },
+          AS_ALICE,
+        );
+        await alice.sync();
+        await bob.sync();
+        await alice.setMembership("bob", "write");
+        const crashState = states.find(
+          (state) => state.pendingControl !== undefined && state.sequence === 0,
+        ) as PersistedControlState;
+        alice.dispose();
+        await bob.sync();
+        expect(bob.permissionOf("bob")).toBe("write");
+        return { bob, crashState, applyErrors };
+      }
+
+      function restart(messenger: MessengerPort, controlState: PersistedControlState) {
+        const persisted: PersistedControlState[] = [];
+        return DocumentEngine.join(DOCUMENT_ID, "alice", messenger, () => {}, {
+          ...AS_ALICE,
+          controlState,
+          onControlStateChange: (state) => persisted.push(structuredClone(state)),
+        }).then((alice) => ({ alice, persisted }));
+      }
+
+      const conflicts = (errors: readonly unknown[]) =>
+        errors.filter(
+          (error) =>
+            error instanceof ControlFrameRejectedError && error.reason === "sequence-conflict",
+        );
+
+      it("is retried until the transport accepts it, and the action completes only then", async () => {
+        const messenger = new InMemoryMessengerPort();
+        const { alice, bob } = await pair(messenger);
+        const persisted: PersistedControlState[] = [];
+        const creator = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, () => {}, {
+          ...AS_ALICE,
+          controlState: alice.controlState,
+          onControlStateChange: (state) => persisted.push(structuredClone(state)),
+        });
+        messenger.disconnect("alice");
+        let settled = false;
+        const grant = creator.setMembership("bob", "write").finally(() => {
+          settled = true;
+        });
+        await vi.advanceTimersByTimeAsync(5_000);
+
+        expect(settled).toBe(false); // not failed: still being sent
+        expect(creator.sendStatus.state).toBe("retrying");
+        expect(persisted.at(-1)?.pendingControl).toContain('"member":"bob"'); // still owed
+
+        messenger.reconnect("alice");
+        await vi.advanceTimersByTimeAsync(10_000);
+        await grant;
+        expect(persisted.at(-1)?.pendingControl).toBeUndefined();
+        expect(creator.controlSequence).toBe(1);
+        await bob.sync();
+        expect(bob.permissionOf("bob")).toBe("write");
+      });
+
+      it("a restarted creator offline at once keeps its pending frame, and later actions still work (history)", async () => {
+        const messenger = new InMemoryMessengerPort();
+        const { bob, crashState, applyErrors } = await crashAfterSend(messenger);
+        messenger.disconnect("alice"); // offline right after the restart
+        const { alice, persisted } = await restart(messenger, crashState);
+        const grant = alice.setMembership("carol", "read");
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(persisted.every((state) => state.pendingControl === crashState.pendingControl)).toBe(
+          true,
+        );
+
+        messenger.reconnect("alice");
+        await vi.advanceTimersByTimeAsync(10_000);
+        await grant;
+        expect(alice.controlSequence).toBe(2); // 1 stayed the grant to bob
+        await bob.sync();
+        expect(bob.permissionOf("carol")).toBe("read");
+        expect(conflicts(applyErrors)).toEqual([]);
+      });
+
+      it("a restarted creator never sends a different frame under its pending number (no history)", async () => {
+        const messenger = new NoHistoryMessengerPort();
+        const { bob, crashState, applyErrors } = await crashAfterSend(messenger);
+        messenger.forgetHistory(DOCUMENT_ID, "alice"); // the restarted creator sees nothing from before
+        messenger.inner.disconnect("alice");
+        const { alice } = await restart(messenger, crashState);
+        const grant = alice.setMembership("carol", "read");
+        await vi.advanceTimersByTimeAsync(5_000);
+
+        messenger.inner.reconnect("alice");
+        await vi.advanceTimersByTimeAsync(10_000);
+        await grant;
+        expect(alice.controlSequence).toBe(2);
+        await bob.sync();
+        expect(bob.permissionOf("carol")).toBe("read"); // creator and participant agree
+        expect(conflicts(applyErrors)).toEqual([]);
+        const controlTexts = (await messenger.inner.receive(DOCUMENT_ID, "x"))
+          .filter((d) => d.sender === "alice" && JSON.parse(d.payload).kind === "control")
+          .map((d) => d.payload);
+        const underOne = new Set(controlTexts.filter((text) => JSON.parse(text).sequence === 1));
+        expect([...underOne]).toEqual([crashState.pendingControl]); // only ever the one frame
+      });
+
+      it("a restarted creator sends its pending frame without waiting for its next action", async () => {
+        const messenger = new InMemoryMessengerPort();
+        const { bob, crashState } = await crashAfterSend(messenger);
+        messenger.disconnect("alice");
+        const { alice, persisted } = await restart(messenger, crashState);
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(alice.controlSequence).toBe(0);
+
+        messenger.reconnect("alice");
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(alice.controlSequence).toBe(1);
+        expect(persisted.at(-1)?.pendingControl).toBeUndefined();
+        await bob.sync();
+        expect(bob.permissionOf("bob")).toBe("write");
+      });
+
+      it("a creator disposed while retrying keeps the frame pending, and its restart sends it", async () => {
+        const messenger = new InMemoryMessengerPort();
+        const { alice, bob } = await pair(messenger);
+        const persisted: PersistedControlState[] = [];
+        const creator = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, () => {}, {
+          ...AS_ALICE,
+          controlState: alice.controlState,
+          onControlStateChange: (state) => persisted.push(structuredClone(state)),
+        });
+        messenger.disconnect("alice");
+        const grant = creator.setMembership("bob", "write").catch((error: unknown) => error);
+        await vi.advanceTimersByTimeAsync(5_000);
+        creator.dispose();
+        expect(await grant).toBeInstanceOf(Error); // this engine gave up...
+        const last = persisted.at(-1) as PersistedControlState;
+        expect(last.pendingControl).toContain('"member":"bob"'); // ...the frame did not
+
+        messenger.reconnect("alice");
+        const { alice: restarted } = await restart(messenger, last);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(restarted.controlSequence).toBe(1);
+        await bob.sync();
+        expect(bob.permissionOf("bob")).toBe("write");
       });
     });
 

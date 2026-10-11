@@ -466,3 +466,64 @@ export interface MessengerProvider {
   /** Present only for adapters that can express it — the mock today. */
   readonly faultInjection?: MessengerFaultInjection;
 }
+
+/**
+ * The deepest any JSON text TDSP defines — a frame, an envelope, a binding's other messages —
+ * may nest arrays and objects, the outermost one counting as the first level (SPECIFICATION.md
+ * §1.6). No such message needs more than a handful; the margin leaves room for later ones.
+ */
+export const MAX_JSON_NESTING = 32;
+
+/**
+ * Whether `text` nests arrays and objects deeper than `MAX_JSON_NESTING`. One pass over the
+ * text, skipping strings and never recursing, for any text at all — valid JSON or not — so it
+ * can run *before* a parser: one that recurses once per level (Foundation's
+ * `JSONSerialization`, among others) exhausts its stack on a few kilobytes of brackets
+ * (§1.6). V8's `JSON.parse` does not recurse; the check is what makes every receiver draw the
+ * line in the same place.
+ */
+export function jsonTextTooDeep(text: string): boolean {
+  let depth = 0;
+  let inString = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") {
+        i += 1; // the escaped character, whatever it is, ends nothing
+      } else if (c === '"') {
+        inString = false;
+      }
+    } else if (c === '"') {
+      inString = true;
+    } else if (c === "[" || c === "{") {
+      depth += 1;
+      if (depth > MAX_JSON_NESTING) {
+        return true;
+      }
+    } else if ((c === "]" || c === "}") && depth > 0) {
+      depth -= 1;
+    }
+  }
+  return false;
+}
+
+/**
+ * The same limit for a value a messenger hands over already parsed — Matrix's event content,
+ * which is the envelope there (§13.3). Walks it without recursion.
+ */
+export function jsonValueTooDeep(value: unknown): boolean {
+  const pending: { readonly value: unknown; readonly depth: number }[] = [{ value, depth: 0 }];
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (typeof next.value !== "object" || next.value === null) {
+      continue;
+    }
+    const depth = next.depth + 1;
+    if (depth > MAX_JSON_NESTING) {
+      return true;
+    }
+    for (const child of Object.values(next.value)) {
+      pending.push({ value: child, depth });
+    }
+  }
+  return false;
+}

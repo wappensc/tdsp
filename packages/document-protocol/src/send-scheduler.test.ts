@@ -898,6 +898,117 @@ describe("SendScheduler: every other message goes through it too (SPECIFICATION.
   });
 });
 
+describe("SendScheduler: a submitted message kept for a retry (SPECIFICATION.md SND-7, CTL-12)", () => {
+  const RETRYABLE: SendFailureClass = { retryable: true };
+  const PERMANENT: SendFailureClass = { retryable: false };
+
+  /** A submitted message whose first runs fail with `errors`, in order, then succeed. */
+  function failing(...errors: unknown[]) {
+    const runs: number[] = [];
+    return {
+      runs,
+      run: async () => {
+        runs.push(Date.now());
+        const error = errors.shift();
+        if (error !== undefined) {
+          throw error;
+        }
+        return "id-1";
+      },
+    };
+  }
+
+  it("keeps it after a retryable failure and sends it again after the back-off, resolving only then", async () => {
+    const h = harness({ quietMs: 0, classify: () => RETRYABLE });
+    const message = failing(new Error("offline"), new Error("offline"));
+    let settled = false;
+    const done = h.scheduler
+      .submit(message.run, { armsHeartbeat: true, retry: true })
+      .finally(() => {
+        settled = true;
+      });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(message.runs).toEqual([T0]);
+    expect(settled).toBe(false);
+    expect(h.scheduler.status).toMatchObject({
+      state: "retrying",
+      failures: 1,
+      lastError: "offline",
+    });
+
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS);
+    expect(message.runs).toEqual([T0, T0 + RETRY_BASE_MS]);
+    await vi.advanceTimersByTimeAsync(2 * RETRY_BASE_MS); // doubled after the second failure
+    await expect(done).resolves.toBe("id-1");
+    expect(message.runs).toHaveLength(3);
+    expect(h.scheduler.status).toMatchObject({ state: "idle", failures: 0, lastError: null });
+  });
+
+  it("waits at least as long as the provider asked before trying again", async () => {
+    const h = harness({
+      quietMs: 0,
+      classify: () => ({ retryable: true, rateLimited: true, retryAfterMs: 30_000 }),
+    });
+    const message = failing(new Error("slow down"));
+    const done = h.scheduler.submit(message.run, { armsHeartbeat: false, retry: true });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(message.runs).toEqual([T0]);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(done).resolves.toBe("id-1");
+  });
+
+  it("rejects at once on a failure that is not worth retrying", async () => {
+    const h = harness({ quietMs: 0, classify: () => PERMANENT });
+    const message = failing(new Error("too large"));
+    const done = h.scheduler.submit(message.run, { armsHeartbeat: false, retry: true });
+    await expect(done).rejects.toThrow("too large");
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(message.runs).toHaveLength(1);
+    expect(h.scheduler.status.state).toBe("idle");
+  });
+
+  it("goes before an edit queued behind it, which waits until it has gone out", async () => {
+    const h = harness({ quietMs: 0, classify: () => RETRYABLE });
+    const message = failing(new Error("offline"));
+    const done = h.scheduler.submit(message.run, { armsHeartbeat: false, retry: true });
+    await vi.advanceTimersByTimeAsync(0);
+    h.type("a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.attemptTimes).toEqual([]); // the edit is not sent past the message being retried
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS);
+    await expect(done).resolves.toBe("id-1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(receive(h.sent)).toBe("a");
+  });
+
+  it("a flush tries it at once and throws a retryable failure, keeping it for the next attempt", async () => {
+    const h = harness({ quietMs: 0, classify: () => RETRYABLE });
+    const message = failing(new Error("offline"), new Error("still offline"));
+    const done = h.scheduler.submit(message.run, { armsHeartbeat: false, retry: true });
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(h.scheduler.flush()).rejects.toThrow("still offline");
+    expect(message.runs).toEqual([T0, T0]);
+    await h.scheduler.flush();
+    await expect(done).resolves.toBe("id-1");
+  });
+
+  it("a final flush makes one last attempt and then rejects it, as stopping does", async () => {
+    const h = harness({ quietMs: 0, classify: () => RETRYABLE });
+    const message = failing(new Error("offline"), new Error("still offline"));
+    const done = h.scheduler.submit(message.run, { armsHeartbeat: false, retry: true });
+    await vi.advanceTimersByTimeAsync(0);
+    await h.scheduler.flush({ final: true });
+    await expect(done).rejects.toThrow("still offline");
+
+    const stopped = harness({ quietMs: 0, classify: () => RETRYABLE });
+    const other = failing(new Error("offline"));
+    const pending = stopped.scheduler.submit(other.run, { armsHeartbeat: false, retry: true });
+    await vi.advanceTimersByTimeAsync(0);
+    stopped.scheduler.stop();
+    await expect(pending).rejects.toThrow(/stopped/);
+  });
+});
+
 describe("SendScheduler heartbeat", () => {
   const WATCHED = { maxIntervalMs: 20_000 };
 

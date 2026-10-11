@@ -4,6 +4,7 @@ import {
   type Delivery,
   type DeliveryRetention,
   type DocumentId,
+  jsonValueTooDeep,
   retainNewest,
 } from "@tdsp/messenger-port";
 import {
@@ -103,7 +104,7 @@ type FrameEnvelope =
 function foreignEnvelopeVersion(
   value: unknown,
 ): { documentId: string; version: number } | undefined {
-  if (typeof value !== "object" || value === null) {
+  if (typeof value !== "object" || value === null || jsonValueTooDeep(value)) {
     return undefined;
   }
   const candidate = value as Record<string, unknown>;
@@ -114,8 +115,12 @@ function foreignEnvelopeVersion(
     : undefined;
 }
 
+/**
+ * The envelope an event's content is (§13.3), or `undefined` when it is none — including content
+ * nested deeper than any envelope may (SPECIFICATION.md §1.6, BND-2).
+ */
 export function readFrameEnvelope(content: unknown): FrameEnvelope | undefined {
-  if (typeof content !== "object" || content === null) {
+  if (typeof content !== "object" || content === null || jsonValueTooDeep(content)) {
     return undefined;
   }
   const candidate = content as Record<string, unknown>;

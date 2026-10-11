@@ -1,6 +1,6 @@
 {
   "$comment": "The wire lock (tools/wire-lock.ts): hashes of every frozen wire entry, published test vector, constant and normative wire section of the specification, with the specification's version. tools/wire-lock.wire.test.ts fails on any difference and names its kind; only the CI role may accept one, with `pnpm run wire:lock -- --accept <incompatible|addition|specification>`, which checks that the specification's version moved accordingly. Never edit by hand.",
-  "specificationVersion": "1.0",
+  "specificationVersion": "1.0.1",
   "files": {
     "wire/frames-v1.json": {
       "frame": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
@@ -148,11 +148,11 @@
     }
   },
   "sections": {
-    "## 4. The payload frame": "5d3762b39c715367203271748beaaf8da46da38400a10b2d043bed6e995de89b",
+    "## 4. The payload frame": "9046e55d063383bf7f61ad9e42429fe21c8eefbca3708723098f6f722eb1bdd8",
     "## 5. Document profiles": "9f73ec0934ce89197b4d73a1fe08b6f2cfdbe858d9c4b892b1c749a477036043",
-    "## 7. Control state": "6762639eda5f0071cc8125ee23d956ad968a3a360d4e140fa340d6e4d2c21550",
+    "## 7. Control state": "af98234509d9258482ac3099e33dd8d87884edb032134007cf6be9071676334d",
     "## 11. Invitations": "3da4038832381c585cfd4cd739c9ad81976c6b3ac06402e36adf60c90d7626a2",
-    "## 13. Messenger bindings": "75b8ecffb969e5f5071405be21ece1d486c1e53e99859904e8e357c70d2e2491",
+    "## 13. Messenger bindings": "3855e778a9ea42812c8185f7588180b75fd7fe262d5cd31f58987e0ef7adb928",
     "## Appendix A. Profile `yjs-paragraphs/1`": "6f611a44ed24d58c580a16a9496423a80c70f5aeeaa7d28eab46355445737a16",
     "## Appendix B. Recommended values": "bbe6c76dc13b949c15a20900fe6bb1bf202ac836841d13dffc0dc2191ae53f33"
   }

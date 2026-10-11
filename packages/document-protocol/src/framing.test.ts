@@ -358,6 +358,20 @@ describe("decoding rejects with a named reason (§4.4)", () => {
     expect(reasonOf("null")).toBe("not-json");
   });
 
+  it("not-json: nested more than 32 deep (§1.6), however the rest of the frame looks", () => {
+    // A heartbeat with one extra field holding `levels` nested arrays: the frame object is level 1.
+    const withNesting = (levels: number) =>
+      encodeHeartbeatFrame({
+        documentId: "doc-1",
+        controlSequence: 0,
+        stateVector: new Uint8Array([0]),
+      }).replace(/}$/, `,"x":${"[".repeat(levels)}${"]".repeat(levels)}}`);
+    expect(reasonOf(withNesting(31))).toBe("invalid-field"); // 32 levels: refused only for the field
+    expect(reasonOf(withNesting(32))).toBe("not-json"); // 33 levels
+    expect(reasonOf(withNesting(1_000_000))).toBe("not-json");
+    expect(reasonOf(`${"[".repeat(1_000_000)}${"]".repeat(1_000_000)}`)).toBe("not-json");
+  });
+
   it("not-json: valid JSON with two readings — a name twice, an unpaired surrogate (I-JSON)", () => {
     // JSON.parse would take the last kind and read an edit; another parser the first.
     expect(reasonOf(edit.replace('"kind":"edit"', '"kind":"heartbeat","kind":"edit"'))).toBe(

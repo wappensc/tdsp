@@ -6,7 +6,7 @@ time, in the manner of RFC 7942. It is not part of the protocol: the protocol is
 tests in this repository; what it says is not verified is a known gap, not an oversight
 waiting to be found.
 
-**Status as of TDSP 1.0 (26 September 2026).**
+**Status as of TDSP 1.0.1 (11 October 2026).**
 
 ## How it is verified
 
@@ -40,6 +40,7 @@ the specification says, not that two implementations interoperate.
 |---|---|
 | All, in general | Exercised by the tests at L0 and L2. That is evidence for the paths those tests take, **not a verification of every requirement on every path**: the rows below name what is known to be untested |
 | FRM, PRF, CTL, RSY, SND, LOS, FRG, DCL, INV (engine) | Tested at L0 against the in-memory transport, including faults: delay, duplication, reordering, loss, a moved-on delivery window, a restarted bridge re-offering old deliveries, refused and rate-limited sends |
+| §1.6 nesting limit | The engine refuses a frame, and each bridge an envelope (and the email bridge an invitation's plaintext), nested more than 32 deep before parsing it; tested at L0 at the limit and above it, up to a million levels. The reference implementation's own parser, V8's `JSON.parse`, does not recurse, so this is what makes it draw the line where the specification does, not what keeps it from crashing |
 | TRN (transport contract) | The shared conformance suite (`packages/messenger-port/src/contract.ts`) passes against the mock (L0), against two real Matrix bridges and a local Synapse (L2), and against two real email bridges and a local Greenmail (L2). Against Signal it runs at L4 only, and passes there against two bridges of this repository and production Signal |
 | BND, MTX (Matrix) | L2 against a local Synapse: binding, send and receive, attachments in ordinary and encrypted rooms, the Megolm history caveat, crypto-store persistence across a restart, edits and redactions refused. **Not run against a public homeserver from this repository** |
 | BND, SIG (Signal) | L0 with a fake `signal-cli`; L2 for the daemon's own mechanics. L4 against production Signal: the transport conformance suite and the attachment tests (up to and beyond 4 MiB) pass against two bridges of this repository, each on a machine of its own with its own linked account, reached through tunnels — three runs in a row, on Node.js 22 ([docs/testing.md](docs/testing.md)). Two accounts and one group only |
@@ -55,15 +56,16 @@ the specification says, not that two implementations interoperate.
 | §10, LOS-8: "ok" without evidence | By definition not a claim of completeness. A creator whose request expired unanswered may lack an offline member's change; the engine keeps the *unanswered* outcome observable |
 | SND-8, restored content | `join()` can start from persisted content (`restore`): shown at once, not sent as a local edit, counted as undistributed until the engine has sent the whole state once it may edit — at once for the creator, after the bootstrap for anyone else, never while read-only; a change that never left before the restart arrives that way. Tested against the in-memory transport |
 | INV-8 (application) | `invitationFromUrl` reads an invitation from a whole link as INV-8 says — the fragment when it carries `tdsp`, the query otherwise, never the two combined; tested at L0. Whether an application reads links through it is the application's part |
-| CTL-12, SND-8 (application) | The engine sends no control frame the application could not persist, and marks changes it could not distribute until a resync; both tested. Keeping either across a restart is the application's part, and this repository contains no application |
+| CTL-12, SND-8 (application) | The engine sends no control frame the application could not persist, keeps a control frame whose send failed for now pending and retries it — after a restart too, and without waiting for the creator's next action — and marks changes it could not distribute until a resync; all tested against the in-memory transport. Keeping either across a restart is the application's part, and this repository contains no application |
 
 ## Known gaps
 
 What this version does not yet specify precisely or has not built. None of it is hidden
 behind a claim elsewhere in the specification.
 
-- **Resource budgets.** Hard, interoperable limits for decoding (input size, nesting,
-  work) are given as recommended values (Appendix B), not normative bounds.
+- **Resource budgets.** Hard, interoperable limits for decoding input size and work are
+  given as recommended values (Appendix B), not normative bounds; nesting depth is
+  bounded normatively (§1.6).
 - **Channel versus control membership.** Who is in the messenger channel and who holds a
   permission in the document are separate states; the specification describes both but
   does not yet define every combination (a grant to a non-member, a member without a
