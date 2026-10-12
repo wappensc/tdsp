@@ -238,6 +238,34 @@ export interface PersistedControlState extends ControlSnapshot {
   readonly pendingControl?: string;
 }
 
+/** A control action, as a `ControlConflict` names it. */
+export interface ControlConflictAction {
+  readonly action: "membership" | "close" | "policy";
+  /** For `membership`: the member concerned. */
+  readonly member?: MemberId;
+  /** For `membership`: the permission set, `null` for one taken away. */
+  readonly permission?: ControlPermission;
+}
+
+/**
+ * Two different control frames from the creator under one number (SPECIFICATION.md CTL-17):
+ * two devices of the creator acted before either had seen the other (CTL-18), or the creator's
+ * application reused a number. This client kept the frame it saw first and rejected the other;
+ * a participant that saw them in the other order kept the other one, so what the two actions
+ * decide may differ between participants, and this version reconciles nothing. A resync does
+ * not help. A new action of the creator on the same member or setting does: it supersedes both
+ * wherever it arrives.
+ */
+export interface ControlConflict {
+  readonly sequence: number;
+  /** The action this client kept: the frame it saw first under `sequence`. */
+  readonly kept: ControlConflictAction;
+  /** The action it rejected; the latest, when more than one came. */
+  readonly rejected: ControlConflictAction;
+  /** When this client first saw a conflict under `sequence` (epoch ms). */
+  readonly since: number;
+}
+
 /**
  * Whether this client has reason to think something is missing. Never a
  * claim that something *is*: every suspicion is evidence that has lasted long enough to be
@@ -563,6 +591,8 @@ export class DocumentEngine {
   #pendingControl: string | undefined;
   /** Every control frame received, by sequence: a different one under a known number is a conflict (CTL-17). */
   readonly #controlFrameTexts = new Map<number, string>();
+  /** The conflicts seen, by sequence: reported once through `onError`, kept for `controlConflicts`. */
+  readonly #controlConflicts = new Map<number, ControlConflict>();
   #onDecline: ((decline: ReceivedDecline) => void) | undefined;
   readonly #declinesReported = new Set<MemberId>();
   // --- control state ---
@@ -995,6 +1025,17 @@ export class DocumentEngine {
       resync: this.#resyncGate.status(),
       incoming: this.#reassembler.incomplete(),
     };
+  }
+
+  /**
+   * The control conflicts this client has seen (SPECIFICATION.md CTL-17), by sequence: two
+   * different frames from the creator under one number, whose actions may now differ between
+   * participants. What an application should show as "permissions may differ" — for the members
+   * and settings named — until the creator acts on them again. Kept in memory only: a restarted
+   * engine starts with none. Not part of `syncHealth`, since a resync does not resolve one.
+   */
+  get controlConflicts(): readonly ControlConflict[] {
+    return [...this.#controlConflicts.values()].sort((a, b) => a.sequence - b.sequence);
   }
 
   /** The effective sync policy: defaults, the transport's suggestion and what was chosen, made consistent and clamped to the transport's bounds. */
@@ -2350,6 +2391,7 @@ export class DocumentEngine {
     // a number already seen means the creator's application reused it (CTL-17).
     const known = this.#controlFrameTexts.get(frame.sequence);
     if (known !== undefined && known !== text) {
+      this.#recordControlConflict(frame, known);
       throw new ControlFrameRejectedError(
         "sequence-conflict",
         `control frame ignored: sequence ${frame.sequence} already carried a different frame`,
@@ -2433,6 +2475,24 @@ export class DocumentEngine {
     return this.controlState;
   }
 
+  /**
+   * Keeps a conflict visible after `onError` reported it (CTL-17): an application can tell the
+   * person that permissions may differ between participants, which an error in a log does not.
+   * One entry per sequence, however many different frames come under it.
+   */
+  #recordControlConflict(rejected: ControlFrame, keptText: string): void {
+    const kept = decodeFrame(keptText);
+    if (kept.kind !== "control") {
+      return; // unreachable: only control frames are kept under a control sequence
+    }
+    this.#controlConflicts.set(rejected.sequence, {
+      sequence: rejected.sequence,
+      kept: conflictActionOf(kept),
+      rejected: conflictActionOf(rejected),
+      since: this.#controlConflicts.get(rejected.sequence)?.since ?? Date.now(),
+    });
+  }
+
   #contiguousControlSeq(): number {
     let n = this.#controlFloor;
     while (this.#controlReceivedSeqs.has(n + 1)) {
@@ -2498,6 +2558,12 @@ export class DocumentEngine {
     }
     this.#notifyControlStateChange();
   }
+}
+
+function conflictActionOf(frame: ControlFrame): ControlConflictAction {
+  return frame.action === "membership"
+    ? { action: "membership", member: frame.member, permission: frame.permission ?? null }
+    : { action: frame.action };
 }
 
 type ControlFields =

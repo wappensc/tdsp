@@ -3767,3 +3767,91 @@ describe("starting from persisted content (join's restore, SPECIFICATION.md §6.
     ).rejects.toThrow(/join\(/);
   });
 });
+
+describe("a control conflict kept visible (SPECIFICATION.md CTL-17)", () => {
+  async function settle(...engines: DocumentEngine[]) {
+    for (let round = 0; round < 4; round++) {
+      for (const engine of engines) {
+        await engine.sync();
+        await engine.flush();
+      }
+    }
+  }
+
+  it("names what two devices of the creator did under one number, everywhere, until the creator acts again", async () => {
+    const port = new InMemoryMessengerPort();
+    const options = { batchWindowMs: 0, resyncResponseThrottleMs: 0, creatorMemberId: "alice" };
+    const errors: unknown[] = [];
+    const onError = (error: unknown) => errors.push(error);
+    const laptop = await DocumentEngine.create(DOCUMENT_ID, "alice", port, onError, options);
+    await laptop.setMembership("bob", "write"); // 1
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, onError, options);
+    const tablet = await DocumentEngine.join(DOCUMENT_ID, "alice", port, onError, options);
+    await settle(laptop, bob, tablet);
+    expect(laptop.controlConflicts).toEqual([]);
+
+    // Both act before either has seen the other: two frames under 2.
+    await Promise.all([
+      laptop.setMembership("gina", "read"),
+      tablet.setMembership("hank", "write"),
+    ]);
+    await settle(laptop, bob, tablet);
+    const gina = { action: "membership", member: "gina", permission: "read" };
+    const hank = { action: "membership", member: "hank", permission: "write" };
+    expect(laptop.controlConflicts).toEqual([
+      { sequence: 2, kept: gina, rejected: hank, since: expect.any(Number) },
+    ]);
+    expect(tablet.controlConflicts).toEqual([
+      { sequence: 2, kept: hank, rejected: gina, since: expect.any(Number) },
+    ]);
+    expect(bob.controlConflicts).toEqual([
+      { sequence: 2, kept: gina, rejected: hank, since: expect.any(Number) },
+    ]);
+    expect(errors).toHaveLength(3); // reported once each, as before
+    expect(bob.syncHealth.state).toBe("ok"); // not loss: a resync does not resolve it
+
+    await settle(laptop, bob, tablet); // the same frames offered again change nothing
+    expect(bob.controlConflicts).toHaveLength(1);
+    expect(errors).toHaveLength(3);
+
+    // The creator acts again on both members, from one device: everyone agrees after that.
+    await laptop.setMembership("gina", "read"); // 3
+    await laptop.setMembership("hank", "write"); // 4
+    await settle(laptop, bob, tablet);
+    for (const engine of [laptop, bob, tablet]) {
+      expect([engine.permissionOf("gina"), engine.permissionOf("hank")]).toEqual(["read", "write"]);
+    }
+  });
+
+  it("keeps one entry per number, however many different frames come under it", async () => {
+    const port = new InMemoryMessengerPort();
+    const options = { batchWindowMs: 0, creatorMemberId: "alice" };
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, () => {}, options);
+    await alice.setMembership("bob", "write"); // 1
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, () => {}, options);
+    await bob.sync();
+    for (const member of ["carol", "dave"]) {
+      await port.send(
+        DOCUMENT_ID,
+        "alice",
+        encodeControlFrame({
+          documentId: DOCUMENT_ID,
+          sequence: 1,
+          action: "membership",
+          member,
+          permission: "read",
+        }),
+      );
+      await bob.sync();
+    }
+    const [conflict] = bob.controlConflicts;
+    expect(bob.controlConflicts).toHaveLength(1);
+    expect(conflict?.kept).toEqual({ action: "membership", member: "bob", permission: "write" });
+    expect(conflict?.rejected).toEqual({
+      action: "membership",
+      member: "dave",
+      permission: "read",
+    });
+    expect(bob.permissionOf("bob")).toBe("write");
+  });
+});

@@ -14,7 +14,11 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- `DocumentEngine.controlConflicts`: the control conflicts (CTL-17) an engine has seen, each
+  with its number and the action it kept and the one it rejected, so an application can tell
+  the person that permissions may differ instead of only logging the error (#51).
 
 ## v1.3.0 — 2026-10-12 · implements TDSP 1.2
 
