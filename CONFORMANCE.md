@@ -6,7 +6,7 @@ time, in the manner of RFC 7942. It is not part of the protocol: the protocol is
 tests in this repository; what it says is not verified is a known gap, not an oversight
 waiting to be found.
 
-**Status as of TDSP 1.2 (11 October 2026).**
+**Status as of TDSP 1.3 (12 October 2026).**
 
 ## How it is verified
 
@@ -64,6 +64,7 @@ the specification says, not that two implementations interoperate.
 | RSY-6, RSY-8, RSY-12, CTL-11, CTL-13 (a member's devices) | A device brings another device of its own member up to date while the creator is offline, with its control state when it holds it without a gap, so the other device may write — or learns it is read-only; without that control state the other device waits for the creator; a new device of the creator continues after the number of the device that answered it. A control snapshot from any other member is ignored, even as an answer to one's own request. Tested at L0 |
 | CTL-17 (a conflict kept visible) | Every participant that rejects a different frame under a number it holds reports it once through `onError` and keeps it in `controlConflicts`, with the action it kept and the one it rejected; two devices of the creator acting at once leave each participant naming the conflict, and a new action of the creator on the members concerned brings them all to agree. Tested at L0. Held in memory only: a restarted engine names none |
 | CTL-18 (creator devices) | A device of the creator continues after numbers another device used, only after an unbroken run; refuses to issue while it lacks a frame before a number it has seen; gives up and reports a pending frame whose number another device took, also mid-retry. A creator restarted without state continues when it reads every frame it sent. Tested at L0. **Two devices acting at the same moment still collide (CTL-17)**: a limit of TDSP 1.x |
+| CTL-19 (a creator's device without control state) | A device of the creator that joined without persisted control state issues no control frame (`control-state-unknown`), answers with `control: null`, hands nothing to `onControlStateChange` and is not bootstrapped by another member's answer — also while it applies a frame it holds without those before it; a joiner it answers is not bootstrapped either. It learns the control state from another device's snapshot, or by reading the creator's frames from 1 on, which completes a bootstrap whose answer came first; told to proceed, it issues and persists. Tested at L0, with a transport that shows no history and one that delays control frames |
 | SND-8, restored content | `join()` can start from persisted content (`restore`): shown at once, not sent as a local edit, counted as undistributed until the engine has sent the whole state once it may edit — at once for the creator, after the bootstrap for anyone else, never while read-only; a change that never left before the restart arrives that way. Tested against the in-memory transport |
 | INV-8 (application) | `invitationFromUrl` reads an invitation from a whole link as INV-8 says — the fragment when it carries `tdsp`, the query otherwise, never the two combined; tested at L0. Whether an application reads links through it is the application's part |
 | CTL-12, SND-8 (application) | The engine sends no control frame the application could not persist, keeps a control frame whose send failed for now pending and retries it — after a restart too, and without waiting for the creator's next action — and marks changes it could not distribute until a resync; all tested against the in-memory transport. Keeping either across a restart is the application's part, and this repository contains no application |
@@ -96,7 +97,8 @@ behind a claim elsewhere in the specification.
   built.
 - **Persistence across restarts** of a creator's control state and of undistributed
   changes is required of an application (CTL-12, SND-8); a creator whose persisted state
-  is lost restarts from sequence 0. An application that restores persisted content through
+  is lost issues nothing until another device of the creator tells it the control state, or
+  the person lets it proceed at the risk of a conflict (CTL-19). An application that restores persisted content through
   `join()` need not keep the undistributed mark: the engine treats restored content as
   undistributed, at the cost of one message per restart.
 - **Matrix device verification.** Element is moving its clients to exclude devices their

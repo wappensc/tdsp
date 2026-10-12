@@ -14,11 +14,34 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
 
 ## Unreleased
 
+### Specification: TDSP 1.3
+
+No byte on the wire changes; the new requirement is why this is a minor version.
+
+- CTL-19 (with CTL-12, CTL-13, RSY-8 and the `control` field in §4): a device of the creator
+  that starts without persisted control state — a new device on a messenger without history,
+  or one whose state was lost — issues no control frame until another device of the creator
+  tells it the control state or it reads the creator's frames from 1 on; until then it answers
+  with `control: null`, is not bootstrapped and persists nothing. An application may let it
+  proceed after telling the person a change may conflict. The creator's answer bootstraps a
+  joiner only when it carries control state (#51).
+
 ### Added
 
 - `DocumentEngine.controlConflicts`: the control conflicts (CTL-17) an engine has seen, each
   with its number and the action it kept and the one it rejected, so an application can tell
   the person that permissions may differ instead of only logging the error (#51).
+- `DocumentEngine.controlStateKnown` and `proceedWithUnknownControlState()`, and the
+  `ControlFrameRejectedError` reason `control-state-unknown` (CTL-19; #51).
+
+### Changed
+
+- A device of the creator joined without `controlState` refuses `setMembership`,
+  `closeDocument` and `setSyncPolicy` until it knows its control state, where before it
+  issued from number 1 and every other participant rejected the frame as a conflict; its
+  `hasCompletedBootstrap` and `onControlStateChange` wait for that too (CTL-19; #51).
+- A joiner is no longer bootstrapped by a creator's answer without control state (CTL-13;
+  #51).
 
 ## v1.3.0 — 2026-10-12 · implements TDSP 1.2
 

@@ -326,6 +326,9 @@ describe("resync answers come from the creator alone", () => {
         documentId: DOCUMENT_ID,
         respondsTo: bobRequest.id,
         update,
+        // The creator's snapshot, which an answer that bootstraps carries (CTL-13); carol's
+        // copy of it changes nothing, since she is not the creator.
+        control: alice.controlState,
         attribution: {
           ranges: [{ start: 0, end: 7, authorId: author }],
           lastEditBySender: { [author]: 7 },
