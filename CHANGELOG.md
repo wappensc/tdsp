@@ -34,6 +34,10 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
   sent folder (`\Sent`), and searches that folder too, so another device of the same address
   receives it; with PGP the mail is encrypted to the sender's key as well. The mail other
   participants receive is unchanged (#31).
+- TRN-7, SIG-3: an adapter returns what its member sent from another device. A Signal bridge
+  delivers the sync transcript Signal hands to an account's other devices, under the id the
+  sending device got, and records an edit or a remote delete inside one as an integrity
+  violation (#31).
 
 ### Added
 
@@ -44,6 +48,8 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
 
 ### Changed
 
+- A Signal bridge now delivers what its account sends from another linked device; before, it
+  dropped those messages (SIG-3; #31).
 - A device no longer waits for the creator when another device of its own member is online:
   that device brings it up to date, control state included (#31).
 - A device of the creator no longer blocks for good after another device of the creator

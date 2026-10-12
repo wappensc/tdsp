@@ -85,7 +85,8 @@ export async function sendGroupMessage(
 
 /**
  * One incoming group text message, already narrowed out of a raw
- * `receive` notification's `envelope` — `undefined` for anything that
+ * `receive` notification's `envelope` — a member's message, or one this account sent
+ * from another device (SIG-3) — `undefined` for anything that
  * isn't a group `dataMessage` with a text body (a receipt, a typing
  * indicator, a direct/non-group message, an attachment-only message):
  * none of those can carry this project's own envelope, so `sync-state.ts`
@@ -107,8 +108,44 @@ export interface IncomingAttachment {
   readonly size: number;
 }
 
+/**
+ * What an envelope carries, whichever way it came: a message from a member arrives as
+ * `dataMessage` (an edit as `editMessage`); one this account sent from another of its devices
+ * arrives as the sync transcript `syncMessage.sentMessage`, with the same fields one level
+ * deeper — the transcript is the `dataMessage`, and an edit is its `editMessage` (SPECIFICATION.md
+ * SIG-3). Signal sends a transcript only to the account's own devices, so one whose sender is not
+ * `ownAci` is not one and carries nothing; with `ownAci` unknown (not linked yet), none counts.
+ */
+function messageParts(
+  envelope: object,
+  ownAci: string | undefined,
+): { readonly dataMessage?: unknown; readonly editMessage?: unknown } {
+  const { sourceUuid, dataMessage, editMessage, syncMessage } = envelope as {
+    sourceUuid?: unknown;
+    dataMessage?: unknown;
+    editMessage?: unknown;
+    syncMessage?: unknown;
+  };
+  const sentMessage = (syncMessage as { sentMessage?: unknown } | null | undefined)?.sentMessage;
+  if (typeof sentMessage !== "object" || sentMessage === null) {
+    return { dataMessage, editMessage };
+  }
+  if (ownAci === undefined || sourceUuid !== ownAci) {
+    return {};
+  }
+  const transcriptEdit = (sentMessage as { editMessage?: unknown }).editMessage;
+  return transcriptEdit === undefined || transcriptEdit === null
+    ? { dataMessage: sentMessage }
+    : { editMessage: transcriptEdit };
+}
+
+/**
+ * `ownAci` is this bridge's own account; a message it sent from another device counts only
+ * with it (SIG-3).
+ */
 export function parseIncomingGroupMessage(
   notificationParams: unknown,
+  ownAci?: string,
 ): IncomingGroupMessage | null {
   if (typeof notificationParams !== "object" || notificationParams === null) {
     return null;
@@ -117,10 +154,8 @@ export function parseIncomingGroupMessage(
   if (typeof envelope !== "object" || envelope === null) {
     return null;
   }
-  const { sourceUuid, dataMessage } = envelope as {
-    sourceUuid?: unknown;
-    dataMessage?: unknown;
-  };
+  const { sourceUuid } = envelope as { sourceUuid?: unknown };
+  const { dataMessage } = messageParts(envelope, ownAci);
   // The ACI only, never the phone number (`source`): the ACI is what `/whoami` answers and
   // the creator is compared against, so a delivery attributed to anything else could never
   // match — or match a different spelling of the same person (SPECIFICATION.md SIG-2).
@@ -164,8 +199,13 @@ export interface IncomingEditOrDelete {
   readonly editedMessage: string | undefined;
 }
 
+/**
+ * An edit or remote-delete this account sent from another device arrives inside the sync
+ * transcript, and is caught the same way (SIG-3).
+ */
 export function parseIncomingEditOrDelete(
   notificationParams: unknown,
+  ownAci?: string,
 ): IncomingEditOrDelete | null {
   if (typeof notificationParams !== "object" || notificationParams === null) {
     return null;
@@ -174,12 +214,8 @@ export function parseIncomingEditOrDelete(
   if (typeof envelope !== "object" || envelope === null) {
     return null;
   }
-  const { source, sourceUuid, dataMessage, editMessage } = envelope as {
-    source?: unknown;
-    sourceUuid?: unknown;
-    dataMessage?: unknown;
-    editMessage?: unknown;
-  };
+  const { source, sourceUuid } = envelope as { source?: unknown; sourceUuid?: unknown };
+  const { dataMessage, editMessage } = messageParts(envelope, ownAci);
   // Unlike a delivery, a rejected edit or delete only becomes an integrity record, so a
   // message without an ACI is still recorded — under the phone number — rather than lost.
   const sender = typeof sourceUuid === "string" ? sourceUuid : source;

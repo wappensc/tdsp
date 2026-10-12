@@ -129,6 +129,8 @@ export function parseEnvelope(raw: string): Envelope | null {
 export interface SyncStateOptions {
   /** `signal-cli`'s local account selector (the phone number), needed to read an attachment back; `undefined` until linked. */
   readonly account?: () => string | undefined;
+  /** The linked account's ACI: what another device of this account sends counts only from it (SIG-3); `undefined` until linked. */
+  readonly ownAci?: () => string | undefined;
   /** `signal-cli`'s own `attachments` directory. A file is looked at before it is read (its size against the bound) and deleted after: it holds a plaintext frame. */
   readonly attachmentsDir?: string;
   readonly logger?: Logger;
@@ -339,9 +341,10 @@ export function createSyncState(
     if (method !== RECEIVE_NOTIFICATION_METHOD) {
       return;
     }
-    const incoming = parseIncomingGroupMessage(params);
+    const ownAci = options.ownAci?.();
+    const incoming = parseIncomingGroupMessage(params, ownAci);
     if (!incoming) {
-      const editOrDelete = parseIncomingEditOrDelete(params);
+      const editOrDelete = parseIncomingEditOrDelete(params, ownAci);
       if (editOrDelete) {
         const targetId = `${editOrDelete.sender}:${editOrDelete.targetTimestamp}`;
         // Prefer the ground truth of what this bridge itself recorded for
