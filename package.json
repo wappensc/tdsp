@@ -47,7 +47,8 @@
     "test:l4-email": "L4_EMAIL=1 vitest run bridges/email-bridge/src/l4-provider.test.ts",
     "test:l4-email-bridges": "L4_EMAIL=1 vitest run bridges/email-bridge/src/l4-bridges.test.ts",
     "signal:link": "node --experimental-strip-types infra/signal-l4/link-cli.ts",
-    "test:l4-signal": "vitest run bridges/signal-bridge/src/l4-contract.test.ts bridges/signal-bridge/src/l4-attachments.test.ts"
+    "test:l4-signal": "vitest run bridges/signal-bridge/src/l4-contract.test.ts bridges/signal-bridge/src/l4-attachments.test.ts",
+    "test:l4-signal-own-devices": "vitest run bridges/signal-bridge/src/l4-own-devices.test.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.9",

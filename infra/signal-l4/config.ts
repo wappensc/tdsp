@@ -60,3 +60,40 @@ export async function signalL4Ready(): Promise<SignalL4Bridges | undefined> {
   ]);
   return linked.every(Boolean) ? bridges : undefined;
 }
+
+/**
+ * The own-device test (`l4-own-devices.test.ts`) needs two bridges linked to one account, each a
+ * device of its own: `L4_SIGNAL_BRIDGE_A` and `L4_SIGNAL_BRIDGE_A2`. It sends into the one group
+ * the account can see, or, when it sees several, into the group `L4_SIGNAL_GROUP` names by id —
+ * named on purpose, so test traffic never lands in a group nobody chose.
+ */
+export interface SignalL4OwnDevices {
+  readonly first: string;
+  readonly second: string;
+  readonly groupId: string | undefined;
+}
+
+/** The two configured bridge URLs of one account, or `undefined` when either is missing or not a loopback URL. */
+export function signalL4OwnDevices(
+  env: NodeJS.ProcessEnv = process.env,
+): SignalL4OwnDevices | undefined {
+  const first = env.L4_SIGNAL_BRIDGE_A;
+  const second = env.L4_SIGNAL_BRIDGE_A2;
+  if (!first || !second || !isLoopbackUrl(first) || !isLoopbackUrl(second)) {
+    return undefined;
+  }
+  return { first, second, groupId: env.L4_SIGNAL_GROUP || undefined };
+}
+
+/** The gate of the own-device test: both bridges configured, reachable and linked. */
+export async function signalL4OwnDevicesReady(): Promise<SignalL4OwnDevices | undefined> {
+  const devices = signalL4OwnDevices();
+  if (devices === undefined) {
+    return undefined;
+  }
+  const linked = await Promise.all([
+    isSignalBridgeLinked(devices.first),
+    isSignalBridgeLinked(devices.second),
+  ]);
+  return linked.every(Boolean) ? devices : undefined;
+}
