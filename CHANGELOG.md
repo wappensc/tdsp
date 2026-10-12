@@ -14,7 +14,15 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
 
 ## Unreleased
 
+Nothing yet.
+
+## v1.3.0 — 2026-10-12 · implements TDSP 1.2
+
+No byte on the wire changes from v1.2.0.
+
 ### Specification: TDSP 1.2
+
+No byte on the wire changes; the new requirements are why this is a minor version.
 
 - CTL-18: the creator may run on several devices; a device continues after the control
   numbers another device used, but only after an unbroken run, issues nothing while it lacks

@@ -1,6 +1,6 @@
 {
   "name": "@tdsp/signal-bridge",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "TDSP bridge for Signal, running signal-cli as a separate program.",
   "license": "MIT",
   "private": true,
