@@ -25,6 +25,17 @@ export interface RpcCaller {
   callRpc<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
 }
 
+export interface SignalAuthOptions {
+  /** How often a pending link asks `signal-cli` whether the account is there. */
+  readonly linkPollMs?: number;
+  /** How long a pending link is watched before it counts as failed. */
+  readonly linkWatchMs?: number;
+}
+
+// signal-cli 0.14.9 waits up to 120 s for the phone to scan the code, then registers the
+// device: five minutes leave room for both.
+const DEFAULT_LINK_WATCH_MS = 5 * 60_000;
+
 /**
  * Drives `signal-cli`'s `startLink`/`finishLink` JSON-RPC commands behind the bridge's own `/auth/link`+
  * `/auth/status` contract. `link()` intentionally does not await the full
@@ -33,6 +44,13 @@ export interface RpcCaller {
  * seconds to never. `POST /auth/link` needs to return the URI immediately
  * so the browser can render it as a QR code; `GET /auth/status` is what
  * the browser then polls to learn when linking actually completes.
+ *
+ * Completion is learnt from `listAccounts`, not from `finishLink`'s answer. Tried against
+ * production Signal with `signal-cli` 0.14.9 in daemon mode: the device was registered, the
+ * daemon listed the account to another connection, and `finishLink` still never answered
+ * (its last step adds the new account to the daemon's open connections, and does not return).
+ * `listAccounts` lists only accounts the daemon has fully loaded, so an account there is a
+ * finished link.
  */
 export class SignalAuth {
   #daemon: RpcCaller;
@@ -51,11 +69,20 @@ export class SignalAuth {
   #phoneNumber: string | undefined;
 
   readonly #logger: Logger;
+  readonly #linkPollMs: number;
+  readonly #linkWatchMs: number;
 
-  constructor(daemon: RpcCaller, dataDir: string, logger: Logger = loggerFromEnv("signal-bridge")) {
+  constructor(
+    daemon: RpcCaller,
+    dataDir: string,
+    logger: Logger = loggerFromEnv("signal-bridge"),
+    options: SignalAuthOptions = {},
+  ) {
     this.#daemon = daemon;
     this.#dataDir = dataDir;
     this.#logger = logger;
+    this.#linkPollMs = options.linkPollMs ?? 1000;
+    this.#linkWatchMs = options.linkWatchMs ?? DEFAULT_LINK_WATCH_MS;
   }
 
   get status(): AuthStatus {
@@ -84,37 +111,61 @@ export class SignalAuth {
   async link(): Promise<{ linkingUri: string }> {
     const { deviceLinkUri } = await this.#daemon.callRpc<{ deviceLinkUri: string }>("startLink");
 
+    let failed = false;
     void this.#daemon
       .callRpc("finishLink", { deviceLinkUri, deviceName: "TDSP bridge" })
-      .then(() => {
-        // finishLink's own response only echoes deviceLinkUri back
-        // (per signal-cli's own man page), not the linked account's
-        // identity — account-store.ts's file read is what learns it (see
-        // that module's doc comment for why this is not a JSON-RPC call).
-        const account = readLinkedAccount(this.#dataDir);
-        if (!account) {
-          throw new Error(
-            "finishLink resolved but accounts.json still has no linked account — signal-cli may not have flushed it to disk yet",
-          );
-        }
-        this.#applyAccount(account);
-        // A freshly linked device's `listGroups` stays empty even for a group
-        // the account has long belonged to: signal-cli does not push existing
-        // group/contact state to a new linked device by itself.
-        // `sendSyncRequest` asks another of this account's devices to send it
-        // over; `GET /channels` fills in a few seconds later.
-        return this.#daemon.callRpc("sendSyncRequest", { account: account.number });
-      })
+      .then(() => this.#adoptListedAccount())
       .catch((error: unknown) => {
-        // Not surfaced to the browser here — it learns only via
-        // /auth/status staying `linked: false`, and can retry POST
-        // /auth/link for a fresh URI (Signal's own link URIs are only
-        // valid briefly). Logged so whoever runs the bridge can see why
-        // linking didn't complete.
-        this.#logger.error("device-link-failed", { error });
+        failed = true;
+        // Not surfaced to the browser here — it learns only via /auth/status staying
+        // `linked: false`, and can retry POST /auth/link for a fresh URI (Signal's own link
+        // URIs are only valid briefly). Logged so whoever runs the bridge can see why.
+        if (!this.#status.linked) {
+          this.#logger.error("device-link-failed", { error });
+        }
       });
+    void this.#watchLink(() => failed);
 
     return { linkingUri: deviceLinkUri };
+  }
+
+  /** Asks `signal-cli` for the account until it is there, the link failed, or the watch ends. */
+  async #watchLink(failed: () => boolean): Promise<void> {
+    const deadline = Date.now() + this.#linkWatchMs;
+    while (!this.#status.linked && !failed()) {
+      if (Date.now() >= deadline) {
+        this.#logger.error("device-link-failed", {
+          error: `no linked account within ${Math.round(this.#linkWatchMs / 1000)} s`,
+        });
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, this.#linkPollMs));
+      try {
+        await this.#adoptListedAccount();
+      } catch {
+        // A failed look is tried again at the next tick; the deadline bounds the whole watch.
+      }
+    }
+  }
+
+  /**
+   * Takes the account `listAccounts` names, once: its ACI is the `MemberId`, its number
+   * `signal-cli`'s local selector.
+   */
+  async #adoptListedAccount(): Promise<void> {
+    const accounts = await this.#daemon.callRpc<unknown>("listAccounts");
+    const first = Array.isArray(accounts)
+      ? (accounts[0] as { number?: unknown; aci?: unknown } | undefined)
+      : undefined;
+    if (this.#status.linked || typeof first?.number !== "string" || typeof first.aci !== "string") {
+      return;
+    }
+    this.#applyAccount({ number: first.number, uuid: first.aci });
+    this.#logger.info("device-linked", {});
+    // A freshly linked device's `listGroups` stays empty even for a group the account has
+    // long belonged to, until another of the account's devices sends it over;
+    // `sendSyncRequest` asks for that again, and `GET /channels` fills in shortly after.
+    await this.#daemon.callRpc("sendSyncRequest", { account: first.number });
   }
 
   #applyAccount(account: { readonly number: string; readonly uuid: string }): void {

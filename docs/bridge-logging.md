@@ -78,7 +78,8 @@ be grepped or alerted on.
 | `signal-cli-unparseable-line` | warn | signal | A line from the daemon that was not valid JSON-RPC. |
 | `signal-cli-line-too-long` | warn | signal | A line from the daemon longer than the bridge reads (BRG-14); dropped unread, and the calls waiting on the daemon failed. |
 | `signal-cli-sigkill-escalation` | warn | signal | `signal-cli` did not exit within 5 s of SIGTERM and was killed (a pending device-link session is the known cause). |
-| `device-link-failed` | error | signal | Completing a device link failed; carries the error. |
+| `device-linked` | info | signal | A device link completed: `signal-cli` lists the account. No fields. |
+| `device-link-failed` | error | signal | Completing a device link failed, or no account appeared within five minutes; carries the error. |
 | `log-suppressed` | warn | all | The rate limit dropped `suppressed` records of `suppressedEvent`. |
 | `invalid-log-configuration` | warn | all | A `LOG_*` value was not recognised. |
 
