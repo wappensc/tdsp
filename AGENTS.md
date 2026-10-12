@@ -178,8 +178,8 @@ Run from the repo root:
   one level ([docs/testing.md](docs/testing.md)).
 - `pnpm run matrix:up` / `email:up` (and `:down`, `matrix:reset`) — the local Synapse and
   Greenmail for the L2 tests; `pnpm run test:l2` resets and restarts Synapse first.
-- `pnpm run test:l4-signal`, `test:l4-email`, `test:l4-email-bridges` — against real
-  accounts, only with their configuration; `pnpm run signal:link <bridge url>` links a
+- `pnpm run test:l4-signal`, `test:l4-signal-own-devices`, `test:l4-email`,
+  `test:l4-email-bridges` — against real accounts, only with their configuration; `pnpm run signal:link <bridge url>` links a
   Signal bridge by QR code.
 - `pnpm run matrix:confirm-device [bridge url]` — signs a running Matrix bridge's device
   with the account's recovery key ([docs/matrix-device-confirmation.md](docs/matrix-device-confirmation.md)).

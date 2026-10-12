@@ -204,6 +204,7 @@ export function createLiveServerDependencies(
     writer: createGroupWriter(rpc, auth),
     sync: createSyncState(rpc, bindStorePath, {
       account: () => auth.phoneNumber,
+      ownAci: () => auth.status.accountId,
       attachmentsDir,
     }),
   };

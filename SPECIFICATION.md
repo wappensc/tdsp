@@ -1,6 +1,6 @@
 # TDSP — Together Document Sync Protocol
 
-**Specification · TDSP 1.2 · 11 October 2026**
+**Specification · TDSP 1.2 · 12 October 2026**
 
 ## 1. Introduction
 
@@ -355,10 +355,14 @@ type Permission = "read" | "write" | "creator";
   that resolves early turns a later refusal into a silent loss.
 - **TRN-7** · *adapter* — `receive` MUST return every delivery of the document the
   adapter has observed and still retains (BRG-17), and MAY return deliveries it
-  returned before. It MAY include the receiving member's own messages.
+  returned before. It MUST include the messages the receiving member sent from
+  another of its devices, as its messenger's binding delivers them (SIG-3, MTX-4,
+  EML-12), and MAY include those this device sent itself.
   *Rationale:* a cumulative, unfiltered answer over a bounded window is the
   simplest contract a bridge can meet: filtering is where messages get lost, and
-  de-duplication is cheap at the engine. The window keeps a long-lived document's
+  de-duplication is cheap at the engine. A member may run several devices, each
+  with an engine of its own; filtering by sender would leave one of them blind to
+  what another wrote. The window keeps a long-lived document's
   answer from growing without end; what slides out before an engine read it is a
   lost message, which loss detection notices in the cases [§10](#10-loss-detection)
   names (LOS-8) and a resync then recovers — not in every case, as §10's limits say.
@@ -2144,9 +2148,10 @@ file holding the frame's UTF-8 text; exactly one of the two is present.
 | MemberId | The account's ACI (UUID). Never the phone number |
 | Sender | The message's `sourceUuid` as `signal-cli` reports it |
 | Delivery id | `<sender ACI>:<message timestamp>` |
+| Own devices | What one device of an account sends reaches the account's other devices as a sync transcript, delivered like any other message (SIG-3) |
 | Inline limit | A frame of at most 800 bytes rides in the body as `frame` |
 | Attachment | A larger frame, up to 4 MiB, is the message's only attachment; the envelope carries `"attachment": {"size": <bytes>, "sha256": "<64 hex digits>"}` in place of `frame` |
-| Immutability | An `editMessage` or a remote delete targeting a delivered message is an integrity violation |
+| Immutability | An `editMessage` or a remote delete targeting a delivered message is an integrity violation, inside a sync transcript too |
 
 - **SIG-1** · *bridge* — A receiving bridge MUST accept an attachment envelope only
   if the message carries exactly one attachment whose size equals the envelope's
@@ -2159,6 +2164,24 @@ file holding the frame's UTF-8 text; exactly one of the two is present.
   *Rationale:* the ACI is the identity `/whoami` reports and the creator is
   compared against; a message attributed to a phone number instead would never
   match, or worse, match a different spelling of the same person.
+- **SIG-3** · *bridge* — A bridge MUST deliver a group message its own account
+  sent from another device like a message from any other member: Signal hands it
+  to the account's other devices as a sync transcript (`signal-cli`:
+  `syncMessage.sentMessage`), its sender is the account's ACI, and its delivery
+  id is `<ACI>:<timestamp of the sent message>`, the id the sending device got.
+  An edit or a remote delete inside a transcript is an integrity violation, as
+  in a message. A bridge MUST ignore a transcript whose sender is not its own
+  account.
+  *Rationale:* a member may run several devices under one account, each a bridge
+  of its own, and Signal gives a device's message to the account's other devices
+  only as this transcript. The delivery id names no device: Signal identifies a
+  message by its author and sent timestamp, and an edit or delete targets it that
+  way, so the transcript yields the id the sender recorded and an echo is
+  recognised (TRN-8). Two devices of one account sending in the same millisecond
+  would share an id, and the second message would count as a duplicate; that has
+  been neither observed nor tested, and loss detection notices it in the cases
+  [§10](#10-loss-detection) names. Signal sends transcripts only to an account's
+  own devices, so one from another sender is not one.
 
 ### 13.3 Matrix
 
@@ -2668,7 +2691,8 @@ frame as a JSON string:
 2. Decide how the account is provisioned, and keep its credentials in a private
    place ([§12.1](#121-account-and-credentials)).
 3. Write a binding ([§13](#13-messenger-bindings)): account, security, envelope,
-   carrier, delivery id, sender, inline limit, attachments.
+   carrier, delivery id, sender, inline limit, attachments, and how a message
+   reaches the sender's own other devices (TRN-7).
 4. Never parse the frame; route by the envelope's documentId; ignore what is not
    yours, silently.
 5. Make delivered messages immutable and record every attempt to alter one.

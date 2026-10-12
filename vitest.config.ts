@@ -38,6 +38,7 @@ const L2_TESTS = [
 const L4_TESTS = [
   "bridges/signal-bridge/src/l4-contract.test.ts",
   "bridges/signal-bridge/src/l4-attachments.test.ts",
+  "bridges/signal-bridge/src/l4-own-devices.test.ts",
   "bridges/email-bridge/src/l4-provider.test.ts",
   "bridges/email-bridge/src/l4-bridges.test.ts",
 ];

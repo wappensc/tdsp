@@ -218,6 +218,55 @@ describe("parseIncomingGroupMessage", () => {
     expect(result).toBeNull();
   });
 
+  it("reads a sync transcript from another device of its own account like a message, attachments included (SIG-3)", () => {
+    const result = parseIncomingGroupMessage(
+      {
+        envelope: {
+          sourceUuid: "own-aci",
+          sourceDevice: 3,
+          timestamp: 1700000000123,
+          syncMessage: {
+            sentMessage: {
+              destination: null,
+              timestamp: 1700000000123,
+              message: "{}",
+              groupInfo: { groupId: "g1", type: "DELIVER" },
+              attachments: [{ id: "abc123.bin", size: 5000 }],
+            },
+          },
+        },
+      },
+      "own-aci",
+    );
+    expect(result).toEqual({
+      groupId: "g1",
+      sender: "own-aci",
+      timestamp: 1700000000123,
+      message: "{}",
+      attachments: [{ id: "abc123.bin", size: 5000 }],
+    });
+  });
+
+  it("returns null for a sync message that carries no sent message, and for a transcript to a person", () => {
+    expect(
+      parseIncomingGroupMessage(
+        { envelope: { sourceUuid: "own-aci", syncMessage: {} } },
+        "own-aci",
+      ),
+    ).toBeNull();
+    expect(
+      parseIncomingGroupMessage(
+        {
+          envelope: {
+            sourceUuid: "own-aci",
+            syncMessage: { sentMessage: { destinationUuid: "x", timestamp: 1, message: "hi" } },
+          },
+        },
+        "own-aci",
+      ),
+    ).toBeNull();
+  });
+
   it("returns null for malformed input", () => {
     expect(parseIncomingGroupMessage(null)).toBeNull();
     expect(parseIncomingGroupMessage("not an object")).toBeNull();
