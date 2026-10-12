@@ -186,12 +186,15 @@ export class ControlFrameRejectedError extends Error {
    * `sequence-conflict`: a control frame from the creator carries a sequence number the
    * receiver already holds a *different* frame for (SPECIFICATION.md CTL-17) — the
    * creator's application reused a number, which must not be decided silently.
+   * `control-state-unknown`: a device of the creator was asked to issue a control frame before
+   * it knows which numbers are taken (CTL-19); see `controlStateKnown`.
    */
   readonly reason:
     | "not-from-creator"
     | "creator-unknown"
     | "names-the-creator"
-    | "sequence-conflict";
+    | "sequence-conflict"
+    | "control-state-unknown";
 
   constructor(reason: ControlFrameRejectedError["reason"], message: string) {
     super(message);
@@ -489,7 +492,9 @@ export interface DocumentEngineOptions {
    * applied, one about to be sent, a snapshot adopted — so the application can persist
    * it (see `controlState`). Only a creator's is worth persisting, and it must be
    * persisted before this returns: the call that announces a pending control frame
-   * comes *before* the frame is sent (CTL-12).
+   * comes *before* the frame is sent (CTL-12). Not called while a device of the creator
+   * does not know its control state (`controlStateKnown`, CTL-19): what it holds then is
+   * not the creator's state, and restored it would pass for it.
    */
   onControlStateChange?: (state: PersistedControlState) => void;
   /**
@@ -613,6 +618,12 @@ export class DocumentEngine {
   #highestControlSeq = 0;
   // The last sequence this client *issued* (creator only).
   #issuedControlSeq = 0;
+  // Whether this device of the creator knows which control numbers are taken (CTL-19): false
+  // only from a join() as the creator without persisted control state, until it learns them.
+  #controlStateKnown = true;
+  // An answer to this device's own request arrived while its control state was unknown: the
+  // bootstrap completes once the control state is known (CTL-19).
+  #answeredWithoutControlState = false;
   // Serialises the creator's control sends, so a failed send never consumes a
   // number (a skipped number would look like a lost message forever).
   #controlChain: Promise<unknown> = Promise.resolve();
@@ -946,6 +957,11 @@ export class DocumentEngine {
     if (options.restore !== undefined) {
       client.#startFromRestored(options.restore.attribution);
     }
+    // A new device of the creator, or one whose persisted state was lost, cannot tell a free
+    // control number from a taken one (CTL-19).
+    if (options.creatorMemberId === memberId && options.controlState === undefined) {
+      client.#controlStateKnown = false;
+    }
     try {
       await client.requestResync();
     } catch (error) {
@@ -1053,7 +1069,9 @@ export class DocumentEngine {
    * immediately for `create()` (a creator always already has its own
    * document); initially `false` for `join()`, becoming `true` once a
    * `resync-response` answering one of *this* client's own
-   * `requestResync()` calls has actually been applied (SPECIFICATION.md RSY-14).
+   * `requestResync()` calls has actually been applied (SPECIFICATION.md RSY-14) — for a
+   * device of the creator that joined without persisted control state, only once it also
+   * knows its control state (`controlStateKnown`, CTL-19).
    * A joiner whose creator never comes online stays `false` forever — an honest
    * limitation of a broadcast-only, history-less transport, not a bug to be papered
    * over. An application should show it as "waiting for the creator", distinct from
@@ -1061,6 +1079,19 @@ export class DocumentEngine {
    */
   get hasCompletedBootstrap(): boolean {
     return this.#hasCompletedBootstrap;
+  }
+
+  /**
+   * Whether this device knows which control numbers are taken (SPECIFICATION.md CTL-19).
+   * `false` only for a device of the creator that joined without persisted control state — a
+   * new device, or one whose state was lost — until it adopts the snapshot of another device of
+   * the creator, reads the creator's control frames from 1 on, or is told to proceed
+   * (`proceedWithUnknownControlState`). Until then it issues no control frame, and its
+   * bootstrap is not complete. An application should show it as "waiting for your other
+   * device". Always `true` for anyone else, who issues no control frames.
+   */
+  get controlStateKnown(): boolean {
+    return this.#controlStateKnown;
   }
 
   /** This document's fixed creator, if this client knows it (a joiner learns it from the invitation). */
@@ -1347,17 +1378,21 @@ export class DocumentEngine {
             if (frame.control !== null && snapshotCounts) {
               this.#applyControlSnapshot(frame.control);
             }
-            // Bootstrapped by the creator's answer, or by another device of this member that
-            // passed on its control state with it (CTL-13); content alone does not.
-            const bootstraps =
-              delivery.sender === this.#creatorMemberId ||
-              this.#creatorMemberId === this.memberId ||
-              (frame.control !== null && snapshotCounts);
-            if (isOwnResyncResponse && bootstraps) {
-              this.#historyTruncatedSince = undefined;
-              this.#resyncGate.answered();
-              this.#detector.answered();
-              this.#hasCompletedBootstrap = true;
+            // A device of the creator holds the control state already, or learns it apart
+            // from content: any answer to its own request brings content (RSY-6), and its
+            // bootstrap completes once its control state is known (CTL-19). Anyone else is
+            // bootstrapped by an answer from the creator, or from another device of its own
+            // member, that carries control state (CTL-13); content alone does not.
+            const ownsControl = this.#creatorMemberId === this.memberId;
+            if (
+              isOwnResyncResponse &&
+              (ownsControl || (frame.control !== null && snapshotCounts))
+            ) {
+              if (!ownsControl || this.#controlStateKnown) {
+                this.#completeBootstrap();
+              } else {
+                this.#answeredWithoutControlState = true;
+              }
               const selection = this.#bootstrapOverlaySelection.get(frame.respondsTo);
               if (selection) {
                 this.#considerBootstrapOverlay(selection, frame.attribution);
@@ -1586,6 +1621,25 @@ export class DocumentEngine {
         ...definedOnly(changes),
       }),
     }));
+  }
+
+  /**
+   * Lets this device of the creator issue control frames although it does not know which
+   * numbers are taken (SPECIFICATION.md CTL-19): from now on its control state is what it
+   * holds, and it is handed to `onControlStateChange` to persist. Call it only after telling
+   * the person that a change made now may conflict with one made on another device of theirs
+   * (CTL-17) — for a document whose other devices are gone for good, it is the only way its
+   * membership can change again. Does nothing when the control state is known already.
+   */
+  proceedWithUnknownControlState(): void {
+    if (this.#creatorMemberId !== this.memberId) {
+      throw new Error(`${this.memberId} is not the creator of ${this.documentId}`);
+    }
+    if (this.#controlStateKnown) {
+      return;
+    }
+    this.#learnControlState();
+    this.#notifyControlStateChange();
   }
 
   /**
@@ -2073,7 +2127,9 @@ export class DocumentEngine {
       // member: a lost membership change leaves the content diff empty and still needs healing.
       const hasContent = this.#profile.hasUpdatesSince(this.document, requested.stateVector);
       const hasControl =
-        (isCreator && this.#issuedControlSeq > requested.controlSequence) ||
+        (isCreator &&
+          this.#controlStateKnown &&
+          this.#issuedControlSeq > requested.controlSequence) ||
         (relayedControl !== undefined && relayedControl.sequence > requested.controlSequence);
       const mustAnswerBootstrap = request.bootstrap && (isCreator || relayedControl !== undefined);
       if (!hasContent && !hasControl && !mustAnswerBootstrap) {
@@ -2103,7 +2159,13 @@ export class DocumentEngine {
           request.id,
           update,
           attributionOverlay,
-          isCreator ? this.controlState : (relayedControl ?? null),
+          // A device of the creator that does not know its control state has none to give: an
+          // empty snapshot would bootstrap a joiner with no members at all (CTL-19, RSY-8).
+          isCreator
+            ? this.#controlStateKnown
+              ? this.controlState
+              : null
+            : (relayedControl ?? null),
         ).catch((error: unknown) => this.#keepRequestAfterFailedAnswer(request, error));
       } catch {
         // best-effort — see this method's own doc comment.
@@ -2226,6 +2288,10 @@ export class DocumentEngine {
       this.#issuedControlSeq += 1;
       advanced = true;
     }
+    // This device started at 0, so it now holds an unbroken run from 1 (CTL-19).
+    if (advanced && !this.#controlStateKnown) {
+      this.#learnControlState();
+    }
     if (givenUp) {
       this.#onError(
         new ControlFrameRejectedError(
@@ -2238,6 +2304,27 @@ export class DocumentEngine {
     if (advanced || givenUp) {
       this.#notifyControlStateChange();
     }
+  }
+
+  /** The bootstrap is complete (RSY-14): the request slot is free and the evidence it answered is gone. */
+  #completeBootstrap(): void {
+    this.#historyTruncatedSince = undefined;
+    this.#resyncGate.answered();
+    this.#detector.answered();
+    this.#hasCompletedBootstrap = true;
+  }
+
+  /**
+   * This device of the creator now knows its control state (CTL-19): it may issue, answer with
+   * its snapshot and persist it, and an answer to its own request that came while it did not
+   * completes its bootstrap now.
+   */
+  #learnControlState(): void {
+    this.#controlStateKnown = true;
+    if (this.#answeredWithoutControlState && !this.#hasCompletedBootstrap) {
+      this.#completeBootstrap();
+    }
+    this.#answeredWithoutControlState = false;
   }
 
   /** Runs `run` after every control action before it has settled, so no two take a number at once. */
@@ -2261,6 +2348,15 @@ export class DocumentEngine {
     const run = async (): Promise<void> => {
       if (this.#creatorMemberId !== this.memberId) {
         throw new Error(`${this.memberId} is not the creator of ${this.documentId}`);
+      }
+      // Any number may be taken already by another device of the creator, or by this one before
+      // it lost its state; issuing now would reuse one (CTL-19).
+      if (!this.#controlStateKnown) {
+        throw new ControlFrameRejectedError(
+          "control-state-unknown",
+          `this device of the creator does not know the control state of ${this.documentId} yet: ` +
+            "it waits for another device of the creator, or for proceedWithUnknownControlState()",
+        );
       }
       // A frame left pending by a restart goes first, and alone: its number may already
       // have been delivered, so no other action may take it (CTL-12). If it still cannot
@@ -2502,6 +2598,11 @@ export class DocumentEngine {
   }
 
   #notifyControlStateChange(): void {
+    // Not the creator's control state yet: persisted, it would look restored at the next start
+    // and lift the wait it is under (CTL-19).
+    if (!this.#controlStateKnown) {
+      return;
+    }
     this.#onControlStateChange?.(
       this.#pendingControl === undefined
         ? this.controlState
@@ -2538,6 +2639,11 @@ export class DocumentEngine {
       snapshot.policySequence > (this.#policy?.sequence ?? -1)
     ) {
       this.#adoptPolicy(snapshot.policy, snapshot.policySequence);
+    }
+    // Only the creator's snapshot counts here, and a device of the creator that does not know its
+    // control state sends none (CTL-11, RSY-8): this one came from a device that does (CTL-19).
+    if (this.#creatorMemberId === this.memberId && !this.#controlStateKnown) {
+      this.#learnControlState();
     }
     // A device of the creator brought up to date by another of its devices continues after the
     // snapshot's number (CTL-18). A frame of its own pending under a number the snapshot covers

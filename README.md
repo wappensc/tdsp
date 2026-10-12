@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/wappensc/tdsp/actions/workflows/ci.yml/badge.svg)](https://github.com/wappensc/tdsp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Spec: TDSP 1.2](https://img.shields.io/badge/spec-TDSP%201.2-informational)](SPECIFICATION.md)
+[![Spec: TDSP 1.3](https://img.shields.io/badge/spec-TDSP%201.3-informational)](SPECIFICATION.md)
 [![Node.js ≥ 22.6](https://img.shields.io/badge/node-%E2%89%A5%2022.6-brightgreen)](package.json)
 [![TypeScript: strict](https://img.shields.io/badge/TypeScript-strict-3178c6)](tsconfig.base.json)
 [![Messengers: Signal · Matrix · Email](https://img.shields.io/badge/messengers-Signal%20%C2%B7%20Matrix%20%C2%B7%20Email-8a2be2)](SPECIFICATION.md#13-messenger-bindings)
@@ -19,7 +19,7 @@ of its own; it inherits the messenger's.
 
 This repository contains
 
-- **[SPECIFICATION.md](SPECIFICATION.md)** — the protocol, TDSP 1.2: the transport
+- **[SPECIFICATION.md](SPECIFICATION.md)** — the protocol, TDSP 1.3: the transport
   contract, the payload frame, document profiles, control state, bootstrap and resync,
   send scheduling, loss detection, invitations, bridges, and the Signal, Matrix and email
   bindings, as numbered requirements with their rationale;

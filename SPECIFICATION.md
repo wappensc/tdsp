@@ -1,6 +1,6 @@
 # TDSP — Together Document Sync Protocol
 
-**Specification · TDSP 1.2 · 12 October 2026**
+**Specification · TDSP 1.3 · 12 October 2026**
 
 ## 1. Introduction
 
@@ -31,7 +31,7 @@ replaceable ([§2.1](#21-layers)).
 
 ### 1.2 Status of this document
 
-This is **TDSP 1.2**. It changes no byte of TDSP 1.0's wire; it states
+This is **TDSP 1.3**. It changes no byte of TDSP 1.0's wire; it states
 requirements more precisely and adds some: for a receiver's robustness, for
 profiles defined outside this specification, for layers beside a document's
 content, and for a participant on several devices.
@@ -608,7 +608,7 @@ Every frame has these three fields:
 | | `stateVector` | Base64 | The requester's state vector |
 | `resync-response` | `respondsTo` | 16 lowercase hex digits | The `requestId` of the request answered |
 | | `update` | Base64 | What the requester lacks |
-| | `control` | object or `null` | The creator's control snapshot, in the layout of [§7.4](#74-the-control-snapshot); from a device answering another device of its own member, its own control state in that layout (RSY-8); `null` otherwise |
+| | `control` | object or `null` | The creator's control snapshot, in the layout of [§7.4](#74-the-control-snapshot), or `null` from a device of the creator that does not know its control state (CTL-19); from a device answering another device of its own member, its own control state in that layout (RSY-8); `null` otherwise |
 | | `attribution` | object or `null` | The responder's attribution overlay, in the layout of [§5.4](#54-attribution-overlay); `null` for none |
 | `control` | `sequence` | uint32, at least 1 | The creator's control sequence ([§7.2](#72-sequence-numbers-and-targets)) |
 | | `action` | `"membership"`, `"close"` or `"policy"` | |
@@ -1164,11 +1164,8 @@ among the members — rejects the whole `resync-response` (FRM-6).
   from a restart stays pending. An engine MUST
   accept restored control state only when it is the creator; a non-creator MUST
   re-learn control state from the creator. A creator whose persisted state is
-  lost restarts from sequence 0, and its next frames are stale or conflicts
-  (CTL-17) wherever the old ones arrived, unless it can read every control frame
-  it sent, from 1 on, and continues after them (CTL-18); this version does not
-  otherwise recover that state, so an application SHOULD tell the person rather
-  than resume silently.
+  lost starts without it, as a new device of the creator does, and issues nothing
+  until it knows its control state again (CTL-19).
   *Rationale:* a creator that restarts at sequence 1 has every frame rejected,
   and one that forgot its grants sends joiners an empty membership map. The
   outbox closes the gap between "the messenger accepted the frame" and "the
@@ -1183,8 +1180,8 @@ among the members — rejects the whole `resync-response` (FRM-6).
   frame of its own (reporting the refusal, not retrying it) when the document is
   closed, when its own permission is explicitly `read`, or — for anyone but the
   creator — before a `resync-response` to one of its own requests has
-  bootstrapped it: the creator's, or one from another device of its own member
-  that carries control state. Once bootstrapped, an *unknown* permission MUST NOT cause a
+  bootstrapped it: one from the creator, or from another device of its own
+  member, that carries control state. Once bootstrapped, an *unknown* permission MUST NOT cause a
   refusal. An application MUST NOT let a person type while its engine would
   refuse the edit.
   *Rationale:* before its bootstrap a joiner has neither the document's content
@@ -1251,6 +1248,30 @@ target, because an invitation also carries a policy with a sequence
   still issue different frames under one number, which receivers report as a
   conflict (CTL-17); this version does not resolve that, and an application
   SHOULD let the person manage a document from one device at a time.
+- **CTL-19** · *engine, application* — An engine of the creator knows its control
+  state once it has created the document, restored persisted control state
+  (CTL-12), adopted a control snapshot from another device of the creator
+  (CTL-11), or counted the creator's control frame numbered 1 as issued (CTL-18).
+  Until then it MUST NOT issue a control frame, and MUST report the refusal rather
+  than retry it; it MUST set `control` to `null` in its answers (RSY-8); its
+  bootstrap (RSY-14) is not complete; and it MUST NOT give its control state to the
+  application to persist. An application MAY tell it to proceed without that
+  knowledge, but only after telling the person that a change made now may
+  conflict with one made on another device (CTL-17); from then on the engine
+  knows its control state as it holds it.
+  *Rationale:* a device that starts without persisted control state — a new
+  device of the creator on a messenger that shows no history, or one whose state
+  was lost — cannot tell a free control number from a taken one, and no other
+  member can tell it, since their answers carry no control state (RSY-8). Issuing
+  would reuse a number: receivers reject the frame as a conflict (CTL-17) while the
+  device keeps what it believes it granted. Answering with its snapshot would hand a
+  joiner an empty membership map, so a member made read-only would edit, and
+  everyone who knows better would refuse what it wrote. Persisted, that state
+  would look restored at the next start. A document whose creator never issued a
+  control frame looks the same to such a device as one whose frames it has not
+  seen, so it waits there too. Proceeding stays possible because the creator's
+  other devices may be gone for good; without it, the document's membership could
+  never change again.
 
 ## 8. Bootstrap and resync
 
@@ -1356,11 +1377,13 @@ and the answer is a targeted diff.
 - **RSY-8** · *engine* — An answer MUST be a `resync-response` whose `respondsTo`
   is the request's `requestId` and whose update is the responder's state since
   the requester's state vector. The creator's answer MUST carry its control
-  snapshot in `control`. A non-creator answering another device of its own member
-  MUST carry its own control state there if it has been bootstrapped and holds
-  every control frame up to the highest it has seen, and MUST set `control` to
-  `null` otherwise; every other non-creator answer MUST set it to `null`. The
-  answer SHOULD carry the responder's attribution overlay.
+  snapshot in `control`, unless the answering device of the creator does not know
+  its control state (CTL-19): then it MUST set `control` to `null`. A non-creator
+  answering another device of its own member MUST carry its own control state
+  there if it has been bootstrapped and holds every control frame up to the
+  highest it has seen, and MUST set `control` to `null` otherwise; every other
+  non-creator answer MUST set it to `null`. The answer SHOULD carry the
+  responder's attribution overlay.
   *Rationale:* `respondsTo` lets the requester tell its own answer from answers to
   others (RSY-13, ATR-1); only the creator can issue control state. A device may
   pass on what it holds to its own member's other device, but only without a

@@ -562,7 +562,7 @@ describe("control frames", () => {
       });
     }
 
-    it("without its persisted control state, a restarted creator's next frame is stale everywhere it cannot read its own earlier frames — the failure this option exists to prevent", async () => {
+    it("without its persisted control state, a restarted creator that cannot read its own earlier frames issues nothing — and told to proceed, its next frame is stale everywhere, the failure this option exists to prevent", async () => {
       const messenger = new NoHistoryMessengerPort();
       const alice = await DocumentEngine.create(
         DOCUMENT_ID,
@@ -586,6 +586,13 @@ describe("control frames", () => {
         undefined,
         AS_ALICE,
       );
+      const sentBefore = (await messenger.inner.receive(DOCUMENT_ID, "x")).length;
+      const refusal = await restarted.setMembership("bob", "read").catch((error: unknown) => error);
+      expect(refusal).toBeInstanceOf(ControlFrameRejectedError);
+      expect((refusal as ControlFrameRejectedError).reason).toBe("control-state-unknown"); // CTL-19
+      expect((await messenger.inner.receive(DOCUMENT_ID, "x")).length).toBe(sentBefore);
+
+      restarted.proceedWithUnknownControlState(); // the person accepted the risk
       await restarted.setMembership("bob", "read"); // issued as 1 again: stale or a conflict
       await bob.sync();
 
@@ -1213,6 +1220,261 @@ describe("control frames", () => {
         } finally {
           vi.useRealTimers();
         }
+      });
+    });
+
+    /**
+     * A device of the creator that starts without persisted control state (CTL-19): a new
+     * device on a messenger that shows no history, or one whose state was lost. It cannot tell
+     * a free control number from a taken one, so it issues nothing, answers without a snapshot,
+     * persists nothing and is not bootstrapped until another device of the creator tells it the
+     * control state, it reads the creator's frames from 1 on, or the person lets it proceed.
+     */
+    describe("a device of the creator without control state", () => {
+      /** Answers go out at once: several devices answer several requests here (RSY-9). */
+      const AS_ALICE_NOW = { ...AS_ALICE, resyncResponseThrottleMs: 0 };
+
+      /** The mock transport; after `cut()` nobody sees any earlier message, as on a messenger without history. */
+      function historyCutPort() {
+        const inner = new InMemoryMessengerPort();
+        let hiddenUpTo = -1;
+        const port: MessengerPort = {
+          createDocument: (d, c) => inner.createDocument(d, c),
+          listChannels: (m) => inner.listChannels(m),
+          transportProfile: () => inner.transportProfile(),
+          send: (d, sender, payload) => inner.send(d, sender, payload),
+          receive: async (d, m) =>
+            (await inner.receive(d, m)).filter((delivery) => Number(delivery.id) > hiddenUpTo),
+        };
+        const sent = async () => inner.receive(DOCUMENT_ID, "x");
+        const cut = async () => {
+          hiddenUpTo = Number((await sent()).at(-1)?.id ?? -1);
+        };
+        return { port, sent, cut };
+      }
+
+      async function settle(...engines: DocumentEngine[]) {
+        for (let round = 0; round < 4; round++) {
+          for (const engine of engines) {
+            await engine.sync();
+            await engine.flush();
+          }
+        }
+      }
+
+      /** Alice's laptop granted bob `write` (1) and carol `read` (2), then went off; the history is gone. */
+      async function laptopGoneOff() {
+        const { port, sent, cut } = historyCutPort();
+        const laptop = await DocumentEngine.create(
+          DOCUMENT_ID,
+          "alice",
+          port,
+          undefined,
+          AS_ALICE_NOW,
+        );
+        await laptop.setMembership("bob", "write"); // 1
+        await laptop.setMembership("carol", "read"); // 2
+        laptop.edit((fragment) => insertPlainText(fragment, 0, "content"));
+        const bobErrors: unknown[] = [];
+        const bob = await DocumentEngine.join(
+          DOCUMENT_ID,
+          "bob",
+          port,
+          (error) => bobErrors.push(error),
+          AS_ALICE_NOW,
+        );
+        await settle(laptop, bob);
+        const laptopState = laptop.controlState;
+        laptop.dispose();
+        await cut();
+        const tabletErrors: unknown[] = [];
+        const tabletStates: PersistedControlState[] = [];
+        const tablet = await DocumentEngine.join(
+          DOCUMENT_ID,
+          "alice",
+          port,
+          (error) => tabletErrors.push(error),
+          {
+            ...AS_ALICE_NOW,
+            onControlStateChange: (state) => tabletStates.push(structuredClone(state)),
+          },
+        );
+        return { port, sent, cut, laptopState, bob, bobErrors, tablet, tabletErrors, tabletStates };
+      }
+
+      it("issues nothing, persists nothing and is not bootstrapped by another member's answer", async () => {
+        const { sent, bob, bobErrors, tablet, tabletStates } = await laptopGoneOff();
+        await settle(tablet, bob); // bob answers with content, and no control state (RSY-8)
+        expect(getPlainText(tablet.fragment)).toBe("content");
+        expect(tablet.controlStateKnown).toBe(false);
+        expect(tablet.hasCompletedBootstrap).toBe(false);
+        expect(tabletStates).toEqual([]);
+
+        const sentBefore = (await sent()).length;
+        const refusal = await tablet
+          .setMembership("dave", "write")
+          .catch((error: unknown) => error);
+        expect(refusal).toBeInstanceOf(ControlFrameRejectedError);
+        expect((refusal as ControlFrameRejectedError).reason).toBe("control-state-unknown");
+        for (const action of [() => tablet.closeDocument(), () => tablet.setSyncPolicy({})]) {
+          const other = await action().catch((error: unknown) => error);
+          expect((other as ControlFrameRejectedError).reason).toBe("control-state-unknown");
+        }
+        expect((await sent()).length).toBe(sentBefore); // no number reused
+        expect(tablet.permissionOf("dave")).toBeUndefined();
+        await settle(tablet, bob);
+        expect(bobErrors).toEqual([]);
+        expect(bob.permissionOf("carol")).toBe("read");
+      });
+
+      it("answers without a snapshot, so neither a joiner nor another such device takes an empty one", async () => {
+        const { port, laptopState, bob, tablet } = await laptopGoneOff();
+        await settle(tablet, bob);
+        const carol = await DocumentEngine.join(
+          DOCUMENT_ID,
+          "carol",
+          port,
+          undefined,
+          AS_ALICE_NOW,
+        );
+        const phone = await DocumentEngine.join(
+          DOCUMENT_ID,
+          "alice",
+          port,
+          undefined,
+          AS_ALICE_NOW,
+        );
+        await settle(tablet, bob, carol, phone);
+        const answers = (await port.receive(DOCUMENT_ID, "x"))
+          .filter((d) => d.sender === "alice")
+          .map((d) => JSON.parse(d.payload))
+          .filter((frame) => frame.kind === "resync-response");
+        expect(answers.length).toBeGreaterThan(0);
+        expect(answers.map((frame) => frame.control)).toEqual(answers.map(() => null));
+        expect(getPlainText(carol.fragment)).toBe("content"); // the content still comes
+        expect(carol.hasCompletedBootstrap).toBe(false);
+        expect(carol.mayEdit).toBe(false); // carol is read-only, which only the laptop knows
+        expect(phone.controlStateKnown).toBe(false);
+
+        // The laptop comes back with its persisted state and answers.
+        const laptop = await DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, {
+          ...AS_ALICE_NOW,
+          controlState: laptopState,
+        });
+        await carol.requestResync();
+        await settle(laptop, carol);
+        expect(carol.hasCompletedBootstrap).toBe(true);
+        expect(carol.permissionOf("carol")).toBe("read");
+        expect(carol.mayEdit).toBe(false);
+      });
+
+      it("learns the control state from another device of the creator, then persists it and issues after it", async () => {
+        const { laptopState, port, cut, bob, bobErrors, tablet, tabletStates } =
+          await laptopGoneOff();
+        await settle(tablet, bob);
+        await cut(); // the laptop does not see the tablet's first request, so it does not answer it
+        const laptop = await DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, {
+          ...AS_ALICE_NOW,
+          controlState: laptopState,
+        });
+        await laptop.setMembership("erin", "read"); // 3, which the tablet sees without 1 and 2
+        await tablet.sync();
+        expect(tablet.controlStateKnown).toBe(false);
+        expect(tabletStates).toEqual([]); // a frame applied, still nothing to persist
+
+        // Restarted, the tablet finds nothing persisted and joins without control state again;
+        // this time the laptop is there to answer.
+        tablet.dispose();
+        const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, {
+          ...AS_ALICE_NOW,
+          onControlStateChange: (state) => tabletStates.push(structuredClone(state)),
+        });
+        await settle(laptop, restarted);
+        expect(restarted.controlStateKnown).toBe(true);
+        expect(restarted.hasCompletedBootstrap).toBe(true);
+        expect(restarted.controlSequence).toBe(3);
+        expect(restarted.permissionOf("carol")).toBe("read");
+        expect(tabletStates.at(-1)?.sequence).toBe(3); // what a restart of the tablet resumes from
+
+        await restarted.setMembership("dave", "write"); // 4
+        await settle(restarted, bob, laptop);
+        expect(bob.permissionOf("dave")).toBe("write");
+        expect(bob.permissionOf("erin")).toBe("read");
+        expect(laptop.controlSequence).toBe(4);
+        expect(bobErrors).toEqual([]);
+      });
+
+      it("completes its bootstrap once it has read the creator's frames from 1, even if the answer came first", async () => {
+        const inner = new InMemoryMessengerPort();
+        let hideControlFromTablet = false;
+        let laptopsLastId = Number.POSITIVE_INFINITY;
+        // Once the laptop is off, the tablet is the only one reading as "alice". It never sees
+        // the laptop's answer to bob, whose snapshot would tell it the control state at once.
+        const hidden = (delivery: Delivery) => {
+          const kind = JSON.parse(delivery.payload).kind;
+          return (
+            (hideControlFromTablet && kind === "control") ||
+            (kind === "resync-response" &&
+              delivery.sender === "alice" &&
+              Number(delivery.id) <= laptopsLastId)
+          );
+        };
+        const port: MessengerPort = {
+          createDocument: (d, c) => inner.createDocument(d, c),
+          listChannels: (m) => inner.listChannels(m),
+          transportProfile: () => inner.transportProfile(),
+          send: (d, sender, payload) => inner.send(d, sender, payload),
+          receive: async (d, m) =>
+            (await inner.receive(d, m)).filter(
+              (delivery) =>
+                !(m === "alice" && laptopsLastId !== Number.POSITIVE_INFINITY && hidden(delivery)),
+            ),
+        };
+        const laptop = await DocumentEngine.create(
+          DOCUMENT_ID,
+          "alice",
+          port,
+          undefined,
+          AS_ALICE_NOW,
+        );
+        await laptop.setMembership("bob", "write"); // 1
+        await laptop.setMembership("carol", "read"); // 2
+        laptop.edit((fragment) => insertPlainText(fragment, 0, "content"));
+        const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE_NOW);
+        await settle(laptop, bob);
+        laptop.dispose();
+        laptopsLastId = Number((await inner.receive(DOCUMENT_ID, "x")).at(-1)?.id);
+
+        hideControlFromTablet = true; // the control frames arrive late
+        const tablet = await DocumentEngine.join(
+          DOCUMENT_ID,
+          "alice",
+          port,
+          undefined,
+          AS_ALICE_NOW,
+        );
+        await settle(tablet, bob);
+        expect(getPlainText(tablet.fragment)).toBe("content"); // bob's answer
+        expect(tablet.hasCompletedBootstrap).toBe(false);
+
+        hideControlFromTablet = false;
+        await tablet.sync();
+        expect(tablet.controlStateKnown).toBe(true);
+        expect(tablet.hasCompletedBootstrap).toBe(true);
+        expect(tablet.controlSequence).toBe(2);
+      });
+
+      it("proceeds when told to, persists from then on, and is bootstrapped by the answer it had", async () => {
+        const { bob, tablet, tabletStates } = await laptopGoneOff();
+        await settle(tablet, bob);
+        tablet.proceedWithUnknownControlState(); // the person accepted that a change may conflict
+        expect(tablet.controlStateKnown).toBe(true);
+        expect(tablet.hasCompletedBootstrap).toBe(true);
+        expect(tabletStates).toHaveLength(1);
+
+        await tablet.setMembership("dave", "write"); // issued as 1: the risk the person accepted
+        expect(tablet.controlSequence).toBe(1);
+        expect(() => bob.proceedWithUnknownControlState()).toThrow(/not the creator/);
       });
     });
 
