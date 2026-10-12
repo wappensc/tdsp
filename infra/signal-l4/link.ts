@@ -26,7 +26,11 @@ export interface LinkIo {
 export interface LinkOptions {
   /** How often the bridge is asked whether the phone has scanned the code. */
   readonly pollMs?: number;
-  /** How long to wait for the scan before giving up. */
+  /**
+   * How long to wait for the scan before giving up. `signal-cli` (0.14.9) keeps a code valid
+   * for two minutes after the bridge asked for it; the default leaves a minute for the device
+   * to register after the scan.
+   */
   readonly timeoutMs?: number;
   /** How long to wait for the account's groups to arrive after the link. */
   readonly groupsTimeoutMs?: number;
@@ -70,7 +74,7 @@ export async function linkSignalBridge(
   io: LinkIo,
   options: LinkOptions = {},
 ): Promise<LinkOutcome> {
-  const { pollMs = 2000, timeoutMs = 10 * 60_000, groupsTimeoutMs = 60_000 } = options;
+  const { pollMs = 2000, timeoutMs = 3 * 60_000, groupsTimeoutMs = 60_000 } = options;
   if (!isLoopbackUrl(url)) {
     throw new Error(
       `${url} is not a loopback address: a bridge on another machine is reached through a tunnel`,
@@ -96,7 +100,7 @@ export async function linkSignalBridge(
       await qrForTerminal(linkingUri),
       `If the code does not fit the terminal, turn the link into a QR code another way:\n${linkingUri}`,
       "",
-      "Waiting for the scan …",
+      "Scan it within two minutes; after that the code is no longer valid. Waiting for the scan …",
     ].join("\n"),
   );
 
