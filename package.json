@@ -1,6 +1,6 @@
 {
   "name": "tdsp",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "description": "TDSP, the Together Document Sync Protocol: a specification and reference implementation for end-to-end encrypted collaborative documents carried over existing messengers.",
   "license": "MIT",

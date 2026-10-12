@@ -14,6 +14,12 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
 
 ## Unreleased
 
+Nothing yet.
+
+## v1.4.0 — 2026-10-13 · implements TDSP 1.3
+
+No byte on the wire changes from v1.3.0.
+
 ### Specification: TDSP 1.3
 
 No byte on the wire changes; the new requirement is why this is a minor version.
