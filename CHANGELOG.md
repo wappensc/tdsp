@@ -50,6 +50,10 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
 
 - A Signal bridge now delivers what its account sends from another linked device; before, it
   dropped those messages (SIG-3; #31).
+- A Signal bridge reports a finished device link at once; before, it stayed `linked: false`
+  until restarted, because `signal-cli` 0.14.9 never answers `finishLink` in daemon mode. Log
+  event `device-linked`. `pnpm run signal:link` says a code is valid for two minutes, not ten
+  (#48).
 - A device no longer waits for the creator when another device of its own member is online:
   that device brings it up to date, control state included (#31).
 - A device of the creator no longer blocks for good after another device of the creator

@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Logger } from "@tdsp/bridge-log";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type RpcCaller, SignalAuth } from "./auth.ts";
 
@@ -19,14 +20,25 @@ import { type RpcCaller, SignalAuth } from "./auth.ts";
  */
 class FakeDaemon implements RpcCaller {
   syncRequestsFor: string[] = [];
-  finishLinkResult: readonly Record<string, unknown>[] | Error = [];
+  /** `"never"`: signal-cli 0.14.9's daemon, which completes the link but never answers. */
+  finishLinkResult: Record<string, unknown> | Error | "never" = {};
+  /** What `listAccounts` answers: the accounts the daemon has loaded. */
+  accounts: readonly { number: string; aci: string }[] = [];
+  listAccountsCalls = 0;
 
   async callRpc<T>(method: string, params?: Record<string, unknown>): Promise<T> {
     if (method === "finishLink") {
+      if (this.finishLinkResult === "never") {
+        return new Promise<T>(() => {});
+      }
       if (this.finishLinkResult instanceof Error) {
         throw this.finishLinkResult;
       }
       return this.finishLinkResult as T;
+    }
+    if (method === "listAccounts") {
+      this.listAccountsCalls += 1;
+      return this.accounts as T;
     }
     if (method === "sendSyncRequest") {
       this.syncRequestsFor.push((params as { account: string }).account);
@@ -79,34 +91,75 @@ describe("SignalAuth.initialize", () => {
   });
 });
 
+const quiet: Logger = {
+  debug() {},
+  info() {},
+  warn() {},
+  error() {},
+  child: () => quiet,
+};
+const fast = { linkPollMs: 5, linkWatchMs: 500 };
+const until = async (condition: () => boolean, timeoutMs = 1000): Promise<void> => {
+  const started = Date.now();
+  while (!condition() && Date.now() - started < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+};
+
 describe("SignalAuth.link", () => {
-  it("returns the linking URI immediately, before accounts.json exists", async () => {
-    const auth = new SignalAuth(new FakeDaemon(), dataDir);
+  it("returns the linking URI immediately, before any account is there", async () => {
+    const auth = new SignalAuth(new FakeDaemon(), dataDir, quiet, fast);
     const result = await auth.link();
     expect(result).toEqual({ linkingUri: "sgnl://linkdevice?uuid=x&pub_key=y" });
     expect(auth.status).toEqual({ linked: false });
   });
 
-  it("resolves status from accounts.json once finishLink settles, and calls sendSyncRequest", async () => {
+  it("is linked once signal-cli lists the account, although finishLink never answers", async () => {
     const daemon = new FakeDaemon();
-    const auth = new SignalAuth(daemon, dataDir);
-    // Simulates signal-cli writing accounts.json as part of completing
-    // the link, before finishLink's own JSON-RPC response returns.
-    writeAccountsJson("+15551234567", "uuid-1");
+    daemon.finishLinkResult = "never";
+    const auth = new SignalAuth(daemon, dataDir, quiet, fast);
     await auth.link();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await until(() => daemon.listAccountsCalls >= 2);
+    expect(auth.status).toEqual({ linked: false });
+    daemon.accounts = [{ number: "+15551234567", aci: "uuid-1" }];
+    await until(() => auth.status.linked);
     expect(auth.status).toEqual({ linked: true, accountId: "uuid-1" });
+    expect(auth.phoneNumber).toBe("+15551234567");
     expect(daemon.syncRequestsFor).toEqual(["+15551234567"]);
   });
 
-  it("logs rather than throws if finishLink itself fails", async () => {
+  it("takes the account once when finishLink answers too, and stops asking", async () => {
+    const daemon = new FakeDaemon();
+    daemon.accounts = [{ number: "+15551234567", aci: "uuid-1" }];
+    const auth = new SignalAuth(daemon, dataDir, quiet, fast);
+    await auth.link();
+    await until(() => auth.status.linked);
+    const calls = daemon.listAccountsCalls;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(auth.status).toEqual({ linked: true, accountId: "uuid-1" });
+    expect(daemon.syncRequestsFor).toEqual(["+15551234567"]);
+    expect(daemon.listAccountsCalls).toBe(calls);
+  });
+
+  it("stays unlinked and stops asking when finishLink fails", async () => {
     const daemon = new FakeDaemon();
     daemon.finishLinkResult = new Error("provisioning session expired");
-    const auth = new SignalAuth(daemon, dataDir);
+    const auth = new SignalAuth(daemon, dataDir, quiet, fast);
     await auth.link();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(auth.status).toEqual({ linked: false });
+    expect(daemon.listAccountsCalls).toBeLessThanOrEqual(1);
+  });
+
+  it("gives up watching when no account appears in time", async () => {
+    const daemon = new FakeDaemon();
+    daemon.finishLinkResult = "never";
+    const auth = new SignalAuth(daemon, dataDir, quiet, { linkPollMs: 5, linkWatchMs: 40 });
+    await auth.link();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const calls = daemon.listAccountsCalls;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(auth.status).toEqual({ linked: false });
+    expect(daemon.listAccountsCalls).toBe(calls);
   });
 });

@@ -142,8 +142,9 @@ script can do for you.
    [infra/signal-l4/link.ts](../infra/signal-l4/link.ts) asks the bridge for a device
    link and draws it as a QR code in the terminal. On the phone of the account this
    bridge is to use, open the Signal app → **Settings → Linked devices → Link new
-   device** and scan the code. The command waits (up to ten minutes; run it again for a
-   fresh code), reports the account the bridge now acts as, and lists the Signal groups
+   device** and scan the code within two minutes: `signal-cli` keeps a code valid no longer.
+   The command waits three minutes at most (run it again for a fresh code), reports the
+   account the bridge now acts as, and lists the Signal groups
    the account can see — a freshly linked device learns them from the phone within a few
    seconds. Repeat with `http://127.0.0.1:8797` and the **other** account's phone.
 
