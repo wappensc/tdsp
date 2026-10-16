@@ -30,7 +30,7 @@ would undermine exactly that.
 | --- | --- |
 | `packages/reconciliation`, `packages/document-protocol`, `packages/messenger-port`, `packages/messenger-mock` | **No network primitive at all.** These have no reason to touch the network in any form; a grant for one of them is refused. |
 | `packages/messenger-signal`, `packages/messenger-matrix`, `packages/messenger-email` | **Loopback destinations only** — the local bridge. Each adapter refuses a bridge URL that is not a loopback address. |
-| `tools/`, `infra/` | **Loopback only.** Test tooling talks to the local test servers and to local bridges; never to a real messenger. |
+| `tools/`, `infra/` | **Loopback only.** Test tooling talks to the local test servers and to local bridges; never to a real messenger. The test servers' containers publish their ports on 127.0.0.1 only — a Compose port mapping without a host address would listen on every interface of the host — and `tools/test-servers-loopback.security.test.ts` holds every Compose file of the repository to that. |
 
 **Zone B — bridge processes** (`bridges/*`). A bridge may reach **exactly one configured
 messenger endpoint**, and accept connections on its own loopback listener.

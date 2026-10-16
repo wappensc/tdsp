@@ -14,10 +14,12 @@ services:
     image: greenmail/standalone@sha256:1ef95a966418cd09b7ea91d504d8c0826bbe7a2f6e679a75c601a831587c1626
     container_name: tdsp-email-testserver
     restart: unless-stopped
+    # On 127.0.0.1 only: without a host address Docker listens on every interface of the host,
+    # and Greenmail accepts any login.
     ports:
-      - "13025:3025" # SMTP — infra/email-testserver/config.ts's SMTP_PORT
-      - "13143:3143" # IMAP — infra/email-testserver/config.ts's IMAP_PORT
-      - "18080:8080" # Greenmail's own REST/Swagger admin server — used here only as a liveness signal (health.ts)
+      - "127.0.0.1:13025:3025" # SMTP — infra/email-testserver/config.ts's SMTP_PORT
+      - "127.0.0.1:13143:3143" # IMAP — infra/email-testserver/config.ts's IMAP_PORT
+      - "127.0.0.1:18080:8080" # Greenmail's own REST/Swagger admin server — used here only as a liveness signal (health.ts)
     environment:
       GREENMAIL_OPTS: >-
         -Dgreenmail.setup.test.smtp
