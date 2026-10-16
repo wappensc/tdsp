@@ -9,7 +9,8 @@ services:
     image: matrixdotorg/synapse:v1.159.0
     container_name: tdsp-matrix-testserver
     restart: unless-stopped
+    # On 127.0.0.1 only: without a host address Docker listens on every interface of the host.
     ports:
-      - "18008:8008"
+      - "127.0.0.1:18008:8008"
     volumes:
       - ./credentials:/data

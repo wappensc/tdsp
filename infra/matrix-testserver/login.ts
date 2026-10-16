@@ -1,5 +1,5 @@
 /**
- * network-policy: loopback — Zone A (docs/network-policy.md). Test infrastructure: logs a test account into the local Synapse container on localhost:18008.
+ * network-policy: loopback — Zone A (docs/network-policy.md). Test infrastructure: logs a test account into the local Synapse container on 127.0.0.1:18008.
  */
 import { BASE_URL } from "./config.ts";
 

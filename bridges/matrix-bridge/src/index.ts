@@ -15,7 +15,7 @@ const log = loggerFromEnv("matrix-bridge");
 // never coupled to a browser application at build time. Only
 // ever talks to the browser over localhost HTTP at runtime.
 const port = Number(process.env.PORT ?? 8788);
-const homeserverUrl = process.env.MATRIX_HOMESERVER_URL ?? "http://localhost:18008";
+const homeserverUrl = process.env.MATRIX_HOMESERVER_URL ?? "http://127.0.0.1:18008";
 const accessToken = process.env.MATRIX_ACCESS_TOKEN;
 const bindStorePath = process.env.MATRIX_BIND_STORE_PATH ?? "./credentials/tdsp-channels.json";
 

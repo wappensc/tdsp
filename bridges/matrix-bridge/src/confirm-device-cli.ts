@@ -92,7 +92,7 @@ async function main(): Promise<void> {
       "MATRIX_ACCESS_TOKEN is not configured: run this with the bridge's environment",
     );
   }
-  const homeserverUrl = process.env.MATRIX_HOMESERVER_URL ?? "http://localhost:18008";
+  const homeserverUrl = process.env.MATRIX_HOMESERVER_URL ?? "http://127.0.0.1:18008";
   const origin = bridgeUrl(process.argv[2]);
   const device = await ownDevice(origin);
   console.log(`Confirming device ${device.deviceId} of the bridge at ${origin}.`);

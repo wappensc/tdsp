@@ -1,5 +1,5 @@
 /**
- * network-policy: loopback — Zone A (docs/network-policy.md). Test infrastructure: polls the local Synapse container's /health on localhost:18008.
+ * network-policy: loopback — Zone A (docs/network-policy.md). Test infrastructure: polls the local Synapse container's /health on 127.0.0.1:18008.
  */
 import { HEALTH_URL } from "./config.ts";
 
