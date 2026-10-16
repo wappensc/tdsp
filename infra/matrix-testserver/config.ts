@@ -20,7 +20,8 @@ export const SERVER_NAME = "tdsp.test";
 /** Host-side port `docker-compose.yml` publishes Synapse's client API on. */
 export const HOST_PORT = 18008;
 
-export const BASE_URL = `http://localhost:${HOST_PORT}`;
+/** IPv4 loopback, where `docker-compose.yml` publishes the port; `localhost` may resolve to `::1` first. */
+export const BASE_URL = `http://127.0.0.1:${HOST_PORT}`;
 
 export const HEALTH_URL = `${BASE_URL}/health`;
 

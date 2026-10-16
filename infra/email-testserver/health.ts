@@ -1,7 +1,7 @@
 /**
  * network-policy: loopback — Zone A (docs/network-policy.md). Test infrastructure: polls
  * the local Greenmail container's own REST/Swagger admin server on
- * localhost:18080.
+ * 127.0.0.1:18080.
  */
 import { HEALTH_URL } from "./config.ts";
 
