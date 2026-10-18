@@ -92,12 +92,12 @@ version (`wire/frames-v2.json`) and leaves the old one as it was.
 
 ### A Dependabot pull request
 
-Dependabot proposes new versions of the workflows' actions (`.github/dependabot.yml`) and
-assigns each pull request to a developer. It touches `.github/`, so it waits for
-`@wappensc/ci` like any change to the checks. The developer it is assigned to:
+Dependabot proposes new versions of the workflows' actions, all of them in one pull request
+(`.github/dependabot.yml`), and assigns it to a developer. It touches `.github/`, so it waits
+for `@wappensc/ci` like any change to the checks. The developer it is assigned to:
 
-1. reads the release notes of every version the update skips, and writes what changed into
-   a comment on the pull request: breaking changes, and defaults that are now different —
+1. reads the release notes of every version each update in it skips, and writes what changed
+   into a comment on the pull request: breaking changes, and defaults that are now different —
    in particular how the action handles the token and credentials, what it caches, and what
    it downloads or runs;
 2. makes the adjustments the workflows need, in the same pull request;
