@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -49,6 +49,28 @@ describe("the CI workflow cannot be sidestepped from outside the CI role's files
     expect(workflow).toContain("bash .github/scripts/repo-settings-collect.sh");
     expect(workflow).toContain("tools/repo-settings-cli.ts repository-settings.collected.json");
     expect(workflow).not.toContain("continue-on-error");
+  });
+
+  it("pins every action to a commit, not to a tag that can be moved", () => {
+    const workflows = readdirSync(`${repoRoot}/.github/workflows`).filter((f) =>
+      /\.ya?ml$/.test(f),
+    );
+    expect(workflows.length).toBeGreaterThan(1);
+    for (const file of workflows) {
+      const uses = read(`.github/workflows/${file}`)
+        .split("\n")
+        .filter((line) => /^\s+(- )?uses:/.test(line));
+      expect(uses.length, file).toBeGreaterThan(0);
+      for (const line of uses) {
+        expect(line, file).toMatch(/uses: [\w.-]+\/[\w./-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/);
+      }
+    }
+  });
+
+  it("has Dependabot propose new versions of the pinned actions", () => {
+    const config = read(".github/dependabot.yml");
+    expect(config).toContain("package-ecosystem: github-actions");
+    expect(config).toMatch(/directory: \/\n/);
   });
 
   it("makes no job advisory", () => {
