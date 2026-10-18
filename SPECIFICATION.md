@@ -1,6 +1,6 @@
 # TDSP — Together Document Sync Protocol
 
-**Specification · TDSP 1.3 · 12 October 2026**
+**Specification · TDSP 1.4 · 18 October 2026**
 
 ## 1. Introduction
 
@@ -31,10 +31,11 @@ replaceable ([§2.1](#21-layers)).
 
 ### 1.2 Status of this document
 
-This is **TDSP 1.3**. It changes no byte of TDSP 1.0's wire; it states
+This is **TDSP 1.4**. It changes no byte of TDSP 1.0's wire; it states
 requirements more precisely and adds some: for a receiver's robustness, for
 profiles defined outside this specification, for layers beside a document's
-content, and for a participant on several devices.
+content, for a participant on several devices, and for an application that lets
+a person type while its engine would refuse the edit.
 A later version changes the wire only as
 [§14](#14-versioning-and-extensibility) describes.
 
@@ -939,8 +940,10 @@ bootstraps ([§8](#8-bootstrap-and-resync)).
 An application may also persist a document's content and show it at once after a
 restart; TDSP requires only the creator's control state to be persisted (CTL-12).
 The restarted engine still sends a resync request when it joins (RSY-1), a
-non-creator still edits only after its bootstrap (CTL-13), and persisted content
-can hold changes that never reached anyone else (SND-8).
+non-creator still edits only after its bootstrap — until then its application
+prevents typing, or holds what the person types outside the engine's document
+(CTL-13) — and persisted content can hold changes that never reached anyone else
+(SND-8).
 
 ### 6.4 Closing a document
 
@@ -1182,19 +1185,45 @@ among the members — rejects the whole `resync-response` (FRM-6).
   creator — before a `resync-response` to one of its own requests has
   bootstrapped it: one from the creator, or from another device of its own
   member, that carries control state. Once bootstrapped, an *unknown* permission MUST NOT cause a
-  refusal. An application MUST NOT let a person type while its engine would
-  refuse the edit.
+  refusal. While its engine would refuse the edit, an application MUST either
+  prevent the person from typing or **hold** every change the person makes
+  meanwhile outside the engine's document. An application that holds changes:
+  1. MUST show the person that held changes are not merged yet, and where they
+     are;
+  2. MUST NOT apply a held change to the engine's document while the engine
+     would refuse the edit, and MUST apply it, as a new local edit, once the
+     engine would no longer refuse it;
+  3. SHOULD let the person keep held changes outside the document, as a copy for
+     instance, or discard them, while the engine refuses because the document is
+     closed or the person's own permission is `read`;
+  4. SHOULD tell the person when a held change did not survive the merge;
+  5. SHOULD persist held changes locally across a restart.
+
   *Rationale:* before its bootstrap a joiner has neither the document's content
   nor its control state: an edit would compete with content it cannot see, and it
-  may come from someone the creator has made read-only. Waiting costs nothing,
-  because only the creator can bootstrap a joiner anyway ([§8.3](#83-who-answers))
-  — with the creator offline, a joiner has nothing to edit. After the bootstrap,
-  refusing on an unknown permission would lock out everyone the creator has not
-  named yet, while channel membership already decides who can post. A refused
-  edit stays in the local copy and every later local change builds on it, so the
-  refusal alone would fork the person's copy for good; the application has to
-  prevent the typing. After a restart a non-creator re-learns its control state
-  from the creator (CTL-12) and is bootstrapped again before it edits.
+  may come from someone the creator has made read-only. For a first join waiting
+  costs nothing: only the creator, or another device of the joiner's own member,
+  can bootstrap it ([§8.3](#83-who-answers)), and with neither online the joiner
+  has nothing to edit. A member that resumes content its application persisted
+  ([§6.3](#63-joining-a-document)) does have something to edit, while the
+  creator may be offline for hours; holding lets the person go on meanwhile.
+  After the bootstrap, refusing on an unknown permission would lock out everyone
+  the creator has not named yet, while channel membership already decides who
+  can post. A change the engine refuses stays in its document, so the
+  application has to keep it out of there. Every later local change builds on
+  it, which alone would fork the person's copy for good; and everything in that
+  document can leave the device — not only in the engine's own edits but in its
+  answers to resync requests, which carry the responder's state since the
+  requester's (RSY-8), whatever the responder's own permission (RSY-10) and even
+  before its own bootstrap: a non-creator answers the creator's requests, and a
+  creator that restarts sends one (RSY-1, RSY-6). Holding keeps what preventing
+  protects: a held change reaches others only after the bootstrap, merged by the
+  CRDT like any concurrent edit, so it never competes with content the person
+  cannot see, and a reader's change, or one made after a close, never leaves the
+  device. Its cost is that of offline editing: the longer a change is held, the
+  likelier it lands in content others deleted meanwhile, where the CRDT drops
+  it. After a restart a non-creator re-learns its control state from the creator
+  (CTL-12) and is bootstrapped again before it edits.
 
 ### 7.5 The policy action
 
@@ -1412,7 +1441,9 @@ and the answer is a targeted diff.
   is closed or because the responder's own permission is `read`.
   *Rationale:* a closed document must still bootstrap a joiner (LIF-6); the creator
   is never read-only, and a peer answering the creator is restoring the creator's
-  own content.
+  own content — as long as the peer's application keeps every change its engine
+  refuses out of the engine's document (CTL-13), since the answer carries
+  everything in it.
 - **RSY-11** · *engine* — A resync answer MUST go through the send scheduler and wait
   for the floor like every other message (SND-2). A responder SHOULD NOT stop
   processing deliveries while its answer waits.
@@ -2488,10 +2519,10 @@ it is only *worth using* with it.
 
 | Concern | Mechanism | Worth |
 |---|---|---|
-| Permissions | The creator grants and revokes; each engine refuses to send an edit before its bootstrap, while its own permission is `read`, and once the document is closed — not when its permission is merely unknown after the bootstrap (CTL-13) | Among cooperating engines only; receivers do not reject an edit for its sender's permission (CTL-7) |
+| Permissions | The creator grants and revokes; each engine refuses to send an edit before its bootstrap, while its own permission is `read`, and once the document is closed — not when its permission is merely unknown after the bootstrap (CTL-13) | Among cooperating engines only, and only while their applications keep what the engine refuses out of the engine's document, which a resync answer carries whole (CTL-13, RSY-10); receivers do not reject an edit for its sender's permission (CTL-7) |
 | Creator identity | Fixed; control frames and snapshots only from it (CTL-5, CTL-11) | Exactly as strong as the messenger's sender authentication |
 | Replay of control frames | Per-target sequence numbers (CTL-5) | A replayed frame is inert |
-| Close | Cooperating engines stop sending edits of their own; edits sent before the close still arrive and apply (LIF-6) | Among cooperating engines only — a modified engine can keep sending edits, which genuine engines apply, exactly as with `read` (CTL-7) |
+| Close | Cooperating engines stop sending edits of their own; edits sent before the close still arrive and apply (LIF-6) | Among cooperating engines only, and only while their applications keep a change made after the close out of the engine's document (CTL-13) — a modified engine can keep sending edits, which genuine engines apply, exactly as with `read` (CTL-7) |
 | Convergence | The CRDT | Unconditional, given the same set of updates — not given a lost one |
 | Message immutability | Bridges refuse and record edits and withdrawals (BRG-12) | Where the messenger reveals them |
 | No external connection | ARC-2, BRG-4 | As strong as its enforcement; see below |
@@ -2745,7 +2776,17 @@ frame as a JSON string:
 5. Show send status and loss evidence; show an error only for a dropped change,
    and show undistributed changes (SND-8) until a resync has gone out — never
    "synchronised" meanwhile.
-6. Say, per messenger, what the channel does and does not protect — and never
+6. While the engine would refuse an edit — before the bootstrap, while the
+   person's permission is `read`, after a close — prevent typing, or hold what
+   the person types outside the engine's document (CTL-13). One way to hold: keep
+   a second replica that applies every update the engine's document applies, let
+   the person edit that replica, and once the engine may edit, apply the
+   replica's update since the engine's state vector to the engine's document as a
+   local edit. The CRDT merges it with whatever arrived meanwhile; a text
+   difference computed against an earlier state would instead undo or misplace
+   what arrived since. The application knows what it held, so afterwards it can
+   check whether that text is still there.
+7. Say, per messenger, what the channel does and does not protect — and never
    present attribution as authentication.
 
 ## Appendix F. Reference implementation
