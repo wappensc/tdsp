@@ -6,7 +6,7 @@ time, in the manner of RFC 7942. It is not part of the protocol: the protocol is
 tests in this repository; what it says is not verified is a known gap, not an oversight
 waiting to be found.
 
-**Status as of TDSP 1.3 (12 October 2026).**
+**Status as of TDSP 1.4 (18 October 2026).**
 
 ## How it is verified
 
@@ -67,6 +67,7 @@ the specification says, not that two implementations interoperate.
 | CTL-19 (a creator's device without control state) | A device of the creator that joined without persisted control state issues no control frame (`control-state-unknown`), answers with `control: null`, hands nothing to `onControlStateChange` and is not bootstrapped by another member's answer — also while it applies a frame it holds without those before it; a joiner it answers is not bootstrapped either. It learns the control state from another device's snapshot, or by reading the creator's frames from 1 on, which completes a bootstrap whose answer came first; told to proceed, it issues and persists. Tested at L0, with a transport that shows no history and one that delays control frames |
 | SND-8, restored content | `join()` can start from persisted content (`restore`): shown at once, not sent as a local edit, counted as undistributed until the engine has sent the whole state once it may edit — at once for the creator, after the bootstrap for anyone else, never while read-only; a change that never left before the restart arrives that way. Tested against the in-memory transport |
 | INV-8 (application) | `invitationFromUrl` reads an invitation from a whole link as INV-8 says — the fragment when it carries `tdsp`, the query otherwise, never the two combined; tested at L0. Whether an application reads links through it is the application's part |
+| CTL-13, RSY-8, RSY-10 (application: changes the engine refuses) | Typed into the engine's document while the engine refuses it, a change leaves the device in the engine's answer to a creator that restarts: a reader's, one made after a close, and one of a member the creator made read-only, before that member's bootstrap. Held outside the engine's document — in a second replica that follows the engine — none of them reaches anyone, and a writer's held change, applied once its engine may edit, reaches the creator merged with the creator's concurrent edit and attributed to the writer. Tested at L0 against the in-memory transport, holding as an application would; whether an application holds or prevents typing is its part, and this repository contains no application |
 | CTL-12, SND-8 (application) | The engine sends no control frame the application could not persist, keeps a control frame whose send failed for now pending and retries it — after a restart too, and without waiting for the creator's next action — and marks changes it could not distribute until a resync; all tested against the in-memory transport. Keeping either across a restart is the application's part, and this repository contains no application |
 
 ## Known gaps

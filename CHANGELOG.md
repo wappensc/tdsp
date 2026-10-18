@@ -14,7 +14,19 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
 
 ## Unreleased
 
-Nothing yet.
+No byte on the wire changes from v1.4.0.
+
+### Specification: TDSP 1.4
+
+No byte on the wire changes; the new requirements are why this is a minor version.
+
+- CTL-13: while its engine would refuse an edit — before the bootstrap, while the person may
+  only read, after a close — an application may hold what the person types outside the
+  engine's document instead of preventing the typing. It shows held changes as not merged
+  yet, and applies them as a new local edit once the engine may edit, never before. A change
+  typed into the engine's document instead can leave the device in the engine's answer to a
+  resync request (RSY-8, RSY-10): a reader's reaches a creator that restarts, and so does a
+  change made after a close. The rationales of CTL-13 and RSY-10, and §15.3, now say so (#68).
 
 ## v1.4.0 — 2026-10-13 · implements TDSP 1.3
 
