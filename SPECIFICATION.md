@@ -1865,6 +1865,14 @@ another's invitations. The query is
 | `profile` | profile | yes | a profile id ([§5](#5-document-profiles)) |
 | `policy` | policy text | no | §11.2 |
 
+This specification, in this version and every later one, defines parameter names
+without a `.` only. A parameter whose name contains a `.` therefore never
+collides with one it defines: an application that names its own parameters that
+way, under a domain its author controls (`com.example.title`), keeps them apart
+from every later addition, as a profile or layer id from outside this
+specification is kept apart ([§5.5](#55-profiles-defined-outside-this-specification),
+[§5.6](#56-layers)).
+
 - **INV-6** · *application* — A reader MUST refuse an invitation in which a
   parameter of the table above appears more than once, a required one is missing
   or empty, or a value is outside its range; MUST ignore a `policy` that does not

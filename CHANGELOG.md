@@ -27,6 +27,11 @@ No byte on the wire changes; the new requirements are why this is a minor versio
   typed into the engine's document instead can leave the device in the engine's answer to a
   resync request (RSY-8, RSY-10): a reader's reaches a creator that restarts, and so does a
   change made after a close. The rationales of CTL-13 and RSY-10, and §15.3, now say so (#68).
+- §11.3: this specification, in this version and every later one, defines invitation
+  parameter names without a `.` only, so an application's own parameter whose name contains
+  one, under a domain its author controls (`com.example.title`), never collides with a
+  parameter a later version adds. A promise of the specification, not a requirement on
+  applications (#68).
 
 ## v1.4.0 — 2026-10-13 · implements TDSP 1.3
 
