@@ -105,6 +105,9 @@ describe("the CI workflow cannot be sidestepped from outside the CI role's files
     const config = read(".github/dependabot.yml");
     expect(config).toContain("package-ecosystem: github-actions");
     expect(config).toMatch(/directory: \/\n/);
+    expect(config, "the developer takes over its pull requests").toMatch(
+      /assignees:\n\s+- wappensc-developer\n/,
+    );
   });
 
   it("makes no job advisory", () => {
