@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -53,6 +53,18 @@ describe("the CI workflow cannot be sidestepped from outside the CI role's files
 
   it("makes no job advisory", () => {
     expect(read(".github/workflows/ci.yml")).not.toContain("continue-on-error");
+  });
+
+  it("gives every workflow a read-only token, whatever the repository's default", () => {
+    const workflows = readdirSync(`${repoRoot}/.github/workflows`).filter((f) =>
+      /\.ya?ml$/.test(f),
+    );
+    expect(workflows.length).toBeGreaterThan(1);
+    for (const file of workflows) {
+      const workflow = read(`.github/workflows/${file}`);
+      expect(workflow, file).toMatch(/^permissions:\n {2}contents: read\n/m);
+      expect(workflow, `${file} must not widen the token`).not.toMatch(/: write\b/);
+    }
   });
 });
 

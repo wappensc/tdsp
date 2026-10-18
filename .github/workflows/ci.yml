@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# Read-only whatever the repository's default is: no step writes to GitHub, and the default
+# itself is visible only to the full check by hand (docs/repository-settings.md).
+permissions:
+  contents: read
+
 jobs:
   ci:
     runs-on: ubuntu-latest
