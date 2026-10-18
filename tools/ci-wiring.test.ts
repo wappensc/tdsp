@@ -108,6 +108,9 @@ describe("the CI workflow cannot be sidestepped from outside the CI role's files
     expect(config, "the developer takes over its pull requests").toMatch(
       /assignees:\n\s+- wappensc-developer\n/,
     );
+    expect(config, "one pull request for all of them").toMatch(
+      /groups:\n\s+[\w-]+:\n\s+patterns:\n\s+- "\*"\n/,
+    );
   });
 
   it("makes no job advisory", () => {

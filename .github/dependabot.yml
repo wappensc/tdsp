@@ -1,6 +1,6 @@
 # The workflows' actions are pinned to commit SHAs (a tag can be moved to other code;
-# tools/ci-wiring.test.ts asserts the pins). Dependabot proposes new versions as pull
-# requests, which touch .github/ and therefore wait for @wappensc/ci (.github/CODEOWNERS).
+# tools/ci-wiring.test.ts asserts the pins). Dependabot proposes new versions in a pull
+# request, which touches .github/ and therefore waits for @wappensc/ci (.github/CODEOWNERS).
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -11,6 +11,13 @@ updates:
     # and withdrawn within days.
     cooldown:
       default-days: 14
+    # Every action with a new version in one pull request. The updates change neighbouring
+    # lines, so separate pull requests conflict: each merge has Dependabot rebase the others,
+    # and the rebase dismisses the approval they already had.
+    groups:
+      actions:
+        patterns:
+          - "*"
     commit-message:
       prefix: ci
     # Assigned to the developer, who assesses each update before @wappensc/ci reviews it
