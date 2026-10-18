@@ -138,9 +138,9 @@ jobs:
       # Everything that legitimately needs the network happens before the block goes up.
       # Without lifecycle scripts: a package.json's preinstall, postinstall or prepare is a
       # developer's and would run here with the runner's sudo. The one native module the
-      # suite needs is built by name.
+      # suite needs is built by name, in the workspace package that depends on it (--recursive).
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm rebuild @matrix-org/matrix-sdk-crypto-nodejs
+      - run: pnpm rebuild --recursive @matrix-org/matrix-sdk-crypto-nodejs
 
       - name: Start local Synapse test homeserver
         run: |

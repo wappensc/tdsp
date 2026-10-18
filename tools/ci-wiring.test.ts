@@ -40,7 +40,7 @@ describe("the CI workflow cannot be sidestepped from outside the CI role's files
     }
     for (const line of lines) {
       expect(line, "a step must not go through a package.json script").not.toMatch(
-        /pnpm run|npm run|pnpm (?!exec|install|rebuild @)\w/,
+        /pnpm run|npm run|pnpm (?!exec|install|rebuild (--recursive )?@)\w/,
       );
     }
   });
@@ -58,7 +58,7 @@ describe("the CI workflow cannot be sidestepped from outside the CI role's files
     expect(installs[0]).toContain("--ignore-scripts");
     // Only a named dependency may be built; a bare `pnpm rebuild` would build them all.
     for (const line of before.filter((l) => /\bpnpm rebuild\b/.test(l))) {
-      expect(line).toMatch(/pnpm rebuild @[\w.-]+\/[\w.-]+$/);
+      expect(line).toMatch(/pnpm rebuild (--recursive )?@[\w.-]+\/[\w.-]+$/);
     }
   });
 
