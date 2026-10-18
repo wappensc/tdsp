@@ -1,0 +1,15 @@
+# The workflows' actions are pinned to commit SHAs (a tag can be moved to other code;
+# tools/ci-wiring.test.ts asserts the pins). Dependabot proposes new versions as pull
+# requests, which touch .github/ and therefore wait for @wappensc/ci (.github/CODEOWNERS).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # A release younger than two weeks is not proposed: a compromised one is usually found
+    # and withdrawn within days.
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: ci
