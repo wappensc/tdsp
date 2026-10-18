@@ -47,6 +47,9 @@ Keep metadata accurate when the document changes.
   needs. Only the CI role accepts it, with `pnpm run wire:lock -- --accept <kind>`.
 - A license outside `license-policy.json` needs the CI role's approval of that one package.
   Never change the policy to make the check pass.
+- A Dependabot pull request assigned to you is yours to assess before `@wappensc/ci`
+  reviews it: CONTRIBUTING.md, "A Dependabot pull request". Never change the pin format,
+  the cooldown or `.github/dependabot.yml` to make an update go through.
 - A security test (`*.security.test.ts`) depends only on the code it tests and on helpers
   inside its own file.
 - After a merge, check the CI runs on `main`, the Repository settings workflow included.

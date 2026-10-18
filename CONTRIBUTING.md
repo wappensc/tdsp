@@ -90,6 +90,22 @@ the specification's version (its header line) does not match the kind. Within a 
 a frozen entry is never changed: an incompatible change adds a new file for the new
 version (`wire/frames-v2.json`) and leaves the old one as it was.
 
+### A Dependabot pull request
+
+Dependabot proposes new versions of the workflows' actions (`.github/dependabot.yml`) and
+assigns each pull request to a developer. It touches `.github/`, so it waits for
+`@wappensc/ci` like any change to the checks. The developer it is assigned to:
+
+1. reads the release notes of every version the update skips, and writes what changed into
+   a comment on the pull request: breaking changes, and defaults that are now different —
+   in particular how the action handles the token and credentials, what it caches, and what
+   it downloads or runs;
+2. makes the adjustments the workflows need, in the same pull request;
+3. recommends merging, adjusting or closing it, and mentions `@wappensc/ci` in that comment.
+
+The mention is the CI role's signal that the assessment is done. The CI role checks the
+security-relevant points itself, then approves or rejects.
+
 ## The specification and the implementation
 
 [SPECIFICATION.md](SPECIFICATION.md) is normative; the code follows it. A change to the
