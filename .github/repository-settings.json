@@ -19,14 +19,14 @@
   },
   "teams": {
     "admins": { "id": 19739404, "permission": "admin", "members": ["wappensc-admin"] },
-    "ci": { "id": 19739398, "permission": "push", "members": ["wappensc-ci"] },
+    "ci": { "id": 19739398, "permission": "push", "members": ["wappensc-ci", "wappensc-admin"] },
     "developers": { "id": 19739392, "permission": "push", "members": ["wappensc-developer"] }
   },
   "mainRuleset": {
     "name": "main",
     "enforcement": "active",
     "include": ["~DEFAULT_BRANCH"],
-    "bypass": [{ "team": "admins", "mode": "always" }, { "team": "ci", "mode": "always" }]
+    "bypass": [{ "team": "admins", "mode": "always" }]
   },
   "tagRulesets": [
     {

@@ -13,7 +13,7 @@ Three roles, each a team of the `wappensc` organization:
 | Role | May |
 | --- | --- |
 | **developers** | change code, documentation, the specification's prose and ordinary tests; merge their own pull request once the checks are green |
-| **ci** | change what decides whether and how the code is checked (below), and approve such a change made by anyone else; create a release tag ([docs/versioning.md](docs/versioning.md)) |
+| **ci** | change what decides whether and how the code is checked (below), and approve such a change made by anyone else; create a release tag ([docs/versioning.md](docs/versioning.md)). Its own changes go through a pull request like everyone's, approved by the team's other member |
 | **admins** | administer the repository; in an emergency, bypass the rules |
 
 Nothing reaches `main` by a direct push, and nothing without green checks. A change goes

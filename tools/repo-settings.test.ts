@@ -412,7 +412,7 @@ describe("the repository settings, as an ordinary token sees them", () => {
     expect(results.filter((r) => r.outcome === "fail")).toEqual([]);
     expect(results.filter((r) => r.outcome === "not-checked").map((r) => r.name)).toEqual([
       "each team has exactly its permission on the repository, and no other team has any",
-      "only the admins and ci teams may bypass the main ruleset",
+      "only the admins team may bypass the main ruleset",
       "only the admins and ci teams may bypass the release-tags-create ruleset",
       "no one may bypass the release-tags-locked ruleset",
       "a published release's tag can be neither moved nor deleted: immutable releases are on",
