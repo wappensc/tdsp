@@ -39,6 +39,10 @@ simply weaken its own checks.
 - the checks and their configuration: `tools/`, `vitest.config.ts`, `tsconfig*.json`,
   `biome.json`, `.dependency-cruiser.cjs`, `network-policy.json`, `license-policy.json`,
   `.nvmrc`;
+- the **local test servers** the CI jobs start: `infra/matrix-testserver/` and
+  `infra/email-testserver/`. The workflow calls them directly rather than through
+  `pnpm run matrix:up` / `email:up`, because they run before the network-isolation job's
+  egress block goes up;
 - the **security tests**, `*.security.test.ts`: authorization and control state, PGP and
   identity, integrity of what a bridge receives, credentials kept out of git, the loopback
   boundary, TLS, logging. A security test depends only on the code it tests and on helpers
@@ -47,8 +51,10 @@ simply weaken its own checks.
   `*.wire.test.ts` ([docs/testing.md](docs/testing.md), "Wire compatibility").
 
 What the CI jobs prove besides the tests themselves: every check is called directly, not
-through a `package.json` script; the tests that need Synapse or Greenmail actually ran,
-none of them skipped; every security and wire test ran and passed
+through a `package.json` script; nothing a developer owns runs before the network-isolation
+job's egress block — no script, and no lifecycle script at install, where only the native
+module the suite needs is built, by name; the tests that need Synapse or Greenmail actually
+ran, none of them skipped; every security and wire test ran and passed
 (`tools/test-run-check.ts`).
 
 All of this rests on settings that live on GitHub — who is in which team, what `main`

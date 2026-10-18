@@ -28,6 +28,40 @@ describe("the CI workflow cannot be sidestepped from outside the CI role's files
     }
   });
 
+  it("calls no package.json script in any job, not even to start or stop a test server", () => {
+    // Every line that is not a comment, so that multi-line `run: |` blocks are read too.
+    const lines = read(".github/workflows/ci.yml")
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line));
+    for (const name of ["matrix", "email", "network-isolation"]) {
+      expect(job(name), `${name} job`).toContain(
+        `docker compose -f infra/${name === "email" ? "email" : "matrix"}-testserver/docker-compose.yml up -d`,
+      );
+    }
+    for (const line of lines) {
+      expect(line, "a step must not go through a package.json script").not.toMatch(
+        /pnpm run|npm run|pnpm (?!exec|install|rebuild (--recursive )?@)\w/,
+      );
+    }
+  });
+
+  it("runs no lifecycle script of a package.json before the network-isolation block", () => {
+    const steps = job("network-isolation");
+    const block = steps.indexOf("Block all non-loopback egress");
+    expect(block).toBeGreaterThan(-1);
+    const before = steps
+      .slice(0, block)
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line));
+    const installs = before.filter((line) => /\bpnpm install\b/.test(line));
+    expect(installs).toHaveLength(1);
+    expect(installs[0]).toContain("--ignore-scripts");
+    // Only a named dependency may be built; a bare `pnpm rebuild` would build them all.
+    for (const line of before.filter((l) => /\bpnpm rebuild\b/.test(l))) {
+      expect(line).toMatch(/pnpm rebuild (--recursive )?@[\w.-]+\/[\w.-]+$/);
+    }
+  });
+
   it("proves that the Matrix and email tests ran instead of skipping", () => {
     for (const name of ["matrix", "email"]) {
       expect(job(name), `${name} job`).toContain("tools/test-run-check-cli.ts vitest-report.json");

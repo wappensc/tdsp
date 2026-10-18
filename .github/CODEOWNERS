@@ -18,6 +18,11 @@
 /license-policy.json                         @wappensc/ci
 /.nvmrc                                      @wappensc/ci
 
+# The local test servers the CI jobs start, called directly from the workflow: they run
+# before the network-isolation job's egress block goes up, with the runner's sudo.
+/infra/matrix-testserver/                    @wappensc/ci
+/infra/email-testserver/                     @wappensc/ci
+
 # The wire, frozen, and the published test vectors (docs/testing.md, "Wire compatibility").
 /wire/                                       @wappensc/ci
 /packages/document-protocol/test-vectors/    @wappensc/ci
