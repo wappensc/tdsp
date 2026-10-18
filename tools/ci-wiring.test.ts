@@ -40,8 +40,25 @@ describe("the CI workflow cannot be sidestepped from outside the CI role's files
     }
     for (const line of lines) {
       expect(line, "a step must not go through a package.json script").not.toMatch(
-        /pnpm run|npm run|pnpm (?!exec|install)\w/,
+        /pnpm run|npm run|pnpm (?!exec|install|rebuild @)\w/,
       );
+    }
+  });
+
+  it("runs no lifecycle script of a package.json before the network-isolation block", () => {
+    const steps = job("network-isolation");
+    const block = steps.indexOf("Block all non-loopback egress");
+    expect(block).toBeGreaterThan(-1);
+    const before = steps
+      .slice(0, block)
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line));
+    const installs = before.filter((line) => /\bpnpm install\b/.test(line));
+    expect(installs).toHaveLength(1);
+    expect(installs[0]).toContain("--ignore-scripts");
+    // Only a named dependency may be built; a bare `pnpm rebuild` would build them all.
+    for (const line of before.filter((l) => /\bpnpm rebuild\b/.test(l))) {
+      expect(line).toMatch(/pnpm rebuild @[\w.-]+\/[\w.-]+$/);
     }
   });
 

@@ -51,8 +51,10 @@ simply weaken its own checks.
   `*.wire.test.ts` ([docs/testing.md](docs/testing.md), "Wire compatibility").
 
 What the CI jobs prove besides the tests themselves: every check is called directly, not
-through a `package.json` script; the tests that need Synapse or Greenmail actually ran,
-none of them skipped; every security and wire test ran and passed
+through a `package.json` script; nothing a developer owns runs before the network-isolation
+job's egress block — no script, and no lifecycle script at install, where only the native
+module the suite needs is built, by name; the tests that need Synapse or Greenmail actually
+ran, none of them skipped; every security and wire test ran and passed
 (`tools/test-run-check.ts`).
 
 All of this rests on settings that live on GitHub — who is in which team, what `main`

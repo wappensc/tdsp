@@ -136,7 +136,11 @@ jobs:
           cache: pnpm
 
       # Everything that legitimately needs the network happens before the block goes up.
-      - run: pnpm install --frozen-lockfile
+      # Without lifecycle scripts: a package.json's preinstall, postinstall or prepare is a
+      # developer's and would run here with the runner's sudo. The one native module the
+      # suite needs is built by name.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm rebuild @matrix-org/matrix-sdk-crypto-nodejs
 
       - name: Start local Synapse test homeserver
         run: |
