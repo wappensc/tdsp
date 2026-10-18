@@ -50,8 +50,11 @@ jobs:
 
   matrix:
     # Against a real, local Synapse. Plain `docker compose` steps rather than a `services:`
-    # container, because the server's configuration has to be generated before it starts —
-    # the same commands `pnpm run matrix:up` runs locally.
+    # container, because the server's configuration has to be generated before it starts.
+    # The test servers are started with the commands `pnpm run matrix:up` / `email:up` run
+    # locally, but called directly in every job: package.json is not owned by the CI role,
+    # infra/matrix-testserver/ and infra/email-testserver/ are (.github/CODEOWNERS). What
+    # starts before the network-isolation job's block must not be a developer's to change.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,7 +66,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Start local Synapse test homeserver
-        run: pnpm run matrix:up
+        run: |
+          node --experimental-strip-types infra/matrix-testserver/generate-config.ts
+          docker compose -f infra/matrix-testserver/docker-compose.yml up -d
+          node --experimental-strip-types infra/matrix-testserver/wait-for-health.ts
+          node --experimental-strip-types infra/matrix-testserver/provision-test-accounts.ts
 
       - name: Matrix bridge and test homeserver tests
         run: pnpm exec vitest run infra/matrix-testserver/ bridges/matrix-bridge/ --reporter=default --reporter=json --outputFile.json=vitest-report.json
@@ -78,7 +85,7 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: pnpm run matrix:down
+        run: docker compose -f infra/matrix-testserver/docker-compose.yml down
 
   email:
     # Against a real, local Greenmail; its two test mailboxes are created at container start.
@@ -93,7 +100,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Start local Greenmail test SMTP/IMAP server
-        run: pnpm run email:up
+        run: |
+          docker compose -f infra/email-testserver/docker-compose.yml up -d
+          node --experimental-strip-types infra/email-testserver/wait-for-health.ts
 
       - name: Email bridge and test server tests
         run: pnpm exec vitest run infra/email-testserver/ bridges/email-bridge/ --reporter=default --reporter=json --outputFile.json=vitest-report.json
@@ -108,7 +117,7 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: pnpm run email:down
+        run: docker compose -f infra/email-testserver/docker-compose.yml down
 
   network-isolation:
     # The only layer that sees a NATIVE module opening a socket: the JavaScript guards (netcheck,
@@ -130,10 +139,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Start local Synapse test homeserver
-        run: pnpm run matrix:up
+        run: |
+          node --experimental-strip-types infra/matrix-testserver/generate-config.ts
+          docker compose -f infra/matrix-testserver/docker-compose.yml up -d
+          node --experimental-strip-types infra/matrix-testserver/wait-for-health.ts
+          node --experimental-strip-types infra/matrix-testserver/provision-test-accounts.ts
 
       - name: Start local Greenmail test SMTP/IMAP server
-        run: pnpm run email:up
+        run: |
+          docker compose -f infra/email-testserver/docker-compose.yml up -d
+          node --experimental-strip-types infra/email-testserver/wait-for-health.ts
 
       - name: Create the restricted test user
         run: |
@@ -176,4 +191,6 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: pnpm run matrix:down && pnpm run email:down
+        run: |
+          docker compose -f infra/matrix-testserver/docker-compose.yml down
+          docker compose -f infra/email-testserver/docker-compose.yml down
