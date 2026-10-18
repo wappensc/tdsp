@@ -101,6 +101,29 @@ describe("the CI workflow cannot be sidestepped from outside the CI role's files
     }
   });
 
+  it("keeps no token from any checkout for the steps after it", () => {
+    const workflows = readdirSync(`${repoRoot}/.github/workflows`).filter((f) =>
+      /\.ya?ml$/.test(f),
+    );
+    const indentOf = (line: string) => line.length - line.trimStart().length;
+    for (const file of workflows) {
+      const lines = read(`.github/workflows/${file}`).split("\n");
+      const checkouts = lines.flatMap((line, i) =>
+        /uses: actions\/checkout@/.test(line) ? [{ line, i }] : [],
+      );
+      expect(checkouts.length, file).toBeGreaterThan(0);
+      for (const { line, i } of checkouts) {
+        // The step's own lines: up to the next step or the end of the job.
+        const rest = lines.slice(i + 1);
+        const end = rest.findIndex((l) => l.trim() !== "" && indentOf(l) <= indentOf(line));
+        const step = (end === -1 ? rest : rest.slice(0, end)).join("\n");
+        expect(step, `${file}, line ${i + 1}`).toMatch(
+          /^\s+with:\n\s+persist-credentials: false$/m,
+        );
+      }
+    }
+  });
+
   it("has Dependabot propose new versions of the pinned actions", () => {
     const config = read(".github/dependabot.yml");
     expect(config).toContain("package-ecosystem: github-actions");
