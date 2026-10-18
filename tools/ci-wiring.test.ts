@@ -125,6 +125,31 @@ describe("the CI workflow cannot be sidestepped from outside the CI role's files
       expect(workflow, `${file} must not widen the token`).not.toMatch(/: write\b/);
     }
   });
+
+  it("leaves the token off the disk after every checkout", () => {
+    const workflows = readdirSync(`${repoRoot}/.github/workflows`).filter((f) =>
+      /\.ya?ml$/.test(f),
+    );
+    expect(workflows.length).toBeGreaterThan(1);
+    for (const file of workflows) {
+      const lines = read(`.github/workflows/${file}`).split("\n");
+      const checkouts = lines.flatMap((line, start) =>
+        /^\s+- uses: actions\/checkout@/.test(line) ? [{ start, indent: line.indexOf("-") }] : [],
+      );
+      expect(checkouts.length, file).toBeGreaterThan(0);
+      for (const { start, indent } of checkouts) {
+        // The step's own lines: those indented deeper than its `- uses:`.
+        const step: string[] = [];
+        for (const line of lines.slice(start + 1)) {
+          if (line.trim() !== "" && line.search(/\S/) <= indent) break;
+          step.push(line);
+        }
+        expect(step.join("\n"), `${file}, line ${start + 1}`).toMatch(
+          /^\s+persist-credentials: false$/m,
+        );
+      }
+    }
+  });
 });
 
 /** One job's block, from its key up to the next top-level job key. */
