@@ -13,3 +13,8 @@ updates:
       default-days: 14
     commit-message:
       prefix: ci
+    # The developer takes over every update: assesses it (breaking changes and changed
+    # defaults of every version skipped), makes the adjustments the workflows need, writes
+    # the result into the pull request and then asks @wappensc/ci for its review.
+    assignees:
+      - wappensc-developer
