@@ -153,6 +153,11 @@ export function checkSettings(expected: ExpectedSettings, collected: Collected):
       ? undefined
       : `bypass is ${describe(actual)}, expected ${describe(wanted)}`;
   };
+  /** Who may bypass a ruleset, as the name of its check. */
+  const mayBypass = (name: string, bypass: readonly { readonly team: string }[]): string =>
+    bypass.length === 0
+      ? `no one may bypass the ${name} ruleset`
+      : `only the ${bypass.map((b) => b.team).join(" and ")} ${bypass.length === 1 ? "team" : "teams"} may bypass the ${name} ruleset`;
   /**
    * A tag ruleset's checks: one for what an ordinary token can read (enforcement, target,
    * pattern, rules), one for its bypass list. Restricting creation and forbidding updates and
@@ -184,12 +189,7 @@ export function checkSettings(expected: ExpectedSettings, collected: Collected):
         return problems.length === 0 ? undefined : problems.join("; ");
       },
     ],
-    [
-      want.bypass.length === 0
-        ? `no one may bypass the ${want.name} ruleset`
-        : `only the ${want.bypass.map((b) => b.team).join(" and ")} teams may bypass the ${want.name} ruleset`,
-      () => bypassDiffers(rulesetNamed(want.name), want.bypass),
-    ],
+    [mayBypass(want.name, want.bypass), () => bypassDiffers(rulesetNamed(want.name), want.bypass)],
   ];
 
   const checks: [string, () => string | undefined][] = [
@@ -343,7 +343,7 @@ export function checkSettings(expected: ExpectedSettings, collected: Collected):
       },
     ],
     [
-      "only the admins and ci teams may bypass the main ruleset",
+      mayBypass(expected.mainRuleset.name, expected.mainRuleset.bypass),
       () => bypassDiffers(mainRuleset(), expected.mainRuleset.bypass),
     ],
     ...expected.tagRulesets.flatMap(tagRulesetChecks),

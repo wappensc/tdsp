@@ -24,7 +24,7 @@ without any file changing — so they are written down here, recorded machine-re
 | --- | --- | --- |
 | Owners | `wappensc-admin` only | an owner can change every setting below |
 | Team `admins` | member `wappensc-admin` | — |
-| Team `ci` | member `wappensc-ci` | a developer in `ci` could approve their own changes to the checks |
+| Team `ci` | members `wappensc-ci` and `wappensc-admin` | a developer in `ci` could approve their own changes to the checks; with `wappensc-ci` alone, no one could approve a change `wappensc-ci` makes itself, as GitHub lets no one approve their own pull request |
 | Team `developers` | member `wappensc-developer` | — |
 | Teams' visibility | visible (not secret) | CODEOWNERS cannot name a secret team |
 
@@ -43,7 +43,7 @@ without any file changing — so they are written down here, recorded machine-re
 | --- | --- | --- |
 | Enforcement | Active | "Evaluate" only reports, and enforces nothing |
 | Target | the default branch | — |
-| Bypass list | teams `admins` and `ci`, "Always" | anyone else on it merges without checks or approval |
+| Bypass list | team `admins`, "Always" | anyone else on it merges without checks or approval — the CI role included, whose own changes go through a pull request, the checks and a second member's approval like everyone else's |
 | Restrict deletions | on | `main` could be deleted and recreated |
 | Block force pushes | on | history could be rewritten past the checks |
 | Require a pull request | on, 0 required approvals | direct pushes would skip the checks |
