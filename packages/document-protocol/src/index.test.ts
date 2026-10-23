@@ -8,6 +8,7 @@ import {
   type RawChannel,
   type TransportProfile,
   TransportSendError,
+  type TransportSendFailure,
 } from "@tdsp/messenger-port";
 import {
   deletePlainText,
@@ -2123,6 +2124,26 @@ describe("send scheduling and retry", () => {
     await vi.advanceTimersByTimeAsync(500 + 1000);
     await alice.sync();
     expect(getPlainText(alice.fragment)).toBe("still arrives");
+  });
+
+  it("retries a send failure whose reason is none of the four, as unavailable (TRN-12)", async () => {
+    const port = new FlakySendPort();
+    const errors: unknown[] = [];
+    const { alice, bob } = await pair(port, {}, {}, (error) => errors.push(error));
+    // An adapter of a later version may name a reason this engine does not know.
+    const unknown = "needs-person" as unknown as TransportSendFailure;
+    port.failNextSends(new TransportSendError(unknown, "the person has to act"));
+
+    bob.edit((fragment) => insertPlainText(fragment, 0, "kept, not dropped"));
+    await vi.advanceTimersByTimeAsync(500); // the quiet time; the send is refused
+    expect(bob.hasPendingChanges).toBe(true);
+    expect(bob.sendStatus.state).toBe("retrying");
+    expect(errors).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1000); // the back-off
+    await alice.sync();
+    expect(getPlainText(alice.fragment)).toBe("kept, not dropped");
+    expect(bob.hasUndistributedChanges).toBe(false);
   });
 
   it("drops an edit the transport refuses for good, and reports it once", async () => {
