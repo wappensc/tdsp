@@ -33,6 +33,12 @@ No byte on the wire changes; the new requirements are why this is a minor versio
   parameter a later version adds. A promise of the specification, not a requirement on
   applications (#68).
 
+### Fixed
+
+- A send failure whose reason is none of the four — one an adapter of a later version names —
+  is retried as `unavailable`, as TRN-12 requires. `TransportSendError.retryable` is now false
+  only for `too-large` and `rejected`; before, the engine dropped such a change (#72).
+
 ## v1.4.0 — 2026-10-13 · implements TDSP 1.3
 
 No byte on the wire changes from v1.3.0.

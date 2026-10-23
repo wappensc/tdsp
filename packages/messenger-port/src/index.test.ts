@@ -7,6 +7,7 @@ import {
   parseTransportProfile,
   retainNewest,
   TransportSendError,
+  type TransportSendFailure,
   transportPolicyProfile,
   transportSendErrorFromHttp,
 } from "./index";
@@ -17,6 +18,12 @@ describe("TransportSendError", () => {
     expect(new TransportSendError("unavailable", "x").retryable).toBe(true);
     expect(new TransportSendError("too-large", "x").retryable).toBe(false);
     expect(new TransportSendError("rejected", "x").retryable).toBe(false);
+  });
+
+  it("counts a reason none of the four as unavailable, so it is retried (TRN-12)", () => {
+    // An adapter of a later version may name a reason this one does not know.
+    const unknown = new TransportSendError("needs-person" as unknown as TransportSendFailure, "x");
+    expect(unknown.retryable).toBe(true);
   });
 
   it("carries what the provider asked us to wait", () => {

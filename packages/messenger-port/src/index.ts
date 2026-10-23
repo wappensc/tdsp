@@ -392,8 +392,13 @@ export class TransportSendError extends Error {
     this.retryAfterMs = retryAfterMs;
   }
 
+  /**
+   * Whether waiting can help: for every reason but `too-large` and `rejected`. A reason none of
+   * the four — one an adapter of a later version names — counts as `unavailable`
+   * (SPECIFICATION.md TRN-12), for the same reason an unclassified error does.
+   */
   get retryable(): boolean {
-    return this.reason === "rate-limited" || this.reason === "unavailable";
+    return this.reason !== "too-large" && this.reason !== "rejected";
   }
 }
 
