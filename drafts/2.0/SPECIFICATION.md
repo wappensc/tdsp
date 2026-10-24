@@ -13,8 +13,8 @@ TDSP synchronises a collaboratively edited document between a small group of
 participants by carrying CRDT updates inside ordinary messages of a messenger
 the participants already use — a Signal group, a Matrix room, an email thread.
 There is no TDSP server, no WebSocket and no peer-to-peer connection: every
-byte of document data travels as a message of that messenger, and every
-participant's engine merges what arrives locally.
+byte of document data that passes between participants travels as a message of
+that messenger, and every participant's engine merges what arrives locally.
 
 Two consequences shape everything below:
 
@@ -207,7 +207,9 @@ tested against.
 9. **External profiles and layers.**
 10. **Attribution** as display, never as authentication.
 11. **Bounded resources** against anything a peer sends.
-12. **No external connection** but to the chosen messenger.
+12. **No external connection** but to the chosen messenger — and, where an
+    application carries a document between one person's devices, to the service
+    the person was told of (ARC-5).
 13. **Provider rate limits**: no participant exceeds its own provider's limits,
     whatever others want.
 
@@ -265,7 +267,7 @@ credentials away from the component that renders untrusted document content
 
 | Layer | Owns | May assume from below | Must never |
 |---|---|---|---|
-| Application | Rendering, local undo grouping, showing attribution and status, choosing the profile | The engine's state is converged | Reach the network; present attribution as authentication |
+| Application | Rendering, local undo grouping, showing attribution and status, choosing the profile | The engine's state is converged | Reach the network, but for the service of ARC-5; present attribution as authentication |
 | Engine | Frames, bootstrap, resync, de-duplication, scheduling, control state, attribution overlay | A payload handed down is accepted by the messenger or visibly refused — accepted meaning neither delivered nor applied ([§3.3](#33-delivery-semantics)) | Parse an envelope; open a network connection |
 | Adapter | Mapping the transport contract onto its bridge | Its bridge is reachable | Parse a frame |
 | Bridge | Credentials, the messenger's protocol, routing by documentId, message immutability | The messenger delivers to channel members and names senders | Parse a frame; reach any host but its one messenger endpoint |
@@ -286,10 +288,14 @@ Permissions are a policy. A message size limit is a fact.
 - **ARC-2** · *engine, application, adapter* — An engine, application or adapter
   MUST NOT open a network connection to anything other than its bridge, and a
   bridge reached over a network interface MUST be on the loopback interface
-  (LBI-1, [local bridge interface](bindings/local-bridge-interface.md)).
+  (LBI-1, [local bridge interface](bindings/local-bridge-interface.md)). The one
+  exception is an application's connection to the service through which it
+  carries a document between one person's devices (ARC-5), for carrying it.
   *Rationale:* TDSP promises that it opens no external connection of its own; the
   only component that talks to the outside world is the bridge, and it talks only
-  to its messenger (BRG-4, [bindings/bridges.md](bindings/bridges.md)).
+  to its messenger (BRG-4, [bindings/bridges.md](bindings/bridges.md)). The
+  service of ARC-5 carries nothing between participants: it is storage the person
+  was told of, through which no one else reads or writes the document.
 - **ARC-3** · *adapter, bridge* — An adapter or bridge MUST NOT parse, validate or
   act on the content of a frame. It routes by the envelope's documentId and
   hands the frame on unchanged.
@@ -319,13 +325,27 @@ Permissions are a policy. A message size limit is a fact.
   the person, before it first does so, that the document's content is then stored
   there, as confidential as that service makes it rather than as the channel does,
   and MUST NOT let anyone but that person read or write the document through it.
+  An application that carries the control state of a device of the creator so
+  MUST have the receiving device continue under a new tag of its own (CTL-20),
+  never under a tag the carried state holds: it gives that state to its engine as
+  a snapshot carried from another device of the creator (CTL-25), not as the
+  device's own persisted state (CTL-26), and with it whether that state was a
+  basis there (CTL-28).
   *Rationale:* a person's own devices are one participant, so ARC-1's reason —
   that confidentiality and sender authentication between participants come from
   the messenger — does not reach them; a person who uses several devices needs
   their documents on each, and a messenger without history cannot bring a new
   device up to date by itself. What the other service changes is where a copy
-  lies, and TDSP protects nothing beyond the channel ([§15.4](#154-what-is-not-guaranteed)):
-  the person has to know which service that is.
+  lies, and TDSP protects nothing beyond the channel
+  ([§15.4](#154-what-is-not-guaranteed)): the person has to know which service
+  that is. A device that went on under a tag the carried state holds would decide
+  under one tag with the device the state came from; CTL-24 notices that only once
+  one of them receives what the other issued under it — and where both decided
+  first, as a collision, which perhaps only members see (CTL-31) — and then
+  demands a new tag anyway. The carried state is the creator's word only as far as
+  the service keeps it so, not because a messenger authenticated it: whoever can
+  write there — its provider included — can hand the creator's device operations
+  it then passes on as its own ([§15.3](#153-what-tdsp-enforces-itself)).
 
 ### 2.2 Two envelopes, two readers
 
@@ -1850,14 +1870,19 @@ the creator among the targets — rejects the whole `resync-response` (FRM-6).
     above a hole (§7.4);
   - it leaves out only what CTL-30 and CTL-35 refuse.
 
-  It MUST apply a snapshot only from the creator, or from another device of its own
-  member in an answer to its own request (RSY-12). A snapshot need not be newer
-  than what the receiver holds.
+  It MUST apply a snapshot only from the creator, from another device of its own
+  member in an answer to its own request (RSY-12), or, on a device of the creator,
+  one its application carried to it from another device of the person (ARC-5). It
+  MUST refuse a carried snapshot for which a `resync-response` carrying it would
+  be rejected (CTL-10, CTL-15). A snapshot need not be newer than what the receiver
+  holds.
   *Rationale:* a snapshot is how a joiner on a history-less transport, or an engine
   that found a hole, learns current state — no other member can forward it,
   because it must come from the creator. A device of one's own member is the
   exception: the messenger authenticates its MemberId like one's own, and whoever
-  controls an account controls all of its devices anyway. A union cannot undo
+  controls an account controls all of its devices anyway. A snapshot carried
+  between one person's devices is as much the creator's as the service that
+  carries it keeps it so (ARC-5). A union cannot undo
   anything, so 1.x's snapshot floor, and its rule to pass state on only without a
   gap, have nothing left to prevent. Merged so, a snapshot gives what its
   operations applied as frames give, holes included: a joiner it bootstraps holds
@@ -1894,7 +1919,8 @@ control state in a member's answer to the device's own request (RSY-8).
   - created the document;
   - restored persisted control state that was a basis when it was persisted
     (CTL-26);
-  - merged a snapshot of another of its devices (CTL-25); or
+  - merged a snapshot of another of its devices (CTL-25) — one carried to it
+    (ARC-5) only if it was a basis there; or
   - applied an operation of the creator that it did not issue.
 
   Reports and its own new operations are none, before a restart and after it.
@@ -2366,7 +2392,8 @@ and the answer is a targeted diff.
   - once it has applied an answer to its own request that bootstraps it (CTL-13) —
     for a device of the creator any answer to its own request;
   - for a device of the creator also at once when it restored persisted content
-    together with control state that had a basis (CTL-28).
+    together with control state that had a basis (CTL-28), or merged carried
+    content together with control state that gives it one (CTL-28, ARC-5).
 
   It MUST make "not yet bootstrapped" observable to the application.
   *Rationale:* a joiner whose creator is offline sees an empty document; the
@@ -3347,12 +3374,12 @@ it is only *worth using* with it.
 |---|---|---|
 | Permissions | The creator grants and revokes; each engine refuses to send an edit before its bootstrap, while its own permission is `read` or revoked, and once the document is closed — not when its permission is merely unknown after the bootstrap (CTL-13) | Among cooperating engines only, and only while their applications keep what the engine refuses out of the engine's document, which a resync answer carries whole (CTL-42, RSY-10); receivers do not reject an edit for its sender's permission (CTL-7) |
 | Rights on layers | The creator sets a member's right on a layer, or lets it inherit the permission on the document; each engine refuses to send a change of a layer on which its permission is `read`, of any layer once its permission on the document is revoked, and a change that touches such a layer whole (LAY-5, LAY-6, LAY-7) | As for permissions: among cooperating engines only; `read` hides nothing, every participant reads every layer it receives |
-| Creator identity | Fixed; control operations and snapshots only from it (CTL-5, CTL-25); device tags tell its devices apart and authenticate nothing | Exactly as strong as the messenger's sender authentication |
+| Creator identity | Fixed; control operations and snapshots only from it (CTL-5, CTL-25); device tags tell its devices apart and authenticate nothing | Exactly as strong as the messenger's sender authentication; a snapshot carried between one person's devices (ARC-5) as strong as the service that carries it |
 | Replay of control frames | Control state is a set of operations (CTL-23) | A replayed operation is inert (CTL-6) |
 | Close | Cooperating engines stop sending edits of their own; edits sent before the close still arrive and apply (LIF-6) | Among cooperating engines only, and only while their applications keep a change made after the close out of the engine's document (CTL-42) — a modified engine can keep sending edits, which genuine engines apply, exactly as with `read` (CTL-7) |
 | Convergence | The CRDT | Unconditional, given the same set of updates — not given a lost one |
 | Message immutability | Bridges refuse and record edits and withdrawals (BRG-12) | Where the messenger reveals them |
-| No external connection | ARC-2, BRG-4 | As strong as its enforcement; see below |
+| No external connection | ARC-2, BRG-4; an application that carries a document between one person's devices also reaches that service (ARC-5) | As strong as its enforcement; see below |
 | Resource exhaustion by peers | Bounded control state (CTL-30), and a capacity conflict beyond its bytes (CTL-32); bounded nesting and frame size, extensions included (FRM-11), bounded attachment fetches (BRG-14), bounded pre-verification reads (BRG-13); no reassembly buffer | Bounded, not prevented; beyond the bytes of control state a person resolves the conflict |
 
 **Enforcing "no external connection".** The one security property TDSP owns
@@ -3371,7 +3398,8 @@ independently:
    any connection that is not to the loopback interface — including those made by
    third-party libraries, which a source scan does not read.
 4. **A content security policy** for a browser-hosted application that allows
-   connections to the loopback interface only.
+   connections to the loopback interface only — and, where it carries documents
+   between one person's devices, to that service (ARC-5).
 5. **A test run with operating-system-level egress blocking**, which also catches
    native modules no language-level guard can see.
 
@@ -3782,6 +3810,7 @@ The changes have six reasons, which the tables below cite by letter:
 | RSY-3, RSY-4 | A request the floor holds back waits; its expiry counts from when it was sent | A conformance check: an automatic request refused at the floor was spent, and an engine that kept writing never asked. |
 | SND-11 (with SND-23 and SND-24) | The heartbeat follows pieces, not fragments, carries the control vector and its sender's stream, counts from the edit or control frame that promised it, and goes at once when a request states what the engine holds while its last report states otherwise | A, D; and a review of draft 2: counted from the last message of any kind, an answer to a joiner pushed it past the edit's `due`. |
 | ARC-4 | Credentials stay away from the engine and from every component that renders what came through the channel; a sign-in form outside it may pass a typed password to the bridge | "The application" was read as every part of it, which no bridge needing a password can meet. |
+| ARC-2 | Names its one exception: the service through which an application carries a document between one person's devices (ARC-5) | ARC-5 allows that service, which ARC-2 forbade without the exception. |
 | INV-3, INV-7 | The creator is shown by an identifier the messenger keeps unique, or a name the person gave; an invitation naming the person as creator is a claim | A self-chosen name is what a forger copies, and an invitation naming the person themselves is the forgery they can least recognise. |
 | TRN-11, TRN-12 | Five reasons: `needs-person` for a refusal only a person can lift | An identity not trusted, a device not confirmed or no account was either retried without end (`unavailable`) or dropped (`rejected`); neither serves, and implementations chose differently. |
 | LOS-1 | The waiting time comes from the engine's own pacing | B. |
@@ -3809,7 +3838,7 @@ The changes have six reasons, which the tables below cite by letter:
 | FRM-13 | Which reason a frame with several faults is rejected for: the version before the kind, the kind before the fields | A frame of another version is judged by its version alone, which is what an application shows a person (VER-4). |
 | FRM-9 to FRM-12 (with FRM-15 to FRM-17) | Extension fields, `crit`, their bounds and what a definition states; an extension is not passed on | C; wappensc/tdsp#71 V3: ignoring an extension is not passing it on. |
 | FRM-15 to FRM-17 | Parts of FRM-9, FRM-10 and FRM-12 as requirements of their own: an extension's name (FRM-15), checking the value of an extension one implements (FRM-16), what an engine keeps and passes on of an extension (FRM-17) | Readability: each was a part of a longer requirement, and requires what it did there |
-| ARC-5 | An application may carry a document between one person's devices through another service, and tells the person | ARC-1 concerns participants; it said nothing about one person's devices, which a messenger without history cannot bring up to date. |
+| ARC-5 | An application may carry a document between one person's devices through another service, and tells the person; a device of the creator that takes over carried control state continues under a new tag, and the state gives it a basis only if it was one (with CTL-25, CTL-28, RSY-14) | ARC-1 concerns participants; it said nothing about one person's devices, which a messenger without history cannot bring up to date. Two devices under one tag would notice only once one received what the other issued (CTL-24). |
 | INV-9 | Joining on another device of the person without asking again, when the confirmation travels from where the person gave it | INV-3 protects the creator's identity; the service that carries it is trusted as the person's machine. |
 | TRN-20 (with TRN-22) | A send refused as `needs-person` is kept, shown, and tried again when the application says the person acted, or after the longest back-off | The person can lift the refusal and waiting cannot; without its own handling it would spin or be dropped. |
 | TRN-18 (with TRN-21), TRN-19 | An optional cursor with `truncated`, answered in the window's order, and truncated also behind what the bridge passed over; a bridge instance id, the epoch of the window, that changes whenever the bridge may have lost something | E: the engine continues after the last delivery an answer held; a gap the bridge skipped, or a loss in a restart, is what it cannot see by itself. |
@@ -3889,3 +3918,8 @@ profile `yjs-paragraphs/1` are unchanged.
   (§6.2) from its state and invites its members again.
 - *A second, independently written implementation*, which would show whether this
   core is simpler to build than 1.x's ([CONFORMANCE.md](../../CONFORMANCE.md)).
+
+Also not in 2.0, and possible without a change of this core: *carrying a document
+between one person's devices over TDSP* (ARC-5) — through a channel of only that
+person's devices, with a profile of its own, instead of another provider's
+storage.
