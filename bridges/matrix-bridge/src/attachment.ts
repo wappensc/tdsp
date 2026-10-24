@@ -51,7 +51,7 @@ export interface AttachmentRef {
   /** The size of the frame this stands for, in bytes. */
   readonly size: number;
   readonly url?: string;
-  /** For a plain attachment: base64 (unpadded) SHA-256 of the frame. */
+  /** For a plain attachment: the SHA-256 of the frame, in lowercase hexadecimal (BND-3). */
   readonly sha256?: string;
   readonly file?: EncryptedFileInfo;
 }
