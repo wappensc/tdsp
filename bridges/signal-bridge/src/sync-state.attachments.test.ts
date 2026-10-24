@@ -482,6 +482,51 @@ describe("a receiver's handling of attachments", () => {
       expect(existsSync(file)).toBe(false);
     });
 
+    it("takes a message under the id of an attachment it refused as new, and records nothing (BRG-12)", async () => {
+      const claimed = bytesOf(2000, 44);
+      received("att1", bytesOf(2000, 45)); // not the bytes the envelope names: refused
+      rpc.emit(attachmentUpdate(claimed));
+      await settle();
+      expect(reasons()).toContain("hash-mismatch");
+      rpc.emit(notification({ body: { tdsp: 1, kind: "frame", documentId: DOC, frame: "AQID" } }));
+      expect(sync.getDeliveries(DOC).map((d) => d.payload)).toEqual(["AQID"]);
+      expect(sync.getIntegrityLog(DOC)).toEqual([]);
+    });
+
+    it("takes no other message under the id of one being read back, and records it once that one is delivered", async () => {
+      const frame = bytesOf(2000, 46);
+      let answer: (value: unknown) => void = () => {};
+      rpc.onGetAttachment = () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        });
+      rpc.emit(attachmentUpdate(frame));
+      rpc.emit(notification({ body: { tdsp: 1, kind: "frame", documentId: DOC, frame: "AQID" } }));
+      expect(sync.getDeliveries(DOC)).toEqual([]);
+      expect(sync.getIntegrityLog(DOC)).toEqual([]);
+      answer(toBase64(frame));
+      await settle();
+      expect(sync.getDeliveries(DOC).map((d) => d.payload)).toEqual([textOf(frame)]);
+      expect(sync.getIntegrityLog(DOC)).toEqual([
+        { id: "bob:1700000000000", sender: "bob", reason: "message-replaced" },
+      ]);
+    });
+
+    it("records nothing for another message under the id of one being read back that is then refused", async () => {
+      const claimed = bytesOf(2000, 47);
+      let answer: (value: unknown) => void = () => {};
+      rpc.onGetAttachment = () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        });
+      rpc.emit(attachmentUpdate(claimed));
+      rpc.emit(notification({ body: { tdsp: 1, kind: "frame", documentId: DOC, frame: "AQID" } }));
+      answer(toBase64(bytesOf(2000, 48)));
+      await settle();
+      expect(sync.getDeliveries(DOC)).toEqual([]);
+      expect(sync.getIntegrityLog(DOC)).toEqual([]);
+    });
+
     it("deletes the file of another message under a delivered id, which is recorded and not read (BRG-12)", async () => {
       const frame = bytesOf(2000, 42);
       const other = bytesOf(2000, 43);
