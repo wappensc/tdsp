@@ -38,6 +38,12 @@ No byte on the wire changes; the new requirements are why this is a minor versio
 - A send failure whose reason is none of the four — one an adapter of a later version names —
   is retried as `unavailable`, as TRN-12 requires. `TransportSendError.retryable` is now false
   only for `too-large` and `rejected`; before, the engine dropped such a change (#72).
+- The Signal bridge no longer reports a frame as sent that Signal rate-limited, or could not
+  deliver, for some members of the group: `signal-cli` raises no error once one member got a
+  message, so the bridge now reads its result per recipient and answers 429, with the longest
+  wait Signal stated, or 502 (TRN-6). Members that are not registered, or whose identity the
+  account does not trust, still do not hold a frame back, nor does any member an invitation
+  (#73).
 
 ## v1.4.0 — 2026-10-13 · implements TDSP 1.3
 

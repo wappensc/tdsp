@@ -19,7 +19,7 @@ import {
 } from "./attachment.ts";
 import type { AuthStatus } from "./auth.ts";
 import { type BindRecord, getBindRecord, setBindRecord } from "./bind-store.ts";
-import { classifySendFailure } from "./send-failure.ts";
+import { classifySendFailure, PartialSendError } from "./send-failure.ts";
 import { listGroups as listGroupsApi, type SignalRpc, sendGroupMessage } from "./signal-api.ts";
 import { createSyncState, type SyncState } from "./sync-state.ts";
 import { SIGNAL_PROFILE } from "./transport-profile.ts";
@@ -142,13 +142,18 @@ export function createGroupWriter(rpc: SignalRpc, auth: AuthStatusSource): Group
     envelope: Record<string, unknown>,
     attachments?: readonly string[],
   ): Promise<string> {
-    const { timestamp } = await sendGroupMessage(
+    const { timestamp, missed } = await sendGroupMessage(
       rpc,
       requirePhoneNumber(auth),
       groupId,
       JSON.stringify(envelope),
       attachments,
     );
+    // A frame some members missed for now is not accepted for every member (TRN-6): it fails, and
+    // the engine keeps it for a retry. See `PartialSendError`.
+    if (missed.rateLimited > 0 || missed.unreachable > 0) {
+      throw new PartialSendError(missed);
+    }
     return `${requireAccountId(auth)}:${timestamp}`;
   }
 

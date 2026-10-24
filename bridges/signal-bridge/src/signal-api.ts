@@ -56,13 +56,70 @@ export async function listGroups(
 }
 
 /**
+ * The recipients a group message missed for now, as `signal-cli` reports them. Signal has no
+ * server that fans a group message out: `signal-cli` sends it to every member itself, answers
+ * `send` with one result per recipient, and raises no error as long as one of them got it.
+ */
+export interface MissedRecipients {
+  /** Recipients Signal rate-limited (`RATE_LIMIT_FAILURE`). */
+  readonly rateLimited: number;
+  /** The longest wait Signal stated for any recipient, in seconds, if it stated one. */
+  readonly retryAfterSeconds: number | undefined;
+  /** Recipients Signal could not reach (`NETWORK_FAILURE`). */
+  readonly unreachable: number;
+}
+
+/**
+ * Reads `signal-cli`'s result per recipient (`results` of its `send` answer, each with a `type`
+ * and, for a rate limit, `retryAfterSeconds`; `JsonSendMessageResult` in its 0.14.9 source).
+ * Counted are only the recipients a retry of the same message can still reach: a rate limit and a
+ * network failure. A recipient that is not registered, or whose identity this account does not
+ * trust, would be missed by every retry too.
+ */
+export function missedRecipients(results: unknown): MissedRecipients {
+  let rateLimited = 0;
+  let unreachable = 0;
+  if (Array.isArray(results)) {
+    for (const result of results) {
+      const type = (result as { type?: unknown } | null)?.type;
+      if (type === "RATE_LIMIT_FAILURE") {
+        rateLimited += 1;
+      } else if (type === "NETWORK_FAILURE") {
+        unreachable += 1;
+      }
+    }
+  }
+  return { rateLimited, retryAfterSeconds: longestRetryAfterSeconds(results), unreachable };
+}
+
+/**
+ * The longest `retryAfterSeconds` among `signal-cli`'s results per recipient, if any states a
+ * usable one: the wait after which a retry can reach every recipient Signal rate-limited.
+ */
+export function longestRetryAfterSeconds(results: unknown): number | undefined {
+  if (!Array.isArray(results)) {
+    return undefined;
+  }
+  let longest: number | undefined;
+  for (const result of results) {
+    const seconds = (result as { retryAfterSeconds?: unknown } | null)?.retryAfterSeconds;
+    if (typeof seconds === "number" && Number.isSafeInteger(seconds) && seconds >= 0) {
+      longest = Math.max(longest ?? 0, seconds);
+    }
+  }
+  return longest;
+}
+
+/**
  * `signal-cli send -g <groupId> -m <message>` — sends `message` (the
  * bridge's own `{tdsp:1,...}` JSON envelope, D2a) as an ordinary group
  * text message. Returns the send timestamp, which `server.ts` uses as
  * the `DeliveryId`/`ResyncRequestId` (mirrors Matrix's own use of
  * `eventId` for the same purpose) — signal-cli's own `send` result
  * shape carries a `timestamp` field (this account's own send timestamp
- * doubles as Signal's own message identifier within a conversation).
+ * doubles as Signal's own message identifier within a conversation) —
+ * and the recipients it missed for now (`missedRecipients`), which the
+ * caller decides about.
  */
 export async function sendGroupMessage(
   rpc: SignalRpc,
@@ -70,7 +127,7 @@ export async function sendGroupMessage(
   groupId: string,
   message: string,
   attachments?: readonly string[],
-): Promise<{ timestamp: number }> {
+): Promise<{ timestamp: number; missed: MissedRecipients }> {
   const result = await rpc.callRpc<{ timestamp?: number; results?: readonly unknown[] }>("send", {
     account,
     groupId,
@@ -80,7 +137,7 @@ export async function sendGroupMessage(
   if (typeof result.timestamp !== "number") {
     throw new Error(`signal-cli send did not return a timestamp: ${JSON.stringify(result)}`);
   }
-  return { timestamp: result.timestamp };
+  return { timestamp: result.timestamp, missed: missedRecipients(result.results) };
 }
 
 /**
