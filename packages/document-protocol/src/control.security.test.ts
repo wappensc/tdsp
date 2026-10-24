@@ -177,7 +177,7 @@ describe("authority: only the creator's operations count (CTL-5)", () => {
     await messenger.send(DOCUMENT_ID, "mallory", op(1, "member:mallory", "write"));
     await bob.sync();
     expect(bob.permissionOf("mallory")).toBeUndefined();
-    expect(applyErrors).toEqual([expect.objectContaining({ reason: "not-from-creator" })]);
+    expect(applyErrors).toStrictEqual([expect.objectContaining({ reason: "not-from-creator" })]);
   });
 
   it("a pace from anyone but the creator is ignored, and reported; the creator's holds (SND-15)", async () => {
@@ -186,7 +186,7 @@ describe("authority: only the creator's operations count (CTL-5)", () => {
     await messenger.send(DOCUMENT_ID, "mallory", op(1, "pace", 3_600_000));
     await bob.sync();
     expect(bob.pace).toBeUndefined();
-    expect(applyErrors).toEqual([expect.objectContaining({ reason: "not-from-creator" })]);
+    expect(applyErrors).toStrictEqual([expect.objectContaining({ reason: "not-from-creator" })]);
     await messenger.send(DOCUMENT_ID, "alice", op(1, "pace", 60_000));
     await bob.sync();
     expect(bob.pace).toBe(60_000);
@@ -198,7 +198,7 @@ describe("authority: only the creator's operations count (CTL-5)", () => {
     await messenger.send(DOCUMENT_ID, "alice", op(1, "member:alice", "read"));
     await bob.sync();
     expect(bob.permissionOf("alice")).toBe("creator");
-    expect(applyErrors).toEqual([expect.objectContaining({ reason: "names-the-creator" })]);
+    expect(applyErrors).toStrictEqual([expect.objectContaining({ reason: "names-the-creator" })]);
   });
 
   it("only the creator can change membership or close, and the creator's own record is fixed", async () => {
@@ -265,7 +265,7 @@ describe("merging operations (CTL-23, CTL-25, LOS-10)", () => {
     await alice.sync();
     await bob.sync();
     expect(bob.permissionOf("carol")).toBe("write");
-    expect(bob.controlVector).toEqual(alice.controlVector);
+    expect(bob.controlVector).toStrictEqual(alice.controlVector);
   });
 
   it("a client that is fully up to date on content and control gets no answer at all", async () => {
@@ -322,29 +322,64 @@ describe("merging operations (CTL-23, CTL-25, LOS-10)", () => {
   });
 });
 
-describe("closing (LIF-7)", () => {
-  it("is idempotent and terminal: nothing more can be granted afterwards", async () => {
+describe("closing (LIF-6, LIF-7)", () => {
+  it("is idempotent and terminal: a second close issues nothing, and nothing more can be granted", async () => {
     const messenger = new InMemoryMessengerPort();
     const { alice, bob } = await pair(messenger);
     await alice.closeDocument();
     await alice.closeDocument();
+    expect(alice.closed).toBe(true);
+    expect(alice.controlVector[alice.deviceTag as string]).toBe(1);
     await expect(alice.setMembership("bob", "write")).rejects.toBeInstanceOf(SendRefusedError);
     await bob.sync();
     expect(bob.closed).toBe(true);
   });
 
-  it("an edit sent before a close is applied whichever arrives first, and no client sends one after", async () => {
+  /**
+   * A close stops new edits at their sender, not in delivery (LIF-6). Bob's edit and Alice's close
+   * are unordered on the transport; whichever a receiver sees first, it ends with the same content.
+   */
+  async function closeRace(order: "edit-first" | "close-first") {
     const messenger = new InMemoryMessengerPort();
     const { alice, bob } = await pair(messenger);
-    await alice.sync();
-    await bob.sync();
-    bob.edit((fragment) => insertPlainText(fragment, 0, "before"));
+    const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", messenger, undefined, AS_ALICE);
+    alice.edit((fragment) => insertPlainText(fragment, 0, "before "));
+    await settle(alice, bob, carol);
+    messenger.holdNextSend("bob");
+    bob.edit((fragment) => insertPlainText(fragment, 7, "bob's late words"));
     await bob.flush();
+    messenger.holdNextSend("alice");
     await alice.closeDocument();
+    messenger.releaseHeld(DOCUMENT_ID, order === "edit-first" ? [0, 1] : [1, 0]);
+    await carol.sync();
     await alice.sync();
+    return { alice, carol };
+  }
+
+  it("an edit sent before a close is applied whichever arrives first, so every receiver converges", async () => {
+    for (const order of ["edit-first", "close-first"] as const) {
+      const { alice, carol } = await closeRace(order);
+      expect(carol.closed, order).toBe(true);
+      expect(getPlainText(carol.fragment), order).toBe("before bob's late words");
+      expect(getPlainText(alice.fragment), order).toBe("before bob's late words");
+    }
+  });
+
+  it("after a close, no client sends an edit of its own, the creator included", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { alice, bob } = await pair(messenger);
+    await alice.closeDocument();
     await bob.sync();
-    expect(getPlainText(alice.fragment)).toBe("before");
+    const before = (await messenger.receive(DOCUMENT_ID, "carol")).length;
+    bob.edit((fragment) => insertPlainText(fragment, 0, "bob after the close"));
+    alice.edit((fragment) => insertPlainText(fragment, 0, "alice after her own close"));
+    await bob.flush().catch(() => {});
+    await alice.flush().catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const after = await messenger.receive(DOCUMENT_ID, "carol");
+    expect(after.slice(before).map((d) => JSON.parse(d.payload).kind)).not.toContain("edit");
     expect(bob.mayEdit).toBe(false);
+    expect(alice.mayEdit).toBe(false);
     await expect(bob.resync()).rejects.toMatchObject({ reason: "closed" });
   });
 });
@@ -368,7 +403,7 @@ describe("two devices of the creator at once (CTL-22, CTL-23)", () => {
     for (const client of [laptop, tablet, bob]) {
       expect(client.permissionOf("bob")).toBe("read");
     }
-    expect(laptop.controlState).toEqual(tablet.controlState);
+    expect(laptop.controlState).toStrictEqual(tablet.controlState);
     // Having seen both, the laptop decides again: its wider choice now holds everywhere.
     await laptop.setMembership("bob", "write");
     await settle(laptop, tablet, bob);
@@ -391,11 +426,11 @@ describe("two devices of the creator at once (CTL-22, CTL-23)", () => {
     await tablet.setMembership("carol", "read");
     await settle(laptop, tablet);
     expect(laptop.deviceTag).not.toBe(tablet.deviceTag);
-    expect(laptop.controlVector).toEqual({
+    expect(laptop.controlVector).toStrictEqual({
       [laptop.deviceTag as string]: 1,
       [tablet.deviceTag as string]: 1,
     });
-    expect(laptop.controlAnomalies).toEqual([]);
+    expect(laptop.controlAnomalies).toStrictEqual([]);
   });
 });
 
@@ -657,7 +692,7 @@ describe("two operations under one device and counter, at a receiver (CTL-24)", 
       await messenger.send(DOCUMENT_ID, "alice", op(1, "member:carol", secondValue));
       await bob.sync();
       expect(bob.permissionOf("carol")).toBe("read");
-      expect(bob.controlAnomalies).toEqual([{ device: TAG, counter: 1 }]);
+      expect(bob.controlAnomalies).toStrictEqual([{ device: TAG, counter: 1 }]);
       expect(
         applyErrors.some(
           (error) => error instanceof ControlFrameRejectedError && error.reason === "anomaly",
@@ -700,7 +735,7 @@ describe("a device restored from an older backup (CTL-24)", () => {
     await settle(restored, bob);
     expect(bob.permissionOf("carol")).toBe("write");
     expect(bob.permissionOf("dave")).toBe("read");
-    expect(bob.controlAnomalies).toEqual([]);
+    expect(bob.controlAnomalies).toStrictEqual([]);
     expect(
       errors.some((e) => e instanceof ControlFrameRejectedError && e.reason === "anomaly"),
     ).toBe(true);
@@ -740,7 +775,12 @@ describe("a new device of the creator and participants' reports (CTL-27, CTL-29)
 
   it("a forged report cannot grant anything: values from a member's answer never apply anywhere", async () => {
     const { messenger, bob, fresh } = await lostDevice();
-    // Mallory answers the new device's request with a report naming herself a writer.
+    // Mallory answers the new device's own request — by its id, so the answer is accepted as a
+    // member's (RSY-12) — with a report naming herself a writer.
+    const request = (await messenger.inner.receive(DOCUMENT_ID, "bob"))
+      .map((delivery) => JSON.parse(delivery.payload) as { kind: string; requestId?: string })
+      .filter((frame) => frame.kind === "resync-request")
+      .at(-1) as { requestId: string };
     const forged = new ControlState();
     forged.add({ device: TAG, counter: 1, target: "member:mallory", value: "write", seen: {} });
     await messenger.inner.send(
@@ -748,12 +788,16 @@ describe("a new device of the creator and participants' reports (CTL-27, CTL-29)
       "mallory",
       encodeResyncResponseFrame({
         documentId: DOCUMENT_ID,
-        respondsTo: "0000000000000001",
+        respondsTo: request.requestId,
         update: new Uint8Array([0, 0]),
         control: snapshotOf(forged),
       }),
     );
     await settle(fresh, bob);
+    // Taken as a report, which it was — shown, and only as that (CTL-27, CTL-33).
+    expect(fresh.controlDivergences).toContainEqual(
+      expect.objectContaining({ reporter: "mallory", target: "member:mallory", reported: "write" }),
+    );
     expect(fresh.permissionOf("mallory")).toBeUndefined();
     expect(bob.permissionOf("mallory")).toBeUndefined();
   });
@@ -934,7 +978,7 @@ describe("a revoked member is not an unknown one (CTL-13, CTL-23, §7.1)", () =>
     bob.edit((fragment) => insertPlainText(fragment, 4, " B"));
     await settle(bob, alice);
     expect(getPlainText(alice.fragment)).toBe("Plan");
-    expect(refusals).toEqual([expect.objectContaining({ reason: "revoked" })]);
+    expect(refusals).toStrictEqual([expect.objectContaining({ reason: "revoked" })]);
   });
 
   it("concurrent read and revoke from two devices of the creator: revoked everywhere, never write", async () => {
@@ -1049,7 +1093,7 @@ describe("what only a member's report holds, and the creator's confirmation (CTL
     const messenger = new InMemoryMessengerPort();
     const { bob } = await pair(messenger);
     await expect(bob.confirmRights()).rejects.toThrow(/not the creator/);
-    expect(bob.controlDivergences).toEqual([]);
+    expect(bob.controlDivergences).toStrictEqual([]);
   });
 });
 

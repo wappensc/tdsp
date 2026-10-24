@@ -71,7 +71,7 @@ describe("a new creator device and participants' reports (CTL-27)", () => {
   });
 
   it("only counters of other devices enter what it counts as seen, never its own", () => {
-    expect(issuingVector(NEW, { [NEW]: 5, [LOST]: 2 }, { [NEW]: 9, [LOST]: 4 })).toEqual({
+    expect(issuingVector(NEW, { [NEW]: 5, [LOST]: 2 }, { [NEW]: 9, [LOST]: 4 })).toStrictEqual({
       [LOST]: 4,
     });
   });

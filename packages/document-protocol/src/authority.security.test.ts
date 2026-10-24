@@ -404,9 +404,9 @@ describe("a creator's answer is checked whole before any of it applies (FRM-6, C
     await carol.sync();
     expect(getPlainText(carol.fragment)).toBe("");
     expect(carol.hasCompletedBootstrap).toBe(false);
-    expect(errors.map((e) => (e instanceof FrameDecodeError ? e.reason : String(e)))).toEqual([
-      "profile-mismatch",
-    ]);
+    expect(errors.map((e) => (e instanceof FrameDecodeError ? e.reason : String(e)))).toStrictEqual(
+      ["profile-mismatch"],
+    );
   });
 
   /** SPECIFICATION.md FRM-6: an invalid part of a snapshot rejects the whole response. */
@@ -455,7 +455,7 @@ describe("a creator's answer is checked whole before any of it applies (FRM-6, C
 
   it("a valid snapshot is applied with its content — the control case for the rejections below", async () => {
     const { carol, errors } = await answerCarolWith(VALID_SNAPSHOT);
-    expect(errors).toEqual([]);
+    expect(errors).toStrictEqual([]);
     expect(getPlainText(carol.fragment)).toBe("the creator's text");
     expect(carol.permissionOf("carol")).toBe("write");
   });
@@ -548,7 +548,7 @@ describe("a piece is a frame of its own, refused for another document (FRM-7, FR
     );
     await bob.sync();
     expect(getPlainText(bob.fragment)).toBe("");
-    expect(mismatches(errors).map((error) => error.sender)).toEqual(["alice"]);
+    expect(mismatches(errors).map((error) => error.sender)).toStrictEqual(["alice"]);
   });
 
   it("an answer's piece that names another document applies nothing, and is reported with its sender", async () => {
@@ -568,6 +568,6 @@ describe("a piece is a frame of its own, refused for another document (FRM-7, FR
     );
     await bob.sync();
     expect(getPlainText(bob.fragment)).toBe("");
-    expect(mismatches(errors).map((error) => error.sender)).toEqual(["alice"]);
+    expect(mismatches(errors).map((error) => error.sender)).toStrictEqual(["alice"]);
   });
 });
