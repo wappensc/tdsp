@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { type Logger, loggerFromEnv } from "@tdsp/bridge-log";
@@ -34,8 +35,10 @@ const RECEIVE_NOTIFICATION_METHOD = "receive";
  * `IntegrityReason` — the browser-side mirror is
  * `packages/messenger-signal/src/integrity.ts`'s `IntegrityReason`, kept
  * identical by `integrity-vocabulary.security.test.ts`'s compile-time check.
+ * `"message-replaced"`: another message under the id of one already delivered —
+ * the same author and sent timestamp, other content (BRG-12).
  */
-export type IntegrityReason = "message-edited" | "message-remote-deleted";
+export type IntegrityReason = "message-edited" | "message-remote-deleted" | "message-replaced";
 
 export interface IntegrityEntry {
   readonly id: string;
@@ -198,6 +201,8 @@ export function createSyncState(
   /** `"sender:timestamp"` (the same shape as a `Delivery.id`) -> `documentId`, populated as an `update` envelope is recorded — lets a later edit/remote-delete of the same message attribute itself to the right document's own integrity log. */
   const recordedIdDocument = new Map<string, DocumentId>();
   const violations = new Map<DocumentId, IntegrityEntry[]>();
+  /** Every bound document's message by delivery id: the SHA-256 of its text, and its document. */
+  const firstSeen = new Map<string, { readonly digest: string; readonly documentId: DocumentId }>();
 
   function reject(documentId: string, id: string, sender: string, reason: IntegrityReason): void {
     const list = violations.get(documentId) ?? [];
@@ -379,6 +384,19 @@ export function createSyncState(
     if (!envelope || !isBound(envelope.documentId)) {
       return;
     }
+    // Signal identifies a message by its author and sent timestamp, which is its delivery id. The
+    // same message again is nothing new (BRG-11); another one under that id is never delivered and
+    // is recorded against the first one's document (BRG-12).
+    const id = `${incoming.sender}:${incoming.timestamp}`;
+    const digest = createHash("sha256").update(incoming.message, "utf8").digest("hex");
+    const first = firstSeen.get(id);
+    if (first !== undefined) {
+      if (first.digest !== digest && isBound(first.documentId)) {
+        reject(first.documentId, id, incoming.sender, "message-replaced");
+      }
+      return;
+    }
+    firstSeen.set(id, { digest, documentId: envelope.documentId });
     if (typeof envelope.frame === "string") {
       processEnvelope(incoming.sender, incoming.timestamp, envelope, envelope.frame);
       return;

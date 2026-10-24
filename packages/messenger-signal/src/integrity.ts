@@ -13,8 +13,10 @@ export type { IntegritySeverity };
  *
  * `"message-edited"`: `signal-cli`'s own `send --edit-timestamp`.
  * `"message-remote-deleted"`: `signal-cli`'s own `remoteDelete`.
+ * `"message-replaced"`: another message under the id of one already delivered — the same
+ * author and sent timestamp, other content.
  */
-export type IntegrityReason = "message-edited" | "message-remote-deleted";
+export type IntegrityReason = "message-edited" | "message-remote-deleted" | "message-replaced";
 
 export interface IntegrityEntry {
   readonly id: string;
@@ -37,6 +39,11 @@ export function describeSignalIntegrityEntry(entry: IntegrityEntry): {
       return {
         severity: "alert",
         text: `A message from ${who} was remotely deleted after it was sent. If it was already applied here, that cannot be undone; if a peer had not yet seen it, they never will through this message — check with them directly.`,
+      };
+    case "message-replaced":
+      return {
+        severity: "alert",
+        text: `A second message from ${who} arrived under the same id as one already delivered, with different content. It was not applied — an already-delivered document update cannot be replaced. Two devices of one account sending in the same millisecond would look the same; that is rare.`,
       };
   }
 }
