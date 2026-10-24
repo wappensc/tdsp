@@ -18,6 +18,7 @@
  * assumed from documentation.
  */
 
+import { parseRetryAfter } from "@tdsp/messenger-port";
 import { parseMxc } from "./attachment.ts";
 
 export interface MatrixApiConfig {
@@ -35,11 +36,14 @@ export class MatrixApiError extends Error {
   // `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` at module load — which only running
   // `src/index.ts` itself shows, not the tests.
   readonly status: number;
+  /** The wait the homeserver's `Retry-After` header asked for, in milliseconds, if it sent one. */
+  readonly retryAfterMs: number | undefined;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, retryAfterMs?: number) {
     super(message);
     this.name = "MatrixApiError";
     this.status = status;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -74,6 +78,7 @@ export async function uploadMedia(
     throw new MatrixApiError(
       response.status,
       `upload of ${bytes.length} bytes failed: ${response.status} ${await response.text()}`,
+      parseRetryAfter(response.headers.get("retry-after")),
     );
   }
   const body = (await response.json()) as { content_uri?: unknown };
@@ -188,6 +193,7 @@ export async function sendEvent(
     throw new MatrixApiError(
       response.status,
       `send ${eventType} into ${roomId} failed: ${response.status} ${await response.text()}`,
+      parseRetryAfter(response.headers.get("retry-after")),
     );
   }
   const body = (await response.json()) as { event_id: string };

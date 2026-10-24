@@ -10,8 +10,9 @@ import { MatrixApiError } from "./matrix-api.ts";
  * error codes as the spec lists them; **not** yet exercised against a rate-limited
  * homeserver here; the local Synapse test server's invite limiter is the only
  * one met so far):
- * - **429** (`M_LIMIT_EXCEEDED`) is a rate limit, and the body's `retry_after_ms` is
- *   how long the homeserver asked us to wait — passed on as `Retry-After`.
+ * - **429** (`M_LIMIT_EXCEEDED`) is a rate limit. How long the homeserver asked us to wait
+ *   is its `Retry-After` header, where Matrix 1.10 put it, and otherwise the body's
+ *   `retry_after_ms`, where earlier versions had it — passed on as `Retry-After` (TRN-11).
  * - **413** (`M_TOO_LARGE`) is a message over the event size limit.
  * - **403** (`M_FORBIDDEN`) is not being allowed to send into that room, which
  *   waiting does not change.
@@ -29,10 +30,11 @@ export function classifySendFailure(error: unknown): SendFailure {
     return { status: 502 };
   }
   if (error.status === 429) {
-    const retryAfterMs = /"retry_after_ms"\s*:\s*(\d+)/.exec(error.message)?.[1];
+    const inBody = /"retry_after_ms"\s*:\s*(\d+)/.exec(error.message)?.[1];
+    const retryAfterMs = error.retryAfterMs ?? (inBody === undefined ? undefined : Number(inBody));
     return retryAfterMs === undefined
       ? { status: 429 }
-      : { status: 429, retryAfterSeconds: Math.ceil(Number(retryAfterMs) / 1000) };
+      : { status: 429, retryAfterSeconds: Math.ceil(retryAfterMs / 1000) };
   }
   if (error.status === 413 || error.status === 403) {
     return { status: error.status };

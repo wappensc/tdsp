@@ -38,6 +38,9 @@ No byte on the wire changes; the new requirements are why this is a minor versio
 - A send failure whose reason is none of the four — one an adapter of a later version names —
   is retried as `unavailable`, as TRN-12 requires. `TransportSendError.retryable` is now false
   only for `too-large` and `rejected`; before, the engine dropped such a change (#72).
+- The Matrix bridge passes on the wait of a rate limit from the homeserver's `Retry-After`
+  header, where Matrix 1.10 puts it, and from the body's `retry_after_ms` only without one
+  (TRN-11). `@tdsp/messenger-port` exports `parseRetryAfter` for it (#76).
 - The Signal bridge no longer reports a frame as sent that Signal rate-limited, or could not
   deliver, for some members of the group: `signal-cli` raises no error once one member got a
   message, so the bridge now reads its result per recipient and answers 429, with the longest

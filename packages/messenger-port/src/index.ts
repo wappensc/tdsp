@@ -440,8 +440,11 @@ export function transportSendErrorFromHttp(
   return new TransportSendError("unavailable", message);
 }
 
-/** An HTTP `Retry-After`: a number of seconds, or a date. `undefined` if absent or unreadable. */
-function parseRetryAfter(header: string | null | undefined): number | undefined {
+/**
+ * An HTTP `Retry-After` — a number of seconds, or a date — in milliseconds. `undefined` if absent
+ * or unreadable. Shared by the adapters and by the bridges that read a messenger's own header.
+ */
+export function parseRetryAfter(header: string | null | undefined): number | undefined {
   if (header === null || header === undefined || header.trim() === "") {
     return undefined;
   }
