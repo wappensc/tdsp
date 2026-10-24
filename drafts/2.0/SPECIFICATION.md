@@ -475,10 +475,15 @@ type Permission = "read" | "write" | "creator";
   forget an id once `receive` no longer returns it, except the ids of its own
   recent sends, whose echo may still be on its way. Because a forgotten delivery
   can be offered again (BRG-17), processing a frame a second time MUST NOT change
-  the document or control state again: content is a CRDT; control state is a set
-  of operations, in which an operation already held is inert (CTL-24); a decline
-  is reported once per sender (DCL-3); an overlay is adopted once (RSY-15). A resync request is recognised by its `requestId` (RSY-16) while
-  the engine remembers it; one old enough to be forgotten may be answered again.
+  the document or control state again:
+  - content is a CRDT;
+  - control state is a set of operations, in which an operation already held is
+    inert (CTL-24);
+  - a decline is reported once per sender (DCL-3);
+  - an overlay is adopted once (RSY-15).
+
+  A resync request is recognised by its `requestId` (RSY-16) while the engine
+  remembers it; one old enough to be forgotten may be answered again.
   *Rationale:* the counterpart of TRN-7. Remembering every id for a document's
   whole life would grow without bound; making every kind's effect idempotent is
   what lets an engine forget, whatever a bridge re-offers after a restart. What a
@@ -491,16 +496,15 @@ type Permission = "read" | "write" | "creator";
   the application believe something happened that did not.
 - **TRN-18** · *adapter* — An adapter SHOULD offer `receiveSince`: the deliveries
   after the cursor `after`, with `truncated` true when deliveries after it may have
-  come and gone unseen. It MUST answer `truncated: true` when `after` is not in the
-  bridge's window — the delivery has left it, or the bridge never issued that id —
-  and when the bridge knows that it passed over part of what its messenger held for
-  the channel after `after`: a catch-up that stopped before it reached what the
-  bridge had read, an answer of its messenger it skipped unread. Without `after`, it
-  answers what `receive` answers and `truncated` is false. It MUST answer the
-  deliveries in the order its window holds them, oldest first, so that the last
-  delivery of an answer is where the next one continues; an empty answer leaves
-  that place where it was. An adapter that cannot tell whether a cursor left its
-  window MUST NOT offer it.
+  come and gone unseen. It MUST answer `truncated: true`:
+  - when `after` is not in the bridge's window — the delivery has left it, or the
+    bridge never issued that id;
+  - when the bridge knows that it passed over part of what its messenger held for
+    the channel after `after`: a catch-up that stopped before it reached what the
+    bridge had read, an answer of its messenger it skipped unread.
+
+  Without `after`, it answers what `receive` answers and `truncated` is false. An
+  adapter that cannot tell whether a cursor left its window MUST NOT offer it.
   *Rationale:* without a cursor an engine can only guess from overlapping answers
   whether its last poll and this one missed something between them (LOS-8). The
   bridge knows; saying so turns the guess into a fact where the messenger has a
@@ -513,10 +517,14 @@ type Permission = "read" | "write" | "creator";
   moves past the gap would otherwise read as complete, and an engine that restored
   its control state from before the gap would read on as if it had missed nothing,
   a revocation included (CTL-41). A message the bridge refuses or ignores (BRG-10,
-  BRG-12) is not passed over: it was never a delivery. The order is the window's
-  own, not the messenger's: an engine continues after the last delivery an answer
-  held (LOS-9), so an answer in another order would skip what lies between,
-  however the messages travelled.
+  BRG-12) is not passed over: it was never a delivery.
+- **TRN-21** · *adapter* — An adapter that offers `receiveSince` (TRN-18) MUST
+  answer the deliveries in the order its window holds them, oldest first, so that
+  the last delivery of an answer is where the next one continues; an empty answer
+  leaves that place where it was.
+  *Rationale:* the order is the window's own, not the messenger's: an engine
+  continues after the last delivery an answer held (LOS-9), so an answer in another
+  order would skip what lies between, however the messages travelled.
 - **TRN-19** · *adapter* — An adapter SHOULD offer `instance`: a string that names
   the bridge's window as it stands, its *epoch*. The instance MUST change whenever
   the bridge may have lost a delivery it held, or one its messenger had already
@@ -525,14 +533,15 @@ type Permission = "read" | "write" | "creator";
   restart that kept both included.
   *Rationale:* a bridge that restarts may lose what it held, and a restart that
   falls entirely between two polls is otherwise invisible
-  ([§10.6](#106-what-loss-detection-cannot-notice)). A new id is what the engine needs to treat it like a truncated window
-  (LOS-9), with or without a cursor. What decides is the loss, not the process: a
-  bridge that keeps its window and its position at the messenger together on disk
-  loses nothing by restarting, and a new id would cost every engine that reads it
-  a forced resync (LOS-6) for nothing; a bridge that holds messages it took from
-  its messenger but has not entered yet — events waiting for their key,
-  notifications nobody read yet — loses them in a restart and must say so. A new
-  id on every start of the bridge is the simplest way to meet the MUST.
+  ([§10.6](#106-what-loss-detection-cannot-notice)). A new id is what the engine
+  needs to treat it like a truncated window (LOS-9), with or without a cursor. What
+  decides is the loss, not the process: a bridge that keeps its window and its
+  position at the messenger together on disk loses nothing by restarting, and a
+  new id would cost every engine that reads it a forced resync (LOS-6) for
+  nothing; a bridge that holds messages it took from its messenger but has not
+  entered yet — events waiting for their key, notifications nobody read yet —
+  loses them in a restart and must say so. A new id on every start of the bridge
+  is the simplest way to meet the MUST.
 - **TRN-17** · *adapter* — `channelMembers` MUST answer the channel's members as
   the messenger reports them at the moment of the call, this account included,
   and MUST refuse a channel this account is not in rather than answer for it. It
@@ -584,7 +593,7 @@ for the person where only the person can help (TRN-20).
 |---|---|---|
 | `rate-limited` | The messenger is throttling. MAY carry `retryAfterMs`, the wait the messenger asked for | Yes |
 | `unavailable` | The bridge or the messenger could not be reached or failed | Yes |
-| `needs-person` | Refused until a person acts on an account: none is set up or signed in, an identity is not trusted, a device is not confirmed, the storage that holds the messages is full | Once a person acted (TRN-20) |
+| `needs-person` | Refused until a person acts on an account: none is set up or signed in, an identity is not trusted, a device is not confirmed, the storage that holds the messages is full | Once a person acted (TRN-20, TRN-22) |
 | `too-large` | The payload exceeds what one message can carry | No |
 | `rejected` | Refused for a reason waiting cannot change: unknown document, forbidden sender, malformed request | No |
 
@@ -603,15 +612,13 @@ for the person where only the person can help (TRN-20).
   *Rationale:* the fault this classification exists to remove is dropping a
   change on an unfamiliar failure; wrongly retrying costs a bounded back-off,
   wrongly dropping costs the document.
-- **TRN-20** · *engine, application* — An engine MUST keep a change whose send was
-  refused as `needs-person`, as for a reason worth retrying (SND-6), MUST expose,
-  beside the states of SND-10, that sending waits for the person, with the
-  transport's message, and MUST NOT report the change as dropped. After such a
-  refusal it MUST NOT send anything — no message of any kind — sooner than its
-  longest back-off ([Appendix B](#appendix-b-recommended-values)), unless its
-  application asks it to send now, which an application SHOULD do once it sees the
-  person act. An application MUST show the person that sending waits for them, and
-  what the transport said.
+- **TRN-20** · *engine* — An engine MUST keep a change whose send was refused as
+  `needs-person`, as for a reason worth retrying (SND-6), MUST expose, beside the
+  states of SND-10, that sending waits for the person, with the transport's
+  message, and MUST NOT report the change as dropped. After such a refusal it MUST
+  NOT send anything — no message of any kind — sooner than its longest back-off
+  ([Appendix B](#appendix-b-recommended-values)), unless its application asks it to
+  send now (TRN-22).
   *Rationale:* the refusal does not pass by waiting, so the back-off of SND-7 would
   only spin, offering the messenger the same refused message again and again; it
   passes once the person trusts the identity, confirms the device, signs in or
@@ -619,6 +626,13 @@ for the person where only the person can help (TRN-20).
   repairs. The person may act where the application cannot see it — on another
   device, in the operating system's settings — so the engine still tries now and
   then, at the slowest rate it retries anything.
+- **TRN-22** · *application* — While its engine exposes that sending waits for the
+  person (TRN-20), an application MUST show the person that sending waits for them,
+  and what the transport said, and SHOULD ask the engine to send now once it sees
+  the person act.
+  *Rationale:* only the person can lift the refusal, so they have to learn of it,
+  and what the transport says they must do; once they acted, waiting out the
+  back-off would only delay what may go now.
 
 ### 3.5 Transport profile
 
@@ -2896,9 +2910,9 @@ show that first, and the digests are compared once it has arrived.
   reach its messenger, which costs one answered request when nothing was lost.
 - **LOS-9** · *engine* — Where the transport can say what it lost:
   - An engine whose transport offers `receiveSince` MUST read through it, with the
-    last `DeliveryId` of the latest answer that held one as the cursor (TRN-18). It
-    MUST treat an answer with `truncated: true` as *history truncated* evidence,
-    and MUST NOT apply LOS-8's comparison of answers then.
+    last `DeliveryId` of the latest answer that held one as the cursor (TRN-18,
+    TRN-21). It MUST treat an answer with `truncated: true` as *history truncated*
+    evidence, and MUST NOT apply LOS-8's comparison of answers then.
   - An engine whose transport offers `instance` (TRN-19), with or without
     `receiveSince`, MUST treat as such evidence too an `instance` other than the
     one that answered its previous read — after a restart, other than the one its
@@ -3792,8 +3806,9 @@ The changes have six reasons, which the tables below cite by letter:
 | FRM-15 to FRM-17 | Parts of FRM-9, FRM-10 and FRM-12 as requirements of their own: an extension's name (FRM-15), checking the value of an extension one implements (FRM-16), what an engine keeps and passes on of an extension (FRM-17) | Readability: each was a part of a longer requirement, and requires what it did there |
 | ARC-5 | An application may carry a document between one person's devices through another service, and tells the person | ARC-1 concerns participants; it said nothing about one person's devices, which a messenger without history cannot bring up to date. |
 | INV-9 | Joining on another device of the person without asking again, when the confirmation travels from where the person gave it | INV-3 protects the creator's identity; the service that carries it is trusted as the person's machine. |
-| TRN-20 | A send refused as `needs-person` is kept, shown, and tried again when the application says the person acted, or after the longest back-off | The person can lift the refusal and waiting cannot; without its own handling it would spin or be dropped. |
-| TRN-18, TRN-19 | An optional cursor with `truncated`, answered in the window's order, and truncated also behind what the bridge passed over; a bridge instance id, the epoch of the window, that changes whenever the bridge may have lost something | E: the engine continues after the last delivery an answer held; a gap the bridge skipped, or a loss in a restart, is what it cannot see by itself. |
+| TRN-20 (with TRN-22) | A send refused as `needs-person` is kept, shown, and tried again when the application says the person acted, or after the longest back-off | The person can lift the refusal and waiting cannot; without its own handling it would spin or be dropped. |
+| TRN-18 (with TRN-21), TRN-19 | An optional cursor with `truncated`, answered in the window's order, and truncated also behind what the bridge passed over; a bridge instance id, the epoch of the window, that changes whenever the bridge may have lost something | E: the engine continues after the last delivery an answer held; a gap the bridge skipped, or a loss in a restart, is what it cannot see by itself. |
+| TRN-21, TRN-22 | Parts of TRN-18 and TRN-20 as requirements of their own: the order of a `receiveSince` answer (TRN-21), what the application shows while sending waits for the person (TRN-22) | Readability: each was a part of a longer requirement, and requires what it did there |
 | CTL-20 to CTL-29 (with CTL-38 and CTL-40) | Operations, merging, the snapshot, persistence, a new device of the creator; reported counters only for a device without a basis; a basis persisted with the state, a cursor never restored ahead of the control state, and holding every message as the alternative to persisting synchronously | A. |
 | CTL-33 | What only members hold shown to a device of the creator, with the values reported; resolved by an explicit confirmation that counts the reported counters as seen | A: deciding a target again superseded a vanished device's decision only when it was narrower; automatic is only what a rule merges without a question of authority. |
 | PRF-1, item 9 | Reading an update and a state vector without applying them; one the profile cannot read, or with a byte after it, rejects its frame (§4.4) | A frame is checked whole before anything of it is applied (FRM-6), and CRDT libraries fail differently on bytes they cannot read: one throws, another has applied part already. |
