@@ -1022,9 +1022,9 @@ This specification defines one profile, `yjs-paragraphs/1`, in
   8. a canonical encoding of **what a replica deleted**: the same bytes for the same
      state, whatever the order, grouping or garbage collection of the updates it
      came from, and other bytes when a deletion is missing
-     ([§10.3](#103-reports-and-streams), state digests); and the same encoding of what it deleted **of the items a given
-     state vector counts**, which within the replica's own state vector is the
-     encoding of all it deleted;
+     ([§10.3](#103-reports-and-streams), state digests); and the same encoding of
+     what it deleted **of the items a given state vector counts**, which within the
+     replica's own state vector is the encoding of all it deleted;
   9. how to **read without applying**: to tell, changing no replica, whether bytes
      are exactly one update, and whether they are exactly one state vector — every
      part of it readable, and no byte after it.
@@ -1119,12 +1119,15 @@ keyed by a MemberId. An overlay that breaks this rejects the whole frame (FRM-6)
   responder's view would overwrite.
 - **ATR-2** · *engine* — When the lengths differ, or the answer is to a request
   made while the engine held content — the response healed only part of a gap, or
-  it answers a member or a creator that restarted with content — the engine MUST
-  NOT adopt ranges wholesale, MUST leave its own and normally received ranges
-  unchanged, and MUST leave content it cannot place *unattributed* rather than
-  attribute it to the responder. Unattributed text is `authorId: null` in an
-  overlay the engine sends and is no member's last edit; an engine MUST NOT name a
-  MemberId of its own invention for it.
+  it answers a member or a creator that restarted with content —, the engine:
+  - MUST NOT adopt ranges wholesale;
+  - MUST leave its own and normally received ranges unchanged;
+  - MUST leave content it cannot place *unattributed* rather than attribute it to
+    the responder.
+
+  Unattributed text is `authorId: null` in an overlay the engine sends and is no
+  member's last edit; an engine MUST NOT name a MemberId of its own invention for
+  it.
   *Rationale:* the overlay's offsets are into the responder's view, not the
   receiver's; a confident misattribution is worse than none. A MemberId that stands
   for "nobody" is one that another implementation shows as a person, and one a
@@ -1223,12 +1226,15 @@ the target `layer:<layer id>:member:<MemberId>` ([§7](#7-control-state)), or
 member that may only read the content can so be allowed to comment, and one that
 may write the content kept from a layer.
 
-- **LAY-5** · *engine* — A member's permission on a layer MUST be its right on
-  that layer if the creator set one, and otherwise — the creator set none, or set
-  it to inherit (`null`) — its permission on the document. A member whose
-  permission on the document is revoked (§7.1) MUST have none on any layer, also
-  where it holds a right `write` there. The creator's permission is `creator` on
-  every layer, and a closed document takes nothing in any layer (LIF-6).
+- **LAY-5** · *engine* — A member's permission on a layer MUST be:
+  - its right on that layer, if the creator set one;
+  - otherwise — the creator set none, or set it to inherit (`null`) — its
+    permission on the document.
+
+  A member whose permission on the document is revoked (§7.1) MUST have none on any
+  layer, also where it holds a right `write` there. The creator's permission is
+  `creator` on every layer, and a closed document takes nothing in any layer
+  (LIF-6).
   *Rationale:* without an exception every layer follows the document, so a
   document needs no layer right at all, and a member the creator never named
   keeps its unknown permission there too (CTL-13). A right may be wider than the
@@ -1237,27 +1243,29 @@ may write the content kept from a layer.
   creator removed has no permission left to make an exception to, and a forgotten
   exception must not let it go on writing.
 - **LAY-6** · *engine* — An engine MUST refuse to send an `edit` of its own —
-  reporting the refusal, not retrying it, as CTL-13 — that changes a layer on
-  which its permission is explicitly `read`, or the content while its permission
-  on the document is, or anything while its permission on the document is revoked;
-  it MUST tell what a change touches from the change itself
-  as it makes it, by the parts of the document the profile names (YJS-1: `content`
-  is the content, a top-level type named by a layer id is that layer, and any other
-  top-level type counts as content, YJS-4). A change
-  that touches several parts and may not be sent for one of them MUST be refused
-  whole, and an application that holds changes (CTL-42) holds it whole. An engine
+  reporting the refusal, not retrying it, as CTL-13 — that changes:
+  - a layer on which its permission is explicitly `read`;
+  - the content, while its permission on the document is explicitly `read`;
+  - anything, while its permission on the document is revoked.
+
+  *Rationale:* as with the permission on the document, receivers do not reject an
+  edit for its sender's right on a layer (CTL-7): grant and change are unordered,
+  and the rights are as strong as the participants' engines (§15.2). `read` hides
+  nothing: whoever is in the channel reads every layer. In `yjs-paragraphs/1` an
+  editor re-anchors a layer when it splits a paragraph (Appendix A); a member who
+  may write the content and only read the layer cannot, and the layer's definition
+  says what a reader shows then (LAY-4).
+- **LAY-7** · *engine* — An engine MUST tell what a change touches (LAY-6) from the
+  change itself as it makes it, by the parts of the document the profile names
+  (YJS-1: `content` is the content, a top-level type named by a layer id is that
+  layer, and any other top-level type counts as content, YJS-4). A change that
+  touches several parts and may not be sent for one of them MUST be refused whole
+  (LAY-6), and an application that holds changes (CTL-42) holds it whole. An engine
   MUST NOT merge, into one message, changes it may send with changes it may not.
-  *Rationale:* where `read` takes effect today, the sending engine, is the one
-  place where every change can be told apart: it knows the transaction, while a
+  *Rationale:* where `read` takes effect, the sending engine, is the one place
+  where every change can be told apart: it knows the transaction, while a
   receiver may hold an update whose predecessors it lacks. An update cannot be cut
-  safely by the parts it touches, so a change is sent or held whole. As with the
-  permission on the document, receivers do not reject an edit for its sender's
-  right on a layer (CTL-7): grant and change are unordered, and the rights are
-  as strong as the participants' engines (§15.2). `read` hides nothing: whoever
-  is in the channel reads every layer. In `yjs-paragraphs/1` an editor re-anchors
-  a layer when it splits a paragraph (Appendix A); a member who may write the
-  content and only read the layer cannot, and the layer's definition says what a
-  reader shows then (LAY-4).
+  safely by the parts it touches, so a change is sent or held whole.
 
 ## 6. Documents and their lifecycle
 
@@ -3306,7 +3314,7 @@ it is only *worth using* with it.
 | Concern | Mechanism | Worth |
 |---|---|---|
 | Permissions | The creator grants and revokes; each engine refuses to send an edit before its bootstrap, while its own permission is `read` or revoked, and once the document is closed — not when its permission is merely unknown after the bootstrap (CTL-13) | Among cooperating engines only, and only while their applications keep what the engine refuses out of the engine's document, which a resync answer carries whole (CTL-42, RSY-10); receivers do not reject an edit for its sender's permission (CTL-7) |
-| Rights on layers | The creator sets a member's right on a layer, or lets it inherit the permission on the document; each engine refuses to send a change of a layer on which its permission is `read`, of any layer once its permission on the document is revoked, and a change that touches such a layer whole (LAY-5, LAY-6) | As for permissions: among cooperating engines only; `read` hides nothing, every participant reads every layer it receives |
+| Rights on layers | The creator sets a member's right on a layer, or lets it inherit the permission on the document; each engine refuses to send a change of a layer on which its permission is `read`, of any layer once its permission on the document is revoked, and a change that touches such a layer whole (LAY-5, LAY-6, LAY-7) | As for permissions: among cooperating engines only; `read` hides nothing, every participant reads every layer it receives |
 | Creator identity | Fixed; control operations and snapshots only from it (CTL-5, CTL-25); device tags tell its devices apart and authenticate nothing | Exactly as strong as the messenger's sender authentication |
 | Replay of control frames | Control state is a set of operations (CTL-23) | A replayed operation is inert (CTL-6) |
 | Close | Cooperating engines stop sending edits of their own; edits sent before the close still arrive and apply (LIF-6) | Among cooperating engines only, and only while their applications keep a change made after the close out of the engine's document (CTL-42) — a modified engine can keep sending edits, which genuine engines apply, exactly as with `read` (CTL-7) |
@@ -3436,7 +3444,7 @@ interoperates, whichever Yjs release — or independent implementation — it us
   directly, in order, without formatting or embeds; a `Y.XmlText` that is itself a
   child of `content` is a paragraph of its own text, and anything nested deeper
   adds nothing. A top-level type beside `content` that no layer id names is not in
-  the projection, and a change of it is a change of the content (LAY-6).
+  the projection, and a change of it is a change of the content (LAY-7).
   *Rationale:* a CRDT cannot refuse part of the state it converges to: a receiver
   that rejected such an update would fall behind everyone who applied it, and every
   later update of its writer would wait for it. Projected one way everywhere, the
@@ -3776,7 +3784,8 @@ The changes have six reasons, which the tables below cite by letter:
 | PRF-1, item 9 | Reading an update and a state vector without applying them; one the profile cannot read, or with a byte after it, rejects its frame (§4.4) | A frame is checked whole before anything of it is applied (FRM-6), and CRDT libraries fail differently on bytes they cannot read: one throws, another has applied part already. |
 | LOS-12, CTL-31; PRF-1, item 8 | State digests beside the vectors in heartbeats, requests and an answer's last piece; a receiver that holds a sender's vector compares what it deleted within it, and different digests are evidence and something to offer; a device of the creator learns of a collision from a report | wappensc/tdsp#71: a vector counts what was inserted or issued, so a lost deletion and two operations under one dot went unseen; the digest is a fixed 8 bytes. A review of draft 2: compared at equal vectors only, a lost deletion stayed unseen at a receiver that had edited since. |
 | LOS-13, LOS-14 (with LOS-17, LOS-18, LOS-21 and LOS-22) | Streams: a heartbeat, a request and an answer name their sender's engine as it runs now and number its reports; a report replaces only an older one of its stream; an answer applied whole ends a difference in digests; an answer's pieces are numbered, the last with the count, and one with a piece missing is evidence, counted apart from the stream's reports and its other answers, until it is whole or the stream's state at a higher number is held; copies count once, pieces that disagree are never whole, an answer given up for a bound stays evidence | A review of draft 2: kept by member, a lagging device's report ended the evidence another device's had shown, and a receiver that held more than an answer could not tell whether a piece of it was missing. A review of draft 3: a piece of a later answer of the same stream, to someone else, ended the evidence of an incomplete one. |
-| LAY-5, LAY-6 | A member's right on a layer, inherited from the document where the creator set none or reset it (`null`); of concurrent values `read` before inherit before `write` (CTL-23), the narrowest effective right whatever the permission on the document; none for a revoked member; enforced by the sending engine, a change that touches a layer it may not write refused whole | wappensc/tdsp#33 (L5) and #50 (no. 2): commenting on content one may only read, and its opposite, without a value beyond `read` and `write`. Ordered with inherit as the narrowest value, a concurrent reset undid a restriction and let a member write who should only read. |
+| LAY-5, LAY-6 (with LAY-7) | A member's right on a layer, inherited from the document where the creator set none or reset it (`null`); of concurrent values `read` before inherit before `write` (CTL-23), the narrowest effective right whatever the permission on the document; none for a revoked member; enforced by the sending engine, a change that touches a layer it may not write refused whole | wappensc/tdsp#33 (L5) and #50 (no. 2): commenting on content one may only read, and its opposite, without a value beyond `read` and `write`. Ordered with inherit as the narrowest value, a concurrent reset undid a restriction and let a member write who should only read. |
+| LAY-7 | Part of LAY-6 as a requirement of its own: how an engine tells what a change touches, and that it refuses or holds a change whole | Readability: it was a part of a longer requirement, and requires what it did there |
 | CTL-30, CTL-32 | Bounds on device tags, targets, holes and bytes; the operation that fills a hole is never refused for them; at a bound, the first in code point order are kept, a close always; a creator issues nothing the bounds or one answer could not hold, a new target only up to 1 MiB of the 3 MiB a receiver holds; beyond the bytes, a capacity conflict: no new target, no edit of one's own, shown until a person resolves it; the bytes are measured without the close, which no bound refuses and every device of the creator can always issue; the close keeps each device's latest of 64 devices and no `seen`, and a target's `seen` over 64 devices is refused like the bytes | A: a set of operations would otherwise let a forged or broken creator application make every receiver keep anything (§1.7, item 11). Refusing a union over the bytes whole left receivers of the same operations with different rights; two bounds keep devices that grew apart mergeable, and the conflict names what is left. A review of draft 3: at the bound a full document could not be closed; the room between the two bounds was no reserve, since changes of targets held used it too. A review of draft 4: the close, out of the bytes, was bounded by nothing, and any target's `seen` could name more devices than a snapshot carries — states the own decoder refused. |
 | CTL-34 to CTL-43 | Parts of CTL-30, CTL-26, CTL-13 and CTL-33 as requirements of their own: how the bytes are measured (CTL-34), what is kept at a bound (CTL-35), the close beyond every bound (CTL-36), what a device of the creator may issue (CTL-37), persisting asynchronously (CTL-38), the control state of any other participant (CTL-39), the control state and the cursor (CTL-40), the bootstrap after a restart (CTL-41), holding changes (CTL-42), showing divergences (CTL-43) | Readability: each was one clause of a longer requirement, and requires what it did there |
 | RSY-16, RSY-17 | A control vector and `force` in requests, `null` until a member is bootstrapped, whatever it restored; when to answer | A. |
