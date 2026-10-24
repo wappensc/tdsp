@@ -1,6 +1,6 @@
 {
   "$comment": "The wire lock (tools/wire-lock.ts): hashes of every frozen wire entry, published test vector, constant and normative wire section of the specification, with the specification's version. tools/wire-lock.wire.test.ts fails on any difference and names its kind; only the CI role may accept one, with `pnpm run wire:lock -- --accept <incompatible|addition|specification>`, which checks that the specification's version moved accordingly. Never edit by hand.",
-  "specificationVersion": "1.4",
+  "specificationVersion": "1.4.1",
   "files": {
     "wire/frames-v1.json": {
       "frame": "2430f1a2ad2982d0067885488a4c89e21ad1d7c83b115ba8f1b20acc88dfaea8",
@@ -148,12 +148,17 @@
     }
   },
   "sections": {
-    "## 4. The payload frame": "5be2a7a4d0affac3b441f2f59dbe6510b20ddd09b544f0191a0e9e1cdc5876b5",
+    "## 4. The payload frame": "e7c9d7bd3ce5cabc5188b05b12e02bd1fb6a41d4d56a84418d1a305a55137011",
     "## 5. Document profiles": "b246095945278e98b691860f45339f086262e549ae21632b188e7f741a46fede",
     "## 7. Control state": "8e5a676cbbd6dabda76ffb97d07f6803203df21125cada8794c186c2d5e96dc6",
-    "## 11. Invitations": "3d71305d2222c5e65e51c4c35e0f69c94ddc249569f8fbded3b6ded6316f79de",
-    "## 13. Messenger bindings": "b68cf4d85191ca19455214435f58e4836aa6852e4728c5a03e5876664c42642a",
+    "## 11. Invitations": "7fbc9442cb837857758a62c0c01e7f00ae7e2e358f46470cfb97191adfdc3d3c",
     "## Appendix A. Profile `yjs-paragraphs/1`": "6ad7e9d4c72bfc4a280f2f6a69fac39e2c43399c824e2e6e9dbef49985ac4bdd",
     "## Appendix B. Recommended values": "bbe6c76dc13b949c15a20900fe6bb1bf202ac836841d13dffc0dc2191ae53f33"
+  },
+  "documents": {
+    "bindings/bridges.md": "97df74ce06d07cf9a85b1b2f0546c529eaa61a51c1ff82150efd1968ab8df2f7",
+    "bindings/signal.md": "019d6010b4d7d115db934592afb70ade0121b058552a5286a16823faa6d1da81",
+    "bindings/matrix.md": "8028d8296d17bbcac796bbb0db6e68e3871de5c1d417c2ad7010c8717af68808",
+    "bindings/email.md": "5651431ddccf83c9b6e3c3e591c4233f154a53ad8cb7733a00724bb279ac2a2e"
   }
 }

@@ -14,7 +14,17 @@ parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wa
 
 ## Unreleased
 
-Nothing yet.
+No byte on the wire changes from v1.5.0.
+
+### Specification: TDSP 1.4.1
+
+No byte on the wire changes, and no requirement does.
+
+- The bridges (§12.1 to §12.5), the local bridge interface (§12.6), the messenger bindings
+  (§13) and their comparison (Appendix C) are documents of their own in
+  [bindings/](bindings/): `bridges.md`, `local-bridge-interface.md`, `signal.md`, `matrix.md`
+  and `email.md`. Their text is unchanged; requirements keep their IDs and sections their
+  numbers, and §12, §13 and Appendix C of the specification point to them (#81).
 
 ## v1.5.0 — 2026-10-24 · implements TDSP 1.4
 
