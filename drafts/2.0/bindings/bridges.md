@@ -86,12 +86,25 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
 
 ### 12.4 Receiving
 
-- **BRG-10** · *bridge* — A bridge MUST route by the envelope's documentId. It MUST
-  ignore silently — without an error and without an integrity record — a message
-  that is not a TDSP envelope, an envelope of an unknown kind, an unparseable
-  body, and an envelope for a documentId it has no binding for.
+- **BRG-10** · *bridge* — A bridge MUST route by the envelope's documentId, and MUST
+  take a message for a document only from the channel that document is bound to.
+  It MUST ignore silently — without an error and without an integrity record — a
+  message that is not a TDSP envelope, an envelope of an unknown kind, an
+  unparseable body, an envelope for a documentId it has no binding for, and one
+  that arrives in another channel than the one its documentId is bound to; an
+  edit, replacement or deletion that arrives in another channel is not attributed
+  to the document either (BRG-12).
   *Rationale:* a channel is shared with human conversation and possibly with other
-  documents; none of those is an anomaly.
+  documents; none of those is an anomaly. Who is in a document's channel decides
+  who can write into it: receivers do not reject an edit for its sender's
+  permission (CTL-7), and the messenger is trusted for channel membership
+  ([§15.2](../SPECIFICATION.md#152-what-tdsp-assumes)). A bridge's account is
+  usually in other channels too, with other people; taking a frame from one of
+  them — for a documentId its sender learned while a member of the document's
+  channel, say — would let someone outside that channel write into the document,
+  and a deletion from there would fill its integrity log with records nobody in
+  the channel caused. The email binding's channel is a fixed participant set,
+  checked for every message (EML-2).
 - **BRG-11** · *bridge* — A bridge MUST make every delivery received for a document
   available, cumulatively and unfiltered (TRN-7): not filtered by kind, content or
   sender. It MAY drop silently a message its messenger presents again — the same
@@ -110,7 +123,8 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
 - **BRG-12** · *bridge* — A delivered message is immutable. When the messenger
   presents an edit, replacement, redaction or remote deletion of a delivered
   message, or a second message with other content under a delivery id the bridge
-  delivered — compared by the frame's bytes, for an attachment by the hash its
+  delivered — in this run, or before a restart under an id it kept across it —
+  compared by the frame's bytes, for an attachment by the hash its
   envelope names, before anything is fetched — the bridge MUST NOT hand the new
   content up, MUST NOT treat it as a new message, and MUST record it as an
   integrity violation for the document where it can attribute it, with the reason
@@ -124,12 +138,24 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
   | `message-replaced` | Another message, with other content, under the delivery id of one delivered |
 
   A binding MAY name reasons of its own for refusals only it defines (a signature
-  that does not verify, say), never another one for the cases above.
+  that does not verify, say), never another one for the cases above. A message the
+  bridge does not take (BRG-10; MTX-5, an unencrypted edit in an encrypted Matrix
+  room among them) is none of these cases: nothing is recorded for it. A bridge
+  that keeps a delivery id across a restart MUST keep with it what it compares
+  by.
   *Rationale:* an applied CRDT update cannot be retracted; honouring a change would
   leave participants holding different versions of the same message with nothing
   marking the difference. Every supported messenger allows such edits. One set of
   reasons lets an application show what any bridge recorded the same way (BRG-15),
-  whichever messenger it came through.
+  whichever messenger it came through. A record is evidence of something done to a
+  document's channel; a message the bridge does not take records nothing, or
+  anyone who can place one where the bridge reads could fill a document's
+  integrity log. A bridge that kept an id across a restart but not what it
+  compared by could not tell a message presented again from a replaced one: it
+  would record every message presented again, or drop a replaced one unrecorded.
+  A bridge that keeps nothing across a restart (BRG-17) compares afresh: a
+  replaced message under an id from before the restart is taken as new, as a
+  message of its own sender.
 - **BRG-13** · *bridge* — A bridge MUST bound the size of everything it reads before
   it can be verified — envelope bodies, attachment references, invitation blocks,
   header values, participant lists, message bodies handed to a decryption tool —

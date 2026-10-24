@@ -64,13 +64,22 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
   bridge of its own, under one account; a key withheld from a signed one, or an
   event filtered by its sender, would leave one device of a person blind to what
   another wrote.
-- **MTX-5** · *bridge* — In a room it has once seen encrypted, a bridge MUST ignore a
-  TDSP event that arrives unencrypted, and MUST go on treating the room as
-  encrypted, whatever the room's state says later.
+- **MTX-5** · *bridge* — In a room it has once seen encrypted, a bridge MUST ignore
+  silently — without an error and without an integrity record — a TDSP event that
+  arrives unencrypted, one carrying an `m.replace` relation included, and MUST go
+  on treating the room as encrypted, whatever the room's state says later. It MUST
+  persist that it saw a room encrypted with each binding to that room (BRG-6),
+  also when it saw it so before the binding was made.
   *Rationale:* a homeserver can place an unencrypted event in any room, under any
   member's name, and can report a room's state as it likes; Matrix never turns a
   room's encryption off. Delivering such an event would let the homeserver write
-  frames as any member, the one thing MTX-4 keeps it from.
+  frames as any member, the one thing MTX-4 keeps it from; recording it would let
+  the homeserver fill a document's integrity log. A bridge that forgot after a
+  restart that it had seen a room encrypted would take the room's word again.
+  Matrix does not encrypt a redaction, so this does not cover one: a homeserver
+  can still forge the redaction of a delivered event, and the sender a
+  `message-redacted` record names in an encrypted room is the homeserver's
+  word.
 - **MTX-6** · *bridge* — A bridge MUST take the wait of a refusal `M_LIMIT_EXCEEDED`
   (HTTP 429) from its `Retry-After` header, in seconds, and from `retry_after_ms` in
   the body only where the header is absent, and MUST pass it on as `retryAfterMs`

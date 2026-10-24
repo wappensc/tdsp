@@ -3346,8 +3346,8 @@ homeserver is trusted, and protects nothing against it. In an encrypted room it
 authenticates the sender's account by the device its identity signed, and adds
 integrity and confidentiality against the homeserver — as far as every bridge
 shares room keys only with devices their owners signed and accepts frames only
-from them (MTX-4), and ignores what arrives unencrypted (MTX-5); a homeserver that
-can add an unsigned device to an account gains nothing then
+from them (MTX-4), and ignores TDSP events that arrive unencrypted (MTX-5); a
+homeserver that can add an unsigned device to an account gains nothing then
 ([§13.3](bindings/matrix.md#133-matrix)).
 
 Not required: history, ordering, exactly-once delivery, per-message access
@@ -3378,7 +3378,7 @@ it is only *worth using* with it.
 | Replay of control frames | Control state is a set of operations (CTL-23) | A replayed operation is inert (CTL-6) |
 | Close | Cooperating engines stop sending edits of their own; edits sent before the close still arrive and apply (LIF-6) | Among cooperating engines only, and only while their applications keep a change made after the close out of the engine's document (CTL-42) — a modified engine can keep sending edits, which genuine engines apply, exactly as with `read` (CTL-7) |
 | Convergence | The CRDT | Unconditional, given the same set of updates — not given a lost one |
-| Message immutability | Bridges refuse and record edits and withdrawals (BRG-12) | Where the messenger reveals them |
+| Message immutability | Bridges refuse and record edits and withdrawals (BRG-12) | Where the messenger reveals them, and after a bridge's restart under the ids it kept |
 | No external connection | ARC-2, BRG-4; an application that carries a document between one person's devices also reaches that service (ARC-5) | As strong as its enforcement; see below |
 | Resource exhaustion by peers | Bounded control state (CTL-30), and a capacity conflict beyond its bytes (CTL-32); bounded nesting and frame size, extensions included (FRM-11), bounded attachment fetches (BRG-14), bounded pre-verification reads (BRG-13); no reassembly buffer | Bounded, not prevented; beyond the bytes of control state a person resolves the conflict |
 
@@ -3876,7 +3876,7 @@ substance, but for these:
 | BRG-1, BRG-8, LBI-6 | Five reasons of §3.4: a send while the bridge is not provisioned, and every refusal only a person can lift, is `needs-person`, `409` over the local bridge interface | 409 already meant a state the person ends, not one waiting ends (TRN-11). |
 | BRG-2 | Provisioning keeps credentials from components that render what came through the channel, as ARC-4 | As ARC-4. |
 | BRG-9; MTX-7 (new) | The choice between body and attachment may go by the size of the envelope as written; Matrix measures it so, at 32 000 bytes | Escapes in the envelope and Megolm's Base64 let a frame of 32 000 bytes exceed Matrix's 65 536 bytes per event, and a frame within `maxBytes` was refused as too large. |
-| BRG-11, BRG-12, SIG-3 | The same message again (same id, same content) is dropped; another message under a delivered id is recorded, not delivered; a shared vocabulary of reasons; a bridge that drops messages of non-members asks the messenger anew each time | The texts did not tell the two apart, so a second message under one id was delivered or dropped without a record; and a remembered "not a member" dropped the first frames of whoever just joined. |
+| BRG-11, BRG-12, SIG-3 | The same message again (same id, same content) is dropped; another message under a delivered id is recorded, not delivered; a bridge that keeps a delivery id across a restart keeps what it compares by with it; nothing is recorded for an unencrypted Matrix edit the bridge ignores; a shared vocabulary of reasons; a bridge that drops messages of non-members asks the messenger anew each time | The texts did not tell the two apart, so a second message under one id was delivered or dropped without a record; and a remembered "not a member" dropped the first frames of whoever just joined. An id kept without what it was compared by cannot tell a message presented again from a replaced one; a record of an event the bridge does not take would let a homeserver fill the log. |
 | BRG-14 | A binding says where the messenger's own client fetches attachments, a fetch the bridge cannot bound | §15.5 promised a bound that, on such a messenger, nothing enforces. |
 | BRG-17 | A bridge may drop a delivery once the one reader it serves kept it | A bridge that keeps its window on disk need not keep a frame's text a second time; a cursor from before still reads as truncated. |
 | BRG-18 (new) | A message a bridge cannot read never keeps it from reading the others; values nested too deep in a messenger's answer may be dropped | One deeply nested event in a Matrix `/sync` stopped a bridge for good: the answer never parsed, and its position never moved. |
@@ -3884,7 +3884,7 @@ substance, but for these:
 | BND-3 | The 64 hexadecimal digits are ASCII | A Unicode test for hexadecimal digits takes full-width forms too, a second spelling of the same hash. |
 | SIG-4, SIG-5 (new) | When a group send is accepted, from `signal-cli`'s result per recipient; a bridge reads a connection before `signal-cli` pushes into it | `signal-cli` reports a group message sent once one member got it, and hands each waiting message to a device once. |
 | SIG-6 (new) | A bridge that receives through a subscription reads before it subscribes, again on every connection; it keeps its instance across ending the subscription only if it read up to the answer and its `signal-cli` hands on the message in hand | A subscription lets a bridge stop receiving without closing the connection; `signal-cli` 0.14.9 drops the message it is handling when the last subscription ends. |
-| MTX-4 | Room keys only to devices their owners signed, the bridge's own device signed, frames only from signed devices (older sessions excepted); MTX-5 (new): an unencrypted TDSP event in an encrypted room is ignored | Shared with every device, as 1.x said, a key reached any device a homeserver added, and frames from such a device were delivered; Matrix clients now exclude unsigned devices (MSC4153), and a bridge that does not is not given keys by them. |
+| MTX-4 | Room keys only to devices their owners signed, the bridge's own device signed, frames only from signed devices (older sessions excepted); MTX-5 (new): an unencrypted TDSP event in an encrypted room, an edit included, is ignored without a record, and that the room was seen encrypted is persisted with each binding to it | Shared with every device, as 1.x said, a key reached any device a homeserver added, and frames from such a device were delivered; Matrix clients now exclude unsigned devices (MSC4153), and a bridge that does not is not given keys by them. A homeserver can place an unencrypted event under any member's name; a bridge that forgot the room was encrypted would take the room's word again after a restart. |
 | MTX-6 (new) | The wait of a Matrix rate limit from the `Retry-After` header, the body's `retry_after_ms` only without one | Matrix 1.10 moved the wait into the header (MSC4041). |
 
 **On the wire:** frames carry `"tdsp": 2`; `edit` and `control` frames carry
