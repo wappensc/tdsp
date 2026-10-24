@@ -113,7 +113,9 @@ security-relevant points itself, then approves or rejects.
 [SPECIFICATION.md](SPECIFICATION.md) is normative; the code follows it. A change to the
 wire, to a requirement or to a binding changes the specification first, in the same pull
 request, and keeps to §14 (versioning). When the code cites a requirement ID, the ID must
-exist; when a requirement changes, the tests that cite it change too.
+exist (`pnpm run requirement-ids` checks the code, the docs and `network-policy.json`; a
+citation written "1.x XXX-n" names an earlier version's on purpose); when a requirement
+changes, the tests that cite it change too.
 
 [CONFORMANCE.md](CONFORMANCE.md) says what is verified. A change that verifies something
 new — or finds that a claim there no longer holds — updates it.
