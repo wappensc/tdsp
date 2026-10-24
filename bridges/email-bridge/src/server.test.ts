@@ -251,6 +251,107 @@ describe("bridges/email-bridge server", () => {
     expect(response.status).toBe(409);
   });
 
+  describe("refuses every document operation as needs-person, 409, while not provisioned (BRG-1)", () => {
+    /** An address without SMTP and IMAP, as index.ts leaves the bridge then, or nothing at all. */
+    const unprovisioned: Record<string, Partial<ServerDependencies>> = {
+      "an address without a mailbox": { sender: undefined, receiver: undefined, sync: undefined },
+      "nothing at all": {
+        address: undefined,
+        sender: undefined,
+        receiver: undefined,
+        sync: undefined,
+      },
+    };
+
+    async function restartAs(deps: Partial<ServerDependencies>): Promise<string> {
+      server.close();
+      start(deps);
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      return typeof address === "object" && address ? `http://127.0.0.1:${address.port}` : "";
+    }
+
+    const post = (url: string, body: unknown) =>
+      fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    const thread = {
+      recipients: ["me@example.org", "bob@example.org"],
+      creator: "me@example.org",
+      profile: "yjs-paragraphs/1",
+      threadRootMessageId: "<root@example.org>",
+    };
+
+    beforeEach(() => {
+      setBindRecord(bindStorePath, "doc-1", {
+        recipients: ["me@example.org", "bob@example.org"],
+        creatorMemberId: "me@example.org",
+        profile: "yjs-paragraphs/1",
+        threadRootMessageId: "<root@example.org>",
+        createdAt: new Date(0).toISOString(),
+        pgpEnabled: false,
+        pinnedFingerprints: {},
+      });
+    });
+
+    it.each(Object.entries(unprovisioned))(
+      "a send, with its own address as the sender or another, with %s",
+      async (_, deps) => {
+        const url = await restartAs(deps);
+        for (const from of ["me@example.org", "alice@example.org"]) {
+          const response = await post(`${url}/channels/doc-1/send`, {
+            sender: from,
+            payload: "AQID",
+          });
+          expect(response.status, from).toBe(409);
+          expect(((await readJson(response)) as { error: string }).error).toMatch(/provisioned/);
+        }
+        expect(sender.sent).toEqual([]);
+      },
+    );
+
+    it.each(Object.entries(unprovisioned))(
+      "receiving and reading the integrity log, with %s",
+      async (_, deps) => {
+        const url = await restartAs(deps);
+        expect((await fetch(`${url}/channels/doc-1/deliveries`)).status).toBe(409);
+        expect((await fetch(`${url}/channels/doc-1/integrity-log`)).status).toBe(409);
+      },
+    );
+
+    it.each(Object.entries(unprovisioned))(
+      "starting a thread or joining one, binding nothing, with %s",
+      async (_, deps) => {
+        const url = await restartAs(deps);
+        expect((await post(`${url}/threads/doc-2`, thread)).status).toBe(409);
+        expect((await post(`${url}/threads/doc-2/join`, thread)).status).toBe(409);
+        expect(getBindRecord(bindStorePath, "doc-2")).toBeUndefined();
+        expect(sender.sent).toEqual([]);
+      },
+    );
+
+    it("reports itself unconfigured on /health, and keeps /transport-profile at 503", async () => {
+      const url = await restartAs(unprovisioned["an address without a mailbox"] ?? {});
+      expect(await readJson(await fetch(`${url}/health`))).toEqual({
+        status: "ok",
+        configured: false,
+      });
+      expect((await fetch(`${url}/transport-profile`)).status).toBe(503);
+    });
+
+    it("still refuses another sender as rejected, 403, once provisioned (BRG-16)", async () => {
+      const response = await post(`${baseUrl}/channels/doc-1/send`, {
+        sender: "alice@example.org",
+        payload: "AQID",
+      });
+      expect(response.status).toBe(403);
+      expect(sender.sent).toEqual([]);
+    });
+  });
+
   describe("POST /threads/:documentId", () => {
     it("creates the bind record, sends the invite to everyone but the creator, and returns the thread root", async () => {
       const response = await fetch(`${baseUrl}/threads/doc-1`, {

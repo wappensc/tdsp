@@ -101,6 +101,35 @@ function sendSendFailure(res: ServerResponse, error: unknown): void {
   );
 }
 
+/**
+ * The account this bridge serves, once it is provisioned with one (BRG-1): an address and a
+ * mailbox to send through and read from. index.ts creates the sender only when the address
+ * and every SMTP and IMAP setting are there, so the sender stands for the whole mailbox; a
+ * test may leave out the reading half for a route that does not read. A document's PGP
+ * setup is not part of it — a PGP-off document needs none — and is checked for each send by
+ * `preparePgpSend`.
+ */
+function provisionedAccount(
+  deps: ServerDependencies,
+): { readonly address: string; readonly sender: MailSender } | undefined {
+  return deps.address === undefined || deps.sender === undefined
+    ? undefined
+    : { address: deps.address, sender: deps.sender };
+}
+
+/**
+ * Refuses a document operation of a bridge that is not provisioned, before anything else is
+ * looked at, distinguishably (BRG-1): 409, which an adapter maps to `needs-person` (LBI-6).
+ * Only the person ends this state, by configuring the mailbox: a 503 would have the engine
+ * send again and again into it, a 403 would have it drop a change that goes out once they did.
+ */
+function refuseUnprovisioned(res: ServerResponse): void {
+  sendJson(res, 409, {
+    error:
+      "email-bridge is not provisioned yet — set ADDRESS and the SMTP_* and IMAP_* variables, then restart it",
+  });
+}
+
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -347,7 +376,7 @@ export function createServer(deps: ServerDependencies): Server {
     const [path, query = ""] = url.split("?", 2);
 
     if (method === "GET" && path === "/health") {
-      sendJson(res, 200, { status: "ok", configured: deps.address !== undefined });
+      sendJson(res, 200, { status: "ok", configured: provisionedAccount(deps) !== undefined });
       return;
     }
 
@@ -511,6 +540,11 @@ export function createServer(deps: ServerDependencies): Server {
     const startThreadMatch = method === "POST" ? /^\/threads\/([^/]+)$/.exec(path ?? "") : null;
     if (startThreadMatch) {
       const documentId = decodeURIComponent(startThreadMatch[1] as string);
+      const account = provisionedAccount(deps);
+      if (account === undefined) {
+        refuseUnprovisioned(res);
+        return;
+      }
       readJsonBody(req)
         .then(async (rawBody) => {
           const body = rawBody as StartThreadRequestBody;
@@ -581,10 +615,6 @@ export function createServer(deps: ServerDependencies): Server {
             sendJson(res, 400, { error: "creator must be one of recipients" });
             return;
           }
-          if (deps.sender === undefined) {
-            sendJson(res, 503, { error: "email-bridge is not configured yet" });
-            return;
-          }
           const recipients: readonly string[] = body.recipients;
           const pgpEnabled = body.pgpEnabled ?? false;
           let inviteBody = body.inviteText ?? DEFAULT_INVITE_TEXT;
@@ -641,7 +671,7 @@ export function createServer(deps: ServerDependencies): Server {
           const to = recipients.filter((r) => r !== body.creator);
           let messageId: string;
           try {
-            ({ messageId } = await deps.sender.send({
+            ({ messageId } = await account.sender.send({
               to,
               subject: subjectForDocument(documentId),
               text: inviteBody,
@@ -681,6 +711,10 @@ export function createServer(deps: ServerDependencies): Server {
       method === "POST" ? /^\/threads\/([^/]+)\/join$/.exec(path ?? "") : null;
     if (joinThreadMatch) {
       const documentId = decodeURIComponent(joinThreadMatch[1] as string);
+      if (provisionedAccount(deps) === undefined) {
+        refuseUnprovisioned(res);
+        return;
+      }
       readJsonBody(req)
         .then(async (rawBody) => {
           const body = rawBody as JoinThreadRequestBody;
@@ -879,6 +913,13 @@ export function createServer(deps: ServerDependencies): Server {
     const sendMatch = method === "POST" ? /^\/channels\/([^/]+)\/send$/.exec(path ?? "") : null;
     if (sendMatch) {
       const documentId = decodeURIComponent(sendMatch[1] as string);
+      // First, before the sender is compared with an address there may not be (BRG-16): a
+      // bridge with no mailbox refuses as needs-person, whatever the request says (BRG-1).
+      const account = provisionedAccount(deps);
+      if (account === undefined) {
+        refuseUnprovisioned(res);
+        return;
+      }
       readJsonBody(req)
         .then(async (rawBody) => {
           const body = rawBody as SendRequestBody;
@@ -892,12 +933,9 @@ export function createServer(deps: ServerDependencies): Server {
           }
           // The mail goes out from this bridge's own mailbox, whatever the request says; a
           // sender that is not that mailbox is refused rather than ignored (BRG-16).
-          if (
-            deps.address === undefined ||
-            normalizeAddress(body.sender) !== normalizeAddress(deps.address)
-          ) {
+          if (normalizeAddress(body.sender) !== normalizeAddress(account.address)) {
             sendJson(res, 403, {
-              error: `this bridge sends as ${deps.address ?? "no configured mailbox"}, not as ${body.sender}`,
+              error: `this bridge sends as ${account.address}, not as ${body.sender}`,
             });
             return;
           }
@@ -911,11 +949,7 @@ export function createServer(deps: ServerDependencies): Server {
             sendJson(res, plan.blocked.status, { error: plan.blocked.error });
             return;
           }
-          if (deps.sender === undefined) {
-            sendJson(res, 503, { error: "email-bridge is not configured yet" });
-            return;
-          }
-          const self = normalizeAddress(deps.address);
+          const self = normalizeAddress(account.address);
           const mail = {
             to: bound.recipients.filter((r) => normalizeAddress(r) !== self),
             subject: subjectForDocument(documentId),
@@ -932,12 +966,14 @@ export function createServer(deps: ServerDependencies): Server {
             inReplyTo: bound.threadRootMessageId,
             references: [bound.threadRootMessageId],
           };
-          const { messageId } = await deps.sender.send(mail);
+          const { messageId } = await account.sender.send(mail);
           // The copy this address's other devices read (EML-12). The mail is out either way:
           // a failed copy is logged, never reported as a failed send, which would resend it.
           if ((deps.sentCopy ?? "append") === "append" && deps.receiver?.storeSentCopy) {
             try {
-              await deps.receiver.storeSentCopy(await composeMail(deps.address, mail, messageId));
+              await deps.receiver.storeSentCopy(
+                await composeMail(account.address, mail, messageId),
+              );
             } catch (error) {
               logger.warn("sent-copy-failed", {
                 documentId,
@@ -954,6 +990,10 @@ export function createServer(deps: ServerDependencies): Server {
 
     if (method === "GET" && path?.startsWith("/channels/") && path.endsWith("/deliveries")) {
       const documentId = decodeURIComponent(path.slice("/channels/".length, -"/deliveries".length));
+      if (provisionedAccount(deps) === undefined) {
+        refuseUnprovisioned(res);
+        return;
+      }
       if (deps.sync === undefined) {
         sendJson(res, 503, { error: "email-bridge is not configured yet" });
         return;
@@ -976,6 +1016,10 @@ export function createServer(deps: ServerDependencies): Server {
       const documentId = decodeURIComponent(
         path.slice("/channels/".length, -"/integrity-log".length),
       );
+      if (provisionedAccount(deps) === undefined) {
+        refuseUnprovisioned(res);
+        return;
+      }
       if (deps.sync === undefined) {
         sendJson(res, 503, { error: "email-bridge is not configured yet" });
         return;
