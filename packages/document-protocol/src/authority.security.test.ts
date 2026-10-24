@@ -12,17 +12,23 @@ import {
   getFragment,
   getPlainText,
   insertPlainText,
+  splitUpdate,
   transact,
 } from "@tdsp/reconciliation";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { decodeFrame, encodeResyncResponseFrame, FrameDecodeError } from "./framing";
+import {
+  decodeFrame,
+  encodeEditFrame,
+  encodeResyncResponseFrame,
+  FrameDecodeError,
+} from "./framing";
 import { DocumentEngine, type DocumentEngineOptions, SendRefusedError } from "./index";
 
 /**
  * Authority over a document beyond its control frames (see control.security.test.ts):
  * members who may not write cannot, only the creator answers a resync and only its answer
- * is adopted, a creator's answer is checked whole before any of it applies, the sync policy
- * is the creator's alone, and a fragment cannot smuggle a frame for another document.
+ * is adopted, a creator's answer is checked whole before any of it applies, and a piece of a
+ * change, an edit's or an answer's, is a frame of its own, refused when it is for another document.
  * Security tests: only the CI role may change this file (.github/CODEOWNERS, CONTRIBUTING.md).
  */
 
@@ -513,4 +519,55 @@ describe("a creator's answer is checked whole before any of it applies (FRM-6, C
       expect(carol.permissionOf("carol")).toBeUndefined();
     },
   );
+});
+
+describe("a piece is a frame of its own, refused for another document (FRM-7, FRM-8)", () => {
+  /** The first of several pieces of a change that inserts `text` (§9.4). */
+  function aPieceOf(text: string): Uint8Array {
+    const doc = createDocument();
+    transact(doc, () => insertPlainText(getFragment(doc), 0, text));
+    const pieces = splitUpdate(encodeUpdate(doc), 64);
+    expect(pieces.length).toBeGreaterThan(1);
+    return pieces[0] as Uint8Array;
+  }
+
+  const mismatches = (errors: readonly unknown[]) =>
+    errors.filter(
+      (error) => error instanceof FrameDecodeError && error.reason === "document-mismatch",
+    ) as FrameDecodeError[];
+
+  it("an edit's piece that names another document applies nothing, and is reported with its sender", async () => {
+    const errors: unknown[] = [];
+    const port = new CountingPort();
+    const { bob } = await pair(port, {}, {}, (error) => errors.push(error));
+    const text = "smuggled into the wrong document, ".repeat(4);
+    await port.inner.send(
+      DOCUMENT_ID,
+      "alice",
+      encodeEditFrame("some-other-document", aPieceOf(text)),
+    );
+    await bob.sync();
+    expect(getPlainText(bob.fragment)).toBe("");
+    expect(mismatches(errors).map((error) => error.sender)).toEqual(["alice"]);
+  });
+
+  it("an answer's piece that names another document applies nothing, and is reported with its sender", async () => {
+    const errors: unknown[] = [];
+    const port = new CountingPort();
+    const { bob } = await pair(port, {}, {}, (error) => errors.push(error));
+    const text = "smuggled into the wrong document, ".repeat(4);
+    await port.inner.send(
+      DOCUMENT_ID,
+      "alice",
+      encodeResyncResponseFrame({
+        documentId: "some-other-document",
+        respondsTo: "00000000000000ff",
+        update: aPieceOf(text),
+        piece: 1, // not the last: no state, and more to come
+      }),
+    );
+    await bob.sync();
+    expect(getPlainText(bob.fragment)).toBe("");
+    expect(mismatches(errors).map((error) => error.sender)).toEqual(["alice"]);
+  });
 });
