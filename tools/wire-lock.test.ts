@@ -84,6 +84,33 @@ describe("comparing the wire with its lock", () => {
     expect(findings.map((f) => f.kind)).toEqual(["specification", "version"]);
     expect(severity(findings)).toBe("specification");
   });
+
+  it("reports a section it newly locks, and one it no longer locks, as a specification change", () => {
+    const now: WireSnapshot = { ...base(), sections: { "## 5. Profiles": "h5" } };
+    expect(compareWireLock(base(), now)).toEqual([
+      { kind: "specification", message: 'SPECIFICATION.md "## 4. Frames" is no longer locked' },
+      { kind: "specification", message: 'SPECIFICATION.md "## 5. Profiles" is newly locked' },
+    ]);
+  });
+
+  it("compares the documents it locks whole, and reads a lock without any as one that locks none", () => {
+    const lock: WireSnapshot = {
+      ...base(),
+      documents: { "bindings/a.md": "d1", "bindings/b.md": "d2" },
+    };
+    const now: WireSnapshot = {
+      ...base(),
+      documents: { "bindings/a.md": "d1x", "bindings/c.md": "d3" },
+    };
+    const findings = compareWireLock(lock, now);
+    expect(findings).toEqual([
+      { kind: "specification", message: "bindings/a.md changed" },
+      { kind: "specification", message: "bindings/b.md is no longer locked" },
+      { kind: "specification", message: "bindings/c.md is newly locked" },
+    ]);
+    expect(severity(findings)).toBe("specification");
+    expect(compareWireLock(base(), { ...base(), documents: {} })).toEqual([]);
+  });
 });
 
 describe("the specification's version, against the kind of change", () => {

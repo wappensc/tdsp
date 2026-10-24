@@ -6,7 +6,8 @@ import { readFileSync, writeFileSync } from "node:fs";
  * change to it cannot pass unnoticed (docs/testing.md, "Wire compatibility"; SPECIFICATION.md
  * §14, VER-1). `wire/wire-lock.json` holds a hash of every entry of every frozen wire file and
  * published test vector, of the constants and versions stored beside them, and of each
- * normative wire section of the specification, together with the specification's version.
+ * normative wire section of the specification, of each binding document as a whole, together with
+ * the specification's version.
  *
  * `compareWireLock` says what changed and what kind of change it is:
  *
@@ -14,7 +15,8 @@ import { readFileSync, writeFileSync } from "node:fs";
  *   bytes on the wire are no longer what they were. Needs a new major version.
  * - **addition** — only new entries: older implementations are unaffected (a compatible
  *   addition, §14). Needs a new minor version of the specification.
- * - **specification** — a wire section's text changed while every byte stayed the same:
+ * - **specification** — a wire section's or a binding document's text changed, or the lock
+ *   newly covers one or no longer does, while every byte stayed the same:
  *   either editorial or a clarification (a patch version, or none), or a new requirement
  *   that changes no byte (the next minor version). Which one it is, the CI role decides when
  *   it accepts, by the version it gives the specification.
@@ -47,6 +49,12 @@ export const WIRE_SECTIONS = [
   "## Appendix B. Recommended values",
 ] as const;
 
+/**
+ * Documents locked whole: the messenger bindings, once they are documents of their own
+ * (SPECIFICATION.md §13). Their requirements are wire as much as a section is.
+ */
+export const WIRE_DOCUMENTS: readonly string[] = [];
+
 export const LOCK_FILE = "wire/wire-lock.json";
 
 export type ChangeKind = "incompatible" | "addition" | "specification";
@@ -62,6 +70,8 @@ export interface WireSnapshot {
   readonly specificationVersion: string;
   readonly files: Readonly<Record<string, FileSnapshot>>;
   readonly sections: Readonly<Record<string, string>>;
+  /** Every locked document's hash, by path; absent in a lock written before documents were locked. */
+  readonly documents?: Readonly<Record<string, string>>;
 }
 
 export interface Finding {
@@ -134,6 +144,9 @@ export function snapshot(repoRoot: string): WireSnapshot {
     sections: Object.fromEntries(
       WIRE_SECTIONS.map((heading) => [heading, sha256(sectionText(specification, heading))]),
     ),
+    documents: Object.fromEntries(
+      WIRE_DOCUMENTS.map((path) => [path, sha256(read(path).replace(/\s+/g, " ").trim())]),
+    ),
   };
 }
 
@@ -170,8 +183,35 @@ export function compareWireLock(lock: WireSnapshot, current: WireSnapshot): Find
     }
   }
   for (const [heading, hash] of Object.entries(lock.sections)) {
-    if (current.sections[heading] !== hash) {
+    if (current.sections[heading] === undefined) {
+      findings.push({
+        kind: "specification",
+        message: `SPECIFICATION.md "${heading}" is no longer locked`,
+      });
+    } else if (current.sections[heading] !== hash) {
       findings.push({ kind: "specification", message: `SPECIFICATION.md "${heading}" changed` });
+    }
+  }
+  for (const heading of Object.keys(current.sections)) {
+    if (lock.sections[heading] === undefined) {
+      findings.push({
+        kind: "specification",
+        message: `SPECIFICATION.md "${heading}" is newly locked`,
+      });
+    }
+  }
+  const lockedDocuments = lock.documents ?? {};
+  const currentDocuments = current.documents ?? {};
+  for (const [path, hash] of Object.entries(lockedDocuments)) {
+    if (currentDocuments[path] === undefined) {
+      findings.push({ kind: "specification", message: `${path} is no longer locked` });
+    } else if (currentDocuments[path] !== hash) {
+      findings.push({ kind: "specification", message: `${path} changed` });
+    }
+  }
+  for (const path of Object.keys(currentDocuments)) {
+    if (lockedDocuments[path] === undefined) {
+      findings.push({ kind: "specification", message: `${path} is newly locked` });
     }
   }
   if (current.specificationVersion !== lock.specificationVersion) {
