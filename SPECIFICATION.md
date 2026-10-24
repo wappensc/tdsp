@@ -1,6 +1,6 @@
 # TDSP — Together Document Sync Protocol
 
-**Specification · TDSP 1.4 · 24 October 2026**
+**Specification · TDSP 1.4.1 · 24 October 2026**
 
 ## 1. Introduction
 
@@ -19,7 +19,7 @@ Two consequences shape everything below:
   TDSP document is exactly as confidential as the channel it rides on, and a
   message's sender is exactly as authentic as the messenger makes it. TDSP adds
   no encryption of its own (the email binding's optional PGP is the one
-  exception, [§13.4](#134-email)).
+  exception, [§13.4](bindings/email.md#134-email)).
 - **The transport is assumed to be poor.** Messages may be delayed by tens of
   seconds, duplicated, reordered, rate-limited, size-limited and lost, and a
   newly joined participant may see nothing that was sent before it joined.
@@ -96,7 +96,7 @@ the person using a document down to the messenger:
 A product may implement several classes at once. It conforms to a class when
 it satisfies every MUST and MUST NOT requirement of that class, including those
 of the messenger binding it uses. The local bridge interface of
-[§12](#126-the-local-bridge-interface-optional) is an option: its requirements
+[§12](bindings/local-bridge-interface.md#126-the-local-bridge-interface-optional) is an option: its requirements
 bind an adapter and a bridge that communicate across a process boundary through
 it, and no one else.
 
@@ -113,7 +113,7 @@ it, and no one else.
 | **Binding** | The association of a documentId with a channel, held by a bridge; also, a messenger binding: how frames travel on one messenger ([§13](#13-messenger-bindings)) |
 | **Delivery** | One received message, as the transport contract presents it: an id, a documentId, a sender and a payload |
 | **Frame** | The payload of one delivery: a JSON object ([§4](#4-the-payload-frame)) |
-| **Envelope** | The messenger-level wrapper around a frame, read only by bridges ([§13.1](#131-the-common-envelope)) |
+| **Envelope** | The messenger-level wrapper around a frame, read only by bridges ([§13.1](bindings/bridges.md#131-the-common-envelope)) |
 | **Profile** | What a document's content bytes mean: its CRDT, structure and text projection, named by an id such as `yjs-paragraphs/1` ([§5](#5-document-profiles)) |
 | **Update** | An opaque CRDT update: the unit of document change |
 | **State vector** | A compact summary of which updates a CRDT replica has seen |
@@ -175,7 +175,7 @@ TDSP is designed for, and for a reason that matters: a messenger such as Signal,
 or Matrix in an encrypted room, already authenticates senders and protects the
 integrity and confidentiality of every message, and TDSP inherits all three.
 Email shows what that saves: to meet the same requirements it needs PGP on top
-([§13.4](#134-email)).
+([§13.4](bindings/email.md#134-email)).
 
 **Why a bridge, and when a process boundary.** The bridge holds the credentials —
 a linked Signal device, a Matrix access token and crypto store, a mail password
@@ -185,7 +185,7 @@ adapter and the bridge can be one library, called in-process. A web page cannot
 do that: it can open no raw TCP connection (SMTP, IMAP), load no native crypto
 module, start no process and read no keyring, so its only way to those
 capabilities is an HTTP request to a process on the same machine. For that case,
-and for reusing a bridge from another language, [§12](#126-the-local-bridge-interface-optional)
+and for reusing a bridge from another language, [§12](bindings/local-bridge-interface.md#126-the-local-bridge-interface-optional)
 defines an optional local HTTP interface. A separate process also keeps the
 credentials away from the component that renders untrusted document content
 (ARC-4).
@@ -336,7 +336,7 @@ type Permission = "read" | "write" | "creator";
 
 | Operation | Semantics |
 |---|---|
-| `createDocument(documentId, creator)` | Registers the document with the adapter and records `creator` as its creator. Does not create, reconfigure or post into a channel; binding a channel is a bridge operation ([§12.3](#122-binding-a-document)) |
+| `createDocument(documentId, creator)` | Registers the document with the adapter and records `creator` as its creator. Does not create, reconfigure or post into a channel; binding a channel is a bridge operation ([§12.3](bindings/bridges.md#122-binding-a-document)) |
 | `send(documentId, sender, payload)` → `DeliveryId` | Broadcasts one frame to every member of the document's channel. Resolves once the messenger has accepted it |
 | `receive(documentId, member)` → `Delivery[]` | Returns the deliveries recorded for the document so far |
 | `listChannels(member)` → `RawChannel[]` | The channels this account can see, to populate a picker. Answers "which channels exist", never "which documents do I have" |
@@ -551,7 +551,7 @@ updates, state vectors, the slices of a fragmented frame — is Base64 (RFC 4648
 The frame is text for the reason the envelope is: a message that looks like text
 should behave like text, it can be read and debugged with ordinary tools, and one
 encoding runs through the whole stack. It costs little. The envelope carries the
-frame as a JSON *string*, not as Base64 ([§13.1](#131-the-common-envelope)), so
+frame as a JSON *string*, not as Base64 ([§13.1](bindings/bridges.md#131-the-common-envelope)), so
 the CRDT bytes are Base64-encoded exactly once on their way to the messenger, and
 the field names add a few dozen bytes to a message whose limits are counted in
 messages rather than bytes.
@@ -1629,7 +1629,7 @@ sent. A change that does not fit is **spread** or **cut**:
 
 `bounds.maxBytes` already includes whatever the bridge can carry beyond an
 ordinary message body: where a messenger binding sends a large frame as an
-attachment ([§13.2](#132-signal), [§13.3](#133-matrix)), the transport profile
+attachment ([§13.2](bindings/signal.md#132-signal), [§13.3](bindings/matrix.md#133-matrix)), the transport profile
 states the attachment's limit, and the engine never needs to know how a frame of a
 given size travels.
 
@@ -1786,7 +1786,7 @@ which channel, and who the creator is. It is a **convenience for filling in the
 join step, not a capability**: holding an invitation grants nothing, because
 the joiner's bridge re-checks real channel membership when it binds (BRG-5) —
 and for email, every message is checked against the closed participant set
-([§13.4](#134-email)).
+([§13.4](bindings/email.md#134-email)).
 
 ### 11.1 Content
 
@@ -1859,7 +1859,7 @@ another's invitations. The query is
 | `documentId` | documentId | yes | 1–255 UTF-8 bytes |
 | `creatorMemberId` | creatorMemberId | yes | 1–255 UTF-8 bytes |
 | `channelId` | channel id | Signal, Matrix | 1–255 UTF-8 bytes |
-| `threadRoot` | thread root `Message-ID` | email | the email binding's `Message-ID` form ([§13.4](#134-email)) |
+| `threadRoot` | thread root `Message-ID` | email | the email binding's `Message-ID` form ([§13.4](bindings/email.md#134-email)) |
 | `recipients` | every participant's address, the creator's included | email | 1–64 distinct addresses, comma-separated |
 | `pgp` | PGP is on | email, optional | `1` |
 | `profile` | profile | yes | a profile id ([§5](#5-document-profiles)) |
@@ -1903,561 +1903,23 @@ specification is kept apart ([§5.5](#55-profiles-defined-outside-this-specifica
   an invitation carried in the fragment.
 
 For a PGP email document the invitation additionally carries a signed and
-encrypted block ([§13.4](#134-email)); where the block and the link disagree,
+encrypted block ([§13.4](bindings/email.md#134-email)); where the block and the link disagree,
 the block wins.
 
 ## 12. Bridges
 
-A bridge is where TDSP meets one messenger account. Everything in this section
-applies to every bridge, whether its adapter calls it in-process or across a
-process boundary; the local HTTP interface of
-[§12.6](#126-the-local-bridge-interface-optional) is an option on top.
-
-### 12.1 Account and credentials
-
-A bridge speaks for exactly one messenger account. How that account is set up —
-linking a device, logging in, configuring a mailbox and a keyring — is specific
-to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
-
-- **BRG-1** · *bridge* — A bridge MUST serve exactly one messenger account, MUST be
-  provisioned with it before it serves any document, and MUST refuse every
-  document operation, distinguishably, while it is not.
-  *Rationale:* an unprovisioned bridge that accepted a send would lose the message
-  without saying why; a distinguishable refusal lets the application ask the
-  person to finish the setup.
-- **BRG-2** · *bridge* — Provisioning MUST NOT pass a credential through the
-  engine, the application or any interface a document operation uses; what the
-  person needs to see (a device-linking code, a login prompt) MUST NOT itself be a
-  reusable credential.
-  *Rationale:* ARC-4 — credentials stay with the component that exists to protect
-  them.
-- **BRG-3** · *bridge* — A bridge MUST keep credentials readable only by the user
-  (a directory of mode `0700` or stricter, or the platform's keychain), and a
-  local socket to a helper daemon MUST be accessible only by the user (mode
-  `0600`).
-  *Rationale:* credentials are the one thing a bridge exists to protect.
-- **BRG-4** · *bridge* — A bridge MUST NOT open a network connection to anything
-  but its one configured messenger endpoint (and a local helper daemon, where the
-  binding has one).
-  *Rationale:* TDSP's one security property that is its own rather than inherited:
-  it opens no external connection except to the messenger the user chose — no
-  telemetry, no update check, no second host.
-
-### 12.2 Binding a document
-
-- **BRG-5** · *bridge* — Binding MUST verify, read-only, that the channel exists and
-  that this account is a member of it, before the binding is stored, and MUST
-  NOT create, configure or post into the channel as part of binding.
-  *Rationale:* this re-check is what makes an invitation a convenience rather than a
-  capability ([§11](#11-invitations)); failing at bind time makes a stale id fail
-  loudly instead of silently never delivering.
-- **BRG-6** · *bridge* — A bridge MUST persist bindings so that a crash while
-  writing cannot corrupt the bindings of other documents (for example, write to a
-  temporary file and rename it).
-  *Rationale:* one file typically holds every document's routing.
-
-### 12.3 Sending
-
-- **BRG-7** · *bridge* — A bridge MUST carry a frame in its messenger binding's
-  envelope ([§13](#13-messenger-bindings)) and MUST NOT inspect or change it.
-  *Rationale:* ARC-3.
-- **BRG-8** · *bridge* — A bridge MUST classify every failed send as one of the
-  four reasons of [§3.4](#34-send-failures), mapping what its messenger said.
-  *Rationale:* only the bridge knows whether its messenger's refusal will pass
-  (a rate limit, an outage) or not (a size limit, a forbidden sender).
-- **BRG-9** · *bridge* — A bridge that supports attachments MUST choose between the
-  message body and an attachment by the frame's size alone, MUST state the largest
-  frame it carries either way as `bounds.maxBytes`, and MUST refuse a larger frame
-  as `too-large`.
-  *Rationale:* how a payload travels is the bridge's business; the engine sees only
-  one number, and a refusal it can classify.
-
-### 12.4 Receiving
-
-- **BRG-10** · *bridge* — A bridge MUST route by the envelope's documentId, and MUST
-  take a message for a document only from the channel that document is bound to.
-  It MUST ignore silently — without an error and without an integrity record — a
-  message that is not a TDSP envelope, an envelope of an unknown kind, an
-  unparseable body, an envelope for a documentId it has no binding for, and one
-  that arrives in another channel than the one its documentId is bound to; an
-  edit, replacement or deletion that arrives in another channel is not attributed
-  to the document either (BRG-12).
-  *Rationale:* a channel is shared with human conversation and possibly with other
-  documents; none of those is an anomaly. Who is in a document's channel decides
-  who can write into it: receivers do not reject an edit for its sender's
-  permission (CTL-7), and the messenger is trusted for channel membership
-  (§15.2). A bridge's account is usually in other channels too, with other
-  people; taking a frame from one of them — for a documentId its sender learned
-  while a member of the document's channel, say — would let someone outside that
-  channel write into the document, and a deletion from there would fill its
-  integrity log with records nobody in the channel caused. The email binding's
-  channel is a fixed participant set, checked for every message (EML-2).
-- **BRG-11** · *bridge* — A bridge MUST make every delivery received for a document
-  available, cumulatively and unfiltered (TRN-7); it MAY additionally
-  de-duplicate messages its messenger presents twice.
-  *Rationale:* filtering is where messages get lost; de-duplication is the engine's
-  job (TRN-8).
-- **BRG-12** · *bridge* — A delivered message is immutable. When the messenger
-  presents an edit, replacement, redaction or remote deletion of a message — or a
-  second message under an identity that must be unique — the bridge MUST NOT hand
-  the new content up, MUST NOT treat it as a new message, and MUST record it as an
-  integrity violation for the document where it can attribute it.
-  *Rationale:* an applied CRDT update cannot be retracted; honouring a change would
-  leave participants holding different versions of the same message with nothing
-  marking the difference. Every supported messenger allows such edits.
-- **BRG-13** · *bridge* — A bridge MUST bound the size of everything it reads before
-  it can be verified — envelope bodies, attachment references, invitation blocks,
-  header values, participant lists, message bodies handed to a decryption tool —
-  and MUST reject what exceeds the bound. The bound MUST limit what is *read*,
-  not only what is kept: a size the messenger reports is not enough, since the
-  sender may control it (email: a partial fetch of at most the bound plus one
-  byte, a larger mail rejected unparsed).
-  *Rationale:* those inputs are chosen by whoever can post into the channel,
-  including a hostile member.
-- **BRG-14** · *bridge* — An attachment MUST be fetched only from the bridge's own
-  configured messenger endpoint, MUST be read no further than its declared bound,
-  and MUST have its size and hash checked before anything else is done with it
-  (in particular before decryption). A final failure MUST drop the frame; a
-  transient one MAY be retried a bounded number of times.
-  *Rationale:* an attachment reference is attacker-chosen data telling the bridge
-  what to fetch; following it anywhere else would break BRG-4, and an unbounded
-  read or an unchecked file is a resource and integrity attack.
-- **BRG-15** · *bridge* — A bridge MUST make the integrity violations it recorded
-  available to the application, per document.
-  *Rationale:* a refused message that nobody can see is indistinguishable from one
-  that never came; the application must be able to show it.
-- **BRG-16** · *bridge* — A bridge MUST send every message — a frame and an
-  invitation alike — as its own messenger account, and nothing else. A request
-  that names a sender (`send`'s `sender`, an invitation's `actor`) other than that
-  account MUST be refused as `rejected`, never sent and never silently corrected.
-  *Rationale:* the sender a receiver sees is the messenger's authentication of the
-  bridge's account, not anything the request says. A bridge that built a message's
-  `From` out of the request would let a caller write in someone else's name; one
-  that ignored the field would hide a caller that believes it is someone else.
-
-- **BRG-17** · *bridge* — A bridge MUST bound what it keeps of each document's
-  deliveries — by count and by size, dropping the oldest first. It needs no
-  acknowledgement from the engine to drop one. It SHOULD NOT offer again, while
-  it runs, a delivery it has dropped when the messenger shows it again (email: a
-  later read of the thread); after a restart it MAY offer again deliveries it
-  had dropped before, since it is not required to persist what it has seen.
-  *Rationale:* without a bound, a long-lived document makes every `receive`
-  answer, and the bridge's memory, grow without end. An engine polls far more
-  often than a sensible window fills, and one that falls behind anyway loses
-  messages it recovers by resync where loss detection notices them (LOS-8, with the
-  limits of [§10](#10-loss-detection)) — so the simpler rule is to let loss
-  detection do its job rather than add an acknowledgement protocol. Forbidding
-  re-offering altogether would be a promise no bridge that keeps its state in
-  memory can keep across a restart, and an engine that treats every frame
-  idempotently (TRN-8) does not need it. What a bridge remembers to
-  avoid re-offering within a run is its own affair: the reference email bridge
-  keeps one digest per message of the thread, which grows with the thread as the
-  mailbox itself does.
-
-### 12.5 What a bridge does not do
-
-A bridge implements no membership, closing, deletion or resync of its own:
-those are frames, and a bridge that acted on them would be a second place where
-application policy is enforced — one that must be kept in step with the engine
-forever.
-
-### 12.6 The local bridge interface (optional)
-
-A bridge and its adapter may run in different processes — necessarily so when
-the application is a web page ([§2.1](#21-layers)), and usefully so when a bridge
-is to be reused from another language. For that case this section defines a
-local HTTP interface. Its requirements bind an adapter and a bridge that
-communicate through it, and no one else.
-
-**Process and network model.**
-
-In this section a **loopback address** is, literally and compared exactly,
-`localhost`, an IPv4 address in `127.0.0.0/8`, or `::1`. A name that merely
-resolves to one (`localtest.me`) is not, nor is one that begins with
-`localhost` (`localhost.example`), nor `0.0.0.0`. A **loopback origin** is an
-`http` or `https` origin whose host is a loopback address; the opaque origin
-`null` is not one. The reference implementation's `loopback` module
-([Appendix F](#appendix-f-reference-implementation)) is this definition.
-
-- **LBI-1** · *bridge* — A bridge offering this interface MUST listen on a loopback
-  address only (`127.0.0.1` or `::1`), never on a wildcard or external interface.
-  *Rationale:* the interface has no authentication (LBI-2); loopback-only confines
-  it to the user's own machine.
-- **LBI-2** · *bridge* — The interface has no authentication of its own; its trust
-  boundary is the operating-system user account. It MUST NOT offer any route that
-  returns a credential.
-  *Rationale:* anything running as the same user could read the credential files
-  directly, so a token would add ceremony, not security — the same boundary an
-  SSH agent socket relies on. Not returning credentials keeps a compromised page
-  from exfiltrating them through the interface.
-- **LBI-3** · *bridge* — A bridge MUST answer a cross-origin request with
-  `Access-Control-Allow-Origin` only when the request's `Origin` is a loopback
-  origin, echoing that origin, and MUST answer `OPTIONS` preflight requests with
-  204.
-  *Rationale:* a browser-hosted application must be able to call its bridge, and
-  no web page from anywhere else may.
-- **LBI-4** · *adapter* — An adapter MUST refuse to talk to a bridge whose
-  configured address is not an `http` or `https` URL whose host is a loopback
-  address.
-  *Rationale:* the adapter's half of LBI-1; a misconfigured address must not send
-  document content across a network.
-
-**Conventions.** Request and response bodies are JSON. The frame is a JSON
-string; other binary data is Base64. An error response is
-`{"error": "<message>"}`. `:documentId` is one URL-encoded path segment. An
-unknown route answers 404.
-
-| Status | Meaning |
-|---|---|
-| 400 | A malformed field |
-| 403 | Not permitted |
-| 404 | Unknown document, channel or route |
-| 409 | Not provisioned or not linked yet |
-| 413 | Too large |
-| 422 | Refused at message level |
-| 429 | Rate-limited |
-| 502 | Anything else that failed |
-| 503 | A dependency is not configured |
-
-**Routes.**
-
-| Route | Purpose | Request | Response |
-|---|---|---|---|
-| `GET /health` | Liveness, and whether the bridge is provisioned | — | `{status:"ok", configured?: boolean}` |
-| `GET /whoami` | The account's own MemberId | — | `{id}` |
-| `GET /transport-profile` | The transport profile ([§3.5](#35-transport-profile)) | — | the profile; 503 while unprovisioned |
-| `GET /channels` | Channels for the picker → `listChannels` | — | `[{id, name, encrypted?}]` |
-| `GET /members?channelId=` | A channel's members → `channelMembers`; by channel id, so not under `/channels/:documentId` | — | `[memberId]`; 404 for a channel this account is not in |
-| `POST /channels/:documentId/bind` | Bind a document to a channel → `createDocument` | `{channelId, creator, profile}` | the binding |
-| `POST /channels/:documentId/send` | → `send` | `{sender, payload}` — the frame's text; `sender` must be the bridge's own account (BRG-16), else 403 | `{deliveryId}` |
-| `GET /channels/:documentId/deliveries` | → `receive` | — | `[{id, documentId, sender, payload}]` |
-| `POST /channels/:documentId/invite` | Send a human-readable invitation into the bound channel | `{actor, text}` — `actor` must be the bridge's own account and the document's creator, else 403 | `{deliveryId}` |
-| `GET /channels/:documentId/integrity-log` | The integrity violations recorded (BRG-15) | — | a list of `{id, sender, reason, …}` |
-
-Email has no pre-existing channel to bind to; starting and joining a thread
-replace binding:
-
-| Route | Purpose | Request | Response |
-|---|---|---|---|
-| `POST /threads/:documentId` | Start the thread: send the invitation, bind the document | `{recipients[], creator, profile, inviteText?, pgpEnabled?, threadRootMessageId?, policy?}` | `{threadRootMessageId}` |
-| `POST /threads/:documentId/join` | Join a thread from its invitation | `{recipients[], creator, profile, pgpEnabled?, threadRootMessageId}` | the binding (for PGP, including the invitation's policy and profile) |
-
-Provisioning routes are binding-specific: Signal's `GET /auth/status` and
-`POST /auth/link`; email's `GET /mail/status`, `GET /pgp/status` and
-`GET /pgp/keys`.
-
-- **LBI-5** · *bridge* — A bridge MUST implement the routes above that apply to its
-  messenger, with the request and response shapes given, and MUST NOT offer
-  routes for membership, closing, deletion or resync ([§12.5](#125-what-a-bridge-does-not-do)).
-  *Rationale:* one interface shape lets any adapter drive any bridge.
-- **LBI-6** · *bridge, adapter* — `POST …/send` MUST answer a failure with the
-  status that classifies it: `429` (with `Retry-After` in seconds when the
-  messenger stated a wait) for a rate limit, `413` for a message too large, `400`,
-  `403`, `404`, `409` or `422` for a refusal waiting cannot change, and `5xx` for
-  everything else. An adapter MUST map `429` to `rate-limited`, `413` to
-  `too-large`, `400`, `403`, `404`, `409` and `422` to `rejected`, and every other
-  status to `unavailable`.
-  *Rationale:* the classification of [§3.4](#34-send-failures) has to survive the
-  HTTP hop; an unclassified status landing on `unavailable` means a change is never
-  dropped on a guess.
+What every bridge must do is a document of its own,
+[bindings/bridges.md](bindings/bridges.md), with the requirements BRG-1 to BRG-17, in
+§12.1 to §12.5 as before; the optional local bridge interface is
+[bindings/local-bridge-interface.md](bindings/local-bridge-interface.md) (§12.6, LBI-1 to
+LBI-6). An engine implementer needs neither.
 
 ## 13. Messenger bindings
 
-A binding says how a frame travels on one messenger: the envelope, the carrier,
-the delivery id, the sender, how the account is provisioned, and what the bridge
-must refuse. Two implementations of the same binding interoperate; two bindings
-never do.
-
-- **BND-1** · *bridge* — A binding MUST state how it meets each requirement of
-  [§15.1](#151-what-a-messenger-must-provide) — sender authentication, integrity,
-  confidentiality — and whether it inherits each from the messenger or adds it
-  itself, and MUST say plainly where it meets one not at all.
-  *Rationale:* this is where "TDSP inherits its security" becomes checkable per
-  messenger; email shows why it must be explicit, since without PGP it meets none
-  of them.
-
-### 13.1 The common envelope
-
-```json
-{ "tdsp": 1, "kind": "frame", "documentId": "…", "frame": "{\"tdsp\":1,\"kind\":\"edit\",…}" }
-```
-
-`tdsp` is the envelope version, 1 in this specification. `kind` is always
-`"frame"`: every frame kind rides in this one envelope kind, because the bridge
-must not distinguish them (ARC-3). `frame` is the frame's JSON text as a JSON
-string — escaped, never parsed, never Base64-encoded — so it arrives exactly as it
-was sent (TRN-3). A binding MAY replace `frame` by an `attachment` reference to a
-file holding the frame's UTF-8 text; exactly one of the two is present.
-
-- **BND-2** · *bridge* — A bridge MUST write `tdsp` 1. A **recognisable envelope of
-  another version** — `tdsp` a number other than 1 and `documentId` a string — for a
-  document the bridge has bound MUST NOT be delivered and MUST be reported locally
-  (VER-1), in the bridge's log at least. Everything else that is not a valid
-  envelope — nested deeper than [§1.6](#16-notation) allows, `tdsp` missing or not
-  a number, `kind` not `"frame"` (where the binding has a `kind`), `documentId` or
-  `frame` not a string, both or neither of
-  `frame` and `attachment`, or another version for a document the bridge has not
-  bound — it MUST ignore silently (BRG-10).
-  *Rationale:* the envelope has one reading. A version mismatch in a document the
-  participant takes part in is exactly what VER-1 wants seen — a participant runs
-  a newer bridge — while ordinary chat and other people's documents in a shared
-  channel must not flood anyone with warnings. What a later version's envelope
-  looks like beyond these two fields cannot be known today, so only they decide.
-- **BND-3** · *bridge* — A SHA-256 in a field TDSP defines (an attachment
-  reference's `sha256`) MUST be written as 64 lowercase hexadecimal digits, and a
-  receiving bridge MUST refuse any other spelling. A structure a messenger defines
-  itself (Matrix's `EncryptedFile`) keeps that messenger's own encoding.
-  *Rationale:* one spelling across bindings means one parser and one comparison;
-  accepting several invites the case where two spellings of the same hash are
-  compared as different, or two different ones as the same.
-
-### 13.2 Signal
-
-| Aspect | Binding |
-|---|---|
-| Account | A linked device of an existing Signal account (`signal-cli link`; the person scans a QR code on the phone). The bridge holds the device's keys |
-| Security (BND-1) | Sender authentication, integrity and confidentiality inherited from Signal, always on |
-| Channel | An existing Signal group; channel id = the group id |
-| Carrier | One group text message whose body is the envelope JSON |
-| MemberId | The account's ACI (UUID). Never the phone number |
-| Sender | The message's `sourceUuid` as `signal-cli` reports it |
-| Delivery id | `<sender ACI>:<message timestamp>` |
-| Own devices | What one device of an account sends reaches the account's other devices as a sync transcript, delivered like any other message (SIG-3) |
-| Inline limit | A frame of at most 800 bytes rides in the body as `frame` |
-| Attachment | A larger frame, up to 4 MiB, is the message's only attachment; the envelope carries `"attachment": {"size": <bytes>, "sha256": "<64 hex digits>"}` in place of `frame` |
-| Immutability | An `editMessage` or a remote delete targeting a delivered message is an integrity violation, inside a sync transcript too |
-
-- **SIG-1** · *bridge* — A receiving bridge MUST accept an attachment envelope only
-  if the message carries exactly one attachment whose size equals the envelope's
-  `size`, MUST check the file's size and SHA-256 against the envelope before
-  delivering it, and MUST delete its plaintext copy of the file afterwards.
-  *Rationale:* `signal-cli` writes every received attachment to disk in plaintext;
-  a frame's copy must not outlive its delivery.
-- **SIG-2** · *bridge* — A bridge MUST take the sender from the message's ACI and
-  MUST ignore a message that has none.
-  *Rationale:* the ACI is the identity `/whoami` reports and the creator is
-  compared against; a message attributed to a phone number instead would never
-  match, or worse, match a different spelling of the same person.
-- **SIG-3** · *bridge* — A bridge MUST deliver a group message its own account
-  sent from another device like a message from any other member: Signal hands it
-  to the account's other devices as a sync transcript (`signal-cli`:
-  `syncMessage.sentMessage`), its sender is the account's ACI, and its delivery
-  id is `<ACI>:<timestamp of the sent message>`, the id the sending device got.
-  An edit or a remote delete inside a transcript is an integrity violation, as
-  in a message. A bridge MUST ignore a transcript whose sender is not its own
-  account.
-  *Rationale:* a member may run several devices under one account, each a bridge
-  of its own, and Signal gives a device's message to the account's other devices
-  only as this transcript. The delivery id names no device: Signal identifies a
-  message by its author and sent timestamp, and an edit or delete targets it that
-  way, so the transcript yields the id the sender recorded and an echo is
-  recognised (TRN-8). Two devices of one account sending in the same millisecond
-  would share an id, and the second message would count as a duplicate; that has
-  been neither observed nor tested, and loss detection notices it in the cases
-  [§10](#10-loss-detection) names. Signal sends transcripts only to an account's
-  own devices, so one from another sender is not one.
-
-### 13.3 Matrix
-
-| Aspect | Binding |
-|---|---|
-| Account | A login yielding an access token and a device, and a persistent crypto store for that device's Megolm and Olm keys |
-| Security (BND-1) | Sender authentication inherited as far as the homeserver — or Megolm, in an encrypted room — is trusted; integrity and confidentiality only in an encrypted room |
-| Channel | An existing Matrix room; channel id = the room id |
-| Carrier | One room event of type `de.wappensc.together.tdsp.frame`; in an encrypted room, Megolm-encrypted as `m.room.encrypted` |
-| Envelope | `{"tdsp": 1, "documentId": …, "frame": …}` — no `kind`: the event type carries it |
-| MemberId, sender | The Matrix user id; the event's `sender` (the decrypted sender in an encrypted room) |
-| Delivery id | The event id |
-| Inline limit | A frame of at most 32 000 bytes rides in the event as `frame` |
-| Attachment, plain room | A larger frame, up to 4 MiB, is uploaded as a media file; `"attachment": {"url": "mxc://…", "size": …, "sha256": "<64 hex digits>"}` |
-| Attachment, encrypted room | The file is first encrypted as a Matrix `EncryptedFile` v2 (AES-256-CTR, JWK key, SHA-256 of the ciphertext in Matrix's unpadded Base64); `"attachment": {"size": …, "file": {url, key, iv, hashes, v: "v2"}}` travels inside the Megolm-encrypted event |
-| Immutability | A TDSP event carrying `m.relates_to` with `rel_type` `m.replace`, and a redaction of a TDSP event, are integrity violations |
-
-- **MTX-1** · *bridge* — A bridge MUST use the event type
-  `de.wappensc.together.tdsp.frame` for every frame.
-  *Rationale:* the event type is the envelope's kind on Matrix; two
-  implementations that disagree about it never see each other's messages. The
-  prefix is the project's reverse-DNS namespace, not part of the protocol's name.
-- **MTX-2** · *bridge* — A bridge MUST resolve an `mxc://` reference only as a server
-  name and media id on its own homeserver's media endpoint, accepting only a
-  syntactically valid server name, and MUST NOT follow it as a URL.
-  *Rationale:* BRG-14; a reference such as `mxc://../x` must never become a
-  different path on any server.
-- **MTX-3** · *bridge* — In an encrypted room a bridge MUST encrypt an attachment
-  before uploading it and MUST send the key only inside the encrypted event.
-  *Rationale:* the homeserver stores the file; it must hold ciphertext only.
-- **MTX-4** · *bridge* — In an encrypted room a bridge MUST share each room key
-  with every device of every member, its own account's other devices included,
-  and MUST deliver an event its own account sent from another device like any
-  other.
-  *Rationale:* a member may run several devices, each a bridge of its own, under
-  one account; a key withheld from them, or an event filtered by its sender, would
-  leave one device of a person blind to what another wrote.
-
-### 13.4 Email
-
-Email has no channel to bind to, no server-side membership and, without PGP, no
-sender authentication. The binding therefore fixes the participants when the
-thread starts and checks every message against them.
-
-| Aspect | Binding |
-|---|---|
-| Account | An SMTP and an IMAP account at one provider, over TLS (EML-7); for PGP, the person's own secret key in their `gpg` keyring, and a keyring of each document's own for the participants' keys (EML-4) |
-| Security (BND-1) | Without PGP: none — `From` is as forgeable as any header, and a document is as confidential as plain email. With PGP: sender authentication, integrity and confidentiality added by the binding (EML-3) |
-| Channel | A thread: a closed set of participants fixed when the thread starts, rooted at the invitation's `Message-ID` |
-| Carrier | One email per frame. `Subject: tdsp document <documentId>`; header `x-tdsp-document: <documentId>`; `In-Reply-To` and `References` name the thread root; `To`/`Cc` name every participant but the sender |
-| Body, PGP off | The envelope JSON as plain text |
-| Body, PGP on | The same JSON, signed and encrypted to every participant, the sender included, as one inline ASCII-armoured OpenPGP message |
-| Own devices | A copy of every frame mail in the sender's own sent folder, which every device of the address searches (EML-12) |
-| MemberId, sender | The email address in its canonical form (EML-10); the `From` address, canonicalised |
-| Delivery id | The `Message-ID` |
-| Message-ID | `<local@domain>`, at most 200 characters, local part and domain from `[A-Za-z0-9._~+-]` and `[A-Za-z0-9.-]` |
-| Invitation | The thread's first message: human-readable text with the invitation link; with PGP, followed by exactly one armoured block, signed by the creator and encrypted to each participant, whose plaintext is `{"tdsp":1, "kind":"invite", documentId, creator, profile, participants: [{address, fingerprint}], keys, policy?}` |
-| Immutability | A second message under an already-seen `Message-ID` with different content is an integrity violation; one with identical content is a harmless re-read |
-
-- **EML-1** · *bridge* — The participant set MUST be fixed when the thread starts
-  and MUST NOT change for the life of the document, in either direction.
-  *Rationale:* nothing outside TDSP enforces who is on an email thread; a
-  participant who could be removed could be silently cut off from seeing what
-  happens next, and one who could be added is an intrusion path.
-- **EML-2** · *bridge* — A receiving bridge MUST reject a message whose sender plus
-  `To` and `Cc` recipients are not exactly the participant set, before and
-  independently of any PGP check.
-  *Rationale:* a signature covers the body, not the headers; a validly signed
-  message could otherwise quietly exclude a participant from that one message.
-- **EML-3** · *bridge* — For a PGP document, a receiving bridge MUST reject — never
-  apply with a flag — any message that is not encrypted, that is not signed, whose
-  signature does not verify, or whose signing key is not the key the creator's
-  invitation pinned for the sender's address; and a sending bridge MUST refuse to
-  send while it lacks its own secret key or any participant's pinned key.
-  *Rationale:* a per-message "unverified" flag would make every paragraph's
-  trustworthiness different and nobody could act on it; a document is either
-  verified throughout or not.
-- **EML-4** · *bridge* — For a PGP document, the participants' keys MUST come from the
-  creator's signed invitation, be kept in a keyring of that document's own, and
-  not be taken from the user's general keyring.
-  *Rationale:* each participant resolving "who is Bob" from their own keyring gives
-  N different answers and a trust-on-first-use window for every participant at
-  every joiner; one signed statement by the creator gives one answer. It narrows
-  trust on first use to a single key — the creator's — but does not remove it:
-  EML-8 says how that one key is checked.
-- **EML-5** · *bridge* — A bridge MUST check the invitation's plaintext against
-  strict bounds (participant count, key-block length, address and fingerprint
-  shape) before its signature can be verified, MUST refuse more than one armoured
-  block, and MUST check that every field of the join request equals the verified
-  invitation.
-  *Rationale:* the keys that verify the invitation are inside it, so it is read
-  before it can be trusted (BRG-13); a link that disagrees with the signed block
-  is a forged or stale link.
-- **EML-6** · *bridge* — A bridge MUST validate a `Message-ID` it receives from a
-  request or an invitation against the pattern above before storing or sending it.
-  *Rationale:* the value comes from a link anyone can craft and is later written
-  into every outgoing message's headers.
-- **EML-7** · *bridge* — A bridge MUST require TLS to a mail provider, and SHOULD
-  look for a document's messages in the account's junk folder as well as the
-  inbox.
-  *Rationale:* without PGP, TLS is the only protection on the wire; providers file
-  machine-generated mail as spam, which the first real-provider runs showed.
-- **EML-8** · *bridge, application* — A joining bridge MUST compare the key the
-  invitation names for the creator with any key the user's own keyring holds for
-  the creator's address, and MUST refuse the join (`invite-creator-key-differs`)
-  when they differ. It MUST then tell apart three trust states of the creator's
-  key, and MUST NOT present one as another:
-
-  | State | When | What it shows |
-  |---|---|---|
-  | *first contact* (trust on first use) | the user's keyring holds no key for the creator's address | messages are authenticated as coming from the key the invitation named, and nothing says that key is the creator's |
-  | *consistent* | the user's keyring holds the same key | the invitation agrees with what the user held before; the key is as trustworthy as the way it reached that keyring, which the bridge does not check |
-  | *verified* | the person has compared the fingerprint with the creator outside the application | the creator's identity — the only state that shows it |
-
-  An application MUST show the fingerprint in every state, and MUST NOT call the
-  creator *verified* or *authenticated as a person* in the first two. A binding
-  or application that does not record a person's comparison — the reference
-  implementation does not — never reaches *verified* and MUST say so rather than
-  imply it.
-  *Rationale:* the invitation carries the very keys that verify its own
-  signature. Anyone who can send mail in the creator's name can build an
-  invitation with a key of their own that passes every check inside it. Only
-  something the joiner knew before — a key in their own keyring, a fingerprint
-  compared in person — tells the real creator from such a forger. A difference is
-  refused rather than warned: the joiner cannot tell which side is wrong, and
-  joining would pin the whole document to keys the joiner's own records
-  contradict. Without such a key, the first contact is trust on first use, and
-  saying so is the only honest statement. A matching key is not a verification
-  either: a keyring holds keys however they got there. "PGP-authenticated sender
-  under a pinned key" and "this person's verified identity" are different claims,
-  and must stay apart.
-
-- **EML-9** · *bridge, application* — Email without PGP does not meet
-  [§15.1](#151-what-a-messenger-must-provide): it has no sender authentication.
-  It is not a conformant TDSP binding. An implementation MAY offer it only as an
-  experimental mode, MUST label it as experimental and unauthenticated wherever
-  a document is created or opened, and MUST NOT claim conformance to this
-  specification for it.
-  *Rationale:* every authority check compares a message's sender with the
-  creator (CTL-5), and without PGP anyone can write `From: creator`. A warning
-  cannot supply what the binding lacks; saying plainly that the mode is outside
-  the specification can.
-
-- **EML-10** · *bridge* — A bridge MUST hand the engine every email MemberId — its
-  own (`whoami`), a delivery's sender, and each participant it is given — in one
-  canonical form: the bare address (`local@domain`, no display name, angle
-  brackets or comment) without surrounding space, all in lower case. It MUST
-  refuse a participant that is not a bare address rather than repair it, MUST
-  refuse a participant list in which two addresses have the same canonical form,
-  and MUST compare addresses only in that form. It MUST NOT resolve aliases: a
-  subaddress such as `alice+docs@example.org` is a MemberId of its own.
-  **Scope:** this binding is defined only for mail providers that do not tell the
-  letter case of a local part apart. With a provider that does, it is not
-  conformant: two participants who differ only in case are refused, and mail
-  addressed in lower case may not reach a mailbox registered in capitals.
-  *Rationale:* the engine compares MemberIds byte for byte (CTL-5); a provider
-  that writes `From: Alice@Example.org` for a creator configured as
-  `alice@example.org` would otherwise make the creator a stranger in their own
-  document. RFC 5321 lets the local part of an address be case-sensitive, and a
-  mail server may treat two such addresses as two mailboxes. Keeping the local
-  part as written would be correct there, but would split one person in two
-  wherever a provider or a mail client changes the case, which is the common
-  case; the binding chooses the common case and says so, rather than claiming a
-  generality it does not have. Two participants who differ only in case are
-  refused rather than merged, so the rule never silently joins two people. A
-  display name is refused because the sender is always compared as the bare
-  address a mail parser reads from `From:`; accepting `Alice <alice@example.org>`
-  as a participant made every message of that participant a mismatch in the
-  reference bridge. The vectors in
-  `bridges/email-bridge/test-vectors/member-ids-v1.json` fix every case above (§3.6).
-
-- **EML-11** · *bridge* — A bridge MUST report a send as successful only when the
-  mail server accepted the message for every recipient. A message accepted for
-  some and refused for others MUST be reported as failed and name the refused
-  addresses: as `rate-limited` when every refusal was temporary (an SMTP 4xx
-  reply), otherwise as `rejected`. An invitation refused for any participant MUST
-  fail without binding the document.
-  *Rationale:* common mail libraries count a message as sent once one recipient
-  accepted it; reporting that as success is a silent loss for the others (TRN-6).
-  A retry sends the whole message again, so a participant who already has it gets
-  a second copy under a new Message-ID, which changes nothing (TRN-8) — acceptable
-  for a temporary refusal, but not without end for a permanent one, which is why
-  that one is final and the change marked undistributed (SND-8). A participant
-  who accepted a failed invitation holds one for a document that was never bound;
-  joining it gets no answer from the creator, which is safe, and the creator
-  sees the failure.
-- **EML-12** · *bridge* — A bridge MUST make sure that a copy of every frame mail
-  it sends is in its account's sent folder, the mailbox with the IMAP SPECIAL-USE
-  attribute `\Sent` (RFC 6154): it relies on its provider where the provider
-  files mail sent through it there itself, and appends the copy otherwise,
-  creating the folder if the account has none. A receiving bridge MUST search
-  that folder too. The mail itself is unchanged: `To`/`Cc` still name every
-  participant but the sender.
-  *Rationale:* every device of one address reads the same mailbox, but a mail
-  never comes into the mailbox it was sent from. The sent folder is where mail
-  programs already keep what they send; naming the sender as a recipient instead
-  would change what every other participant receives. With PGP the mail is
-  encrypted to every participant, the sender included, so another device of the
-  sender can open the copy.
-
-The email binding without PGP is the weakest on every axis: `From` is as
-forgeable as any header, and a document is as confidential as plain email.
+Each messenger binding is a document of its own, its sections numbered as before:
+[Signal](bindings/signal.md) (§13.2, SIG), [Matrix](bindings/matrix.md) (§13.3, MTX) and
+[email](bindings/email.md) (§13.4, EML). The common envelope (§13.1) and BND-1 to BND-3
+are in [bindings/bridges.md](bindings/bridges.md), with a comparison of the bindings.
 
 ## 14. Versioning and extensibility
 
@@ -2515,7 +1977,7 @@ the holder of the key the creator's invitation pinned; that the key belongs to
 the person named is established only by a fingerprint compared outside TDSP
 (EML-8). Matrix authenticates a sender as far as the
 homeserver is trusted, and adds integrity and confidentiality against the
-homeserver only in an encrypted room ([§13.3](#133-matrix)).
+homeserver only in an encrypted room ([§13.3](bindings/matrix.md#133-matrix)).
 
 Not required: history, ordering, exactly-once delivery, per-message access
 control, server-enforced membership, or any notion of a document.
@@ -2696,19 +2158,7 @@ messages in 20 minutes, with 8 to 35 seconds per hop.
 
 ## Appendix C. The bindings compared
 
-*Informative.* How the three bindings of this version differ in what the messenger
-provides.
-
-| | Signal | Matrix | Email + PGP |
-|---|---|---|---|
-| Sender authentication | Strong (Sender Keys) | As far as the homeserver, or Megolm, is trusted | Pinned PGP key; none without PGP |
-| Membership enforcement | Application level | Application level | Closed set, fixed at creation |
-| History | None | Yes | Mailbox |
-| Size | ≈ 2 000 characters of body; 800 B inline, attachments to 4 MiB | 65 536 B per event; 32 000 B inline, media to 4 MiB | ≈ 10 MiB per mail, commonly; the bridge states 4 MiB per frame |
-| Rate limit | Not exercised | Homeserver-dependent | ≈ 1 message per 34 s measured on one provider |
-| End-to-end encryption | Always | Per room | Only with PGP |
-| MemberId | The account's ACI | The Matrix user id | The address |
-| Bridge | Node + `signal-cli` | Node, Client-Server API | Node + SMTP/IMAP + `gpg` |
+Moved to [bindings/bridges.md](bindings/bridges.md#appendix-c-the-bindings-compared).
 
 ## Appendix D. Example frames
 
@@ -2763,7 +2213,7 @@ frame as a JSON string:
    dealbreakers are an unauthenticated sender and an inability to carry an opaque
    payload. Write down its size and rate limits.
 2. Decide how the account is provisioned, and keep its credentials in a private
-   place ([§12.1](#121-account-and-credentials)).
+   place ([§12.1](bindings/bridges.md#121-account-and-credentials)).
 3. Write a binding ([§13](#13-messenger-bindings)): account, security, envelope,
    carrier, delivery id, sender, inline limit, attachments, and how a message
    reaches the sender's own other devices (TRN-7).
@@ -2771,7 +2221,7 @@ frame as a JSON string:
    yours, silently.
 5. Make delivered messages immutable and record every attempt to alter one.
 6. Classify send failures (BRG-8); if the bridge runs in its own process, offer
-   the local bridge interface ([§12.6](#126-the-local-bridge-interface-optional)):
+   the local bridge interface ([§12.6](bindings/local-bridge-interface.md#126-the-local-bridge-interface-optional)):
    loopback only, loopback origins only.
 7. Reach exactly one endpoint.
 8. Serve a transport profile that states the limits you measured, and say which
@@ -2820,9 +2270,9 @@ TypeScript on Node.js and in the browser:
 | `document-protocol` | engine, application | The engine (`DocumentEngine`), and the invitation link's reader and writer (`parseInvitation`, `encodeInvitation`): frames, control state, bootstrap and resync, send scheduling, fragments, loss detection, declines |
 | `reconciliation` | engine | The profile `yjs-paragraphs/1` ([Appendix A](#appendix-a-profile-yjs-paragraphs1)) and the attribution tracker |
 | `messenger-signal`, `messenger-matrix`, `messenger-email` | adapter | One adapter per binding, speaking the local bridge interface |
-| `signal-bridge`, `matrix-bridge`, `email-bridge` | bridge | One bridge per binding, each offering the local bridge interface ([§12.6](#126-the-local-bridge-interface-optional)) |
+| `signal-bridge`, `matrix-bridge`, `email-bridge` | bridge | One bridge per binding, each offering the local bridge interface ([§12.6](bindings/local-bridge-interface.md#126-the-local-bridge-interface-optional)) |
 | `bridge-log` | bridge | Structured logging for bridges that never logs a credential or a document's content |
-| `loopback` | adapter, bridge | The one check of whether an address is this machine: which bridge an adapter may reach, which page may read a bridge's answers ([§12.6](#126-the-local-bridge-interface-optional)) |
+| `loopback` | adapter, bridge | The one check of whether an address is this machine: which bridge an adapter may reach, which page may read a bridge's answers ([§12.6](bindings/local-bridge-interface.md#126-the-local-bridge-interface-optional)) |
 
 Its conformance status — what has been verified against a real messenger and
 what has not — is published with it (`CONFORMANCE.md`), not here.

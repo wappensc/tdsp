@@ -337,7 +337,7 @@ VER-1). The *wire tests*, `*.wire.test.ts`, hold the reference implementation to
 | `bridges/signal-bridge/src/envelope.wire.test.ts` | `wire/signal-v1.json`: the group message for a frame — in the body, at the body limit, as an attachment — and Appendix D's envelope |
 | `bridges/matrix-bridge/src/event.wire.test.ts` | `wire/matrix-v1.json`: the room event's type and content — inline, at the limit, as a media file |
 | `bridges/email-bridge/src/message.wire.test.ts` | `wire/email-v1.json`: what the bridge hands its mail library for an invitation and for a frame, through its real routes |
-| `tools/wire-lock.wire.test.ts` | `wire/wire-lock.json`: the hash of every entry above, of the published test vectors, of the constants beside them, and of the specification's normative wire sections (§4, §5, §7, §11, §13, Appendices A and B), with the specification's version |
+| `tools/wire-lock.wire.test.ts` | `wire/wire-lock.json`: the hash of every entry above, of the published test vectors, of the constants beside them, and of the specification's normative wire sections (§4, §5, §7, §11, Appendices A and B) and of the binding documents `bindings/bridges.md`, `signal.md`, `matrix.md` and `email.md` as a whole, with the specification's version |
 
 A failing wire test is a decision, not a bug to fix by editing the expectation: the wire
 files and the lock belong to the CI role, and `pnpm run wire:lock` names what kind of

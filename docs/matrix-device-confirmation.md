@@ -51,7 +51,7 @@ on loopback; `network-policy.json` names both.
 
 1. It asks the running bridge which device it is: `GET /device` answers its device id and
    public Ed25519 key. This endpoint belongs to the Matrix bridge only; it is not part of
-   SPECIFICATION.md §12.6.
+   the local bridge interface (`bindings/local-bridge-interface.md`, §12.6).
 2. It checks that the access token belongs to that device.
 3. It reads the account's Secret Storage key description and the encrypted
    **self-signing key**, and has the crypto library (`SecretStorageKey` of

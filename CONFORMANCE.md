@@ -95,7 +95,7 @@ behind a claim elsewhere in the specification.
   MIME/OpenPGP layout and the Matrix binding's `EncryptedFile` fields are what the
   reference bridges do; they are not yet specified to the byte for a second
   implementation, and should be before either binding claims interoperability.
-- **The local bridge interface** (§12.6) is optional and not yet stable: body limits,
+- **The local bridge interface** (§12.6, [bindings/local-bridge-interface.md](bindings/local-bridge-interface.md)) is optional and not yet stable: body limits,
   paging, content types, caching headers and error codes are not normative.
 - **Operations**: logging retention and redaction, and behaviour after a backup, restore
   or upgrade, have no minimum rule yet.
