@@ -195,6 +195,31 @@ describe("a receiver's handling of a messenger-native edit or withdrawal", () =>
     ]);
   });
 
+  it("takes a message under the id of an envelope it did not deliver as new, and records nothing (BRG-12)", () => {
+    const rpc = new FakeRpc();
+    const sync = createSyncState(rpc, bindStorePath);
+    // Neither a frame nor an attachment: no protocol message, so nothing delivered under its id.
+    rpc.emit(
+      "receive",
+      groupEnvelope(ALICE, 1000, JSON.stringify({ tdsp: 1, kind: "frame", documentId: "doc-1" })),
+    );
+    rpc.emit("receive", groupEnvelope(ALICE, 1000, frameText("AQID")));
+    expect(sync.getDeliveries("doc-1").map((delivery) => delivery.payload)).toEqual(["AQID"]);
+    expect(sync.getIntegrityLog("doc-1")).toEqual([]);
+  });
+
+  it("records nothing for an envelope that is no protocol message under a delivered id (BRG-10)", () => {
+    const rpc = new FakeRpc();
+    const sync = createSyncState(rpc, bindStorePath);
+    rpc.emit("receive", groupEnvelope(ALICE, 1000, frameText("AQID")));
+    rpc.emit(
+      "receive",
+      groupEnvelope(ALICE, 1000, JSON.stringify({ tdsp: 1, kind: "frame", documentId: "doc-1" })),
+    );
+    expect(sync.getDeliveries("doc-1").map((delivery) => delivery.payload)).toEqual(["AQID"]);
+    expect(sync.getIntegrityLog("doc-1")).toEqual([]);
+  });
+
   it("takes the same message again as nothing new, and records nothing (BRG-11)", () => {
     const rpc = new FakeRpc();
     const sync = createSyncState(rpc, bindStorePath);
