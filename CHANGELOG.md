@@ -42,9 +42,9 @@ No byte on the wire changes; the new requirements are why this is a minor versio
   header, where Matrix 1.10 puts it, and from the body's `retry_after_ms` only without one
   (TRN-11). `@tdsp/messenger-port` exports `parseRetryAfter` for it (#76).
 - The Matrix bridge leaves a to-device event nested deeper than 32 levels out of what it hands
-  its crypto machine. Any Matrix user can send one, and on some Node.js versions (24, measured)
-  writing it out threw, after the `/sync` position had moved on: the frames of that round were
-  lost for good (TRN-7) (#77).
+  its crypto machine. Any Matrix user can send one, and on Node.js 22 and 24 (measured; not
+  on 26) writing it out threw after the `/sync` position had moved on: the frames of that
+  round were lost for good (TRN-7) (#77).
 - The Signal bridge no longer reports a frame as sent that Signal rate-limited, or could not
   deliver, for some members of the group: `signal-cli` raises no error once one member got a
   message, so the bridge now reads its result per recipient and answers 429, with the longest
