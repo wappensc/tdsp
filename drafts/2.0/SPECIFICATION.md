@@ -2379,12 +2379,14 @@ What receivers need of a sender's pacing travels with each frame that owes a
 follow-up: `due`, the time within which the sender will speak again (SND-14).
 
 - **SND-1** · *engine* — An engine MUST make every pacing it runs consistent before
-  running it: a negative or non-numeric value falls back to its default, and so
-  does a `minIntervalMs`, `minChars` or `expectedLatencyMs` that is not finite —
-  only `maxIntervalMs` and `maxChars` may be unlimited —,
-  `maxIntervalMs` is raised to at least `minIntervalMs`, `minChars` is treated as
-  0 while `maxIntervalMs` is unlimited, and `minChars` is lowered to at most
-  `maxChars`.
+  running it:
+  - a negative or non-numeric value falls back to its default, and so does a
+    `minIntervalMs`, `minChars` or `expectedLatencyMs` that is not finite — only
+    `maxIntervalMs` and `maxChars` may be unlimited;
+  - `maxIntervalMs` is raised to at least `minIntervalMs`;
+  - `minChars` is treated as 0 while `maxIntervalMs` is unlimited, and is lowered
+    to at most `maxChars`.
+
   *Rationale:* no combination of values may starve a pending change — a change
   smaller than `minChars` with no deadline would otherwise never be sent.
 - **SND-15** · *engine* — The creator MAY set the pace. An engine MUST NOT send
@@ -2393,10 +2395,10 @@ follow-up: `due`, the time within which the sender will speak again (SND-14).
   *Rationale:* the pace lets the creator keep a document quiet; the own bounds
   still win, because they are the provider's limit and the creator cannot know
   everyone's provider (§1.7, item 13).
-- **SND-16** · *engine* — The pacing an engine runs MUST be: the engine's defaults,
+- **SND-16** · *engine* — The pacing an engine runs MUST be the engine's defaults,
   overridden by its transport profile's `pacing`, overridden by what its
-  application chose, made consistent (SND-1), with `minIntervalMs` raised to at
-  least the transport's `bounds.minIntervalMs` and to the pace (SND-15). No
+  application chose; then made consistent (SND-1), with `minIntervalMs` raised to
+  at least the transport's `bounds.minIntervalMs` and to the pace (SND-15). No
   pacing value but the pace is sent to anyone.
   *Rationale:* everything else about pacing concerns only the sender's own
   messages and its own judgement of others' silence; sharing it would need a
@@ -2407,7 +2409,7 @@ follow-up: `due`, the time within which the sender will speak again (SND-14).
   or 0 for no promise. A sender MUST set it to its `maxIntervalMs` when that is
   finite, and to 0 otherwise; a sender that announced a `due` above 0 MUST follow
   the frame within it by another frame of the same kind or by a heartbeat
-  (SND-11): a `resync-request` or `resync-response` keeps no such promise.
+  (SND-11, SND-23): a `resync-request` or `resync-response` keeps no such promise.
   *Rationale:* a receiver judges a sender's silence by what that sender promised
   (LOS-11), not by its own pacing; `due` is relative, so it needs no shared clock
   (LOS-7). The receiver ends the expectation only with a frame of the same source
@@ -2418,16 +2420,17 @@ follow-up: `due`, the time within which the sender will speak again (SND-14).
   of any kind, nor while a hold after a refusal lasts (SND-7). This holds for a
   send an application asks for at once too — what is pending, or a last send
   before the engine stops —, which skips only the quiet time and `minChars`, and
-  the wait for the person after a `needs-person` refusal (TRN-20). A
-  message that is not a local edit (a control frame, a resync request or answer,
-  the seed) SHOULD go ahead of edits that are waiting; its outcome goes to whoever
-  sent it, and the scheduler does not retry it, except a control frame (CTL-26)
-  and a piece of an answer sent in pieces (SND-17).
+  the wait for the person after a `needs-person` refusal (TRN-20).
   *Rationale:* the floor is the provider's rate limit, and the provider counts
   messages, not kinds; a single message that bypasses the scheduler — an explicit
-  request to send at once among them — can push the next one into a refusal. A
-  piece is retried because the pieces before it are already out, and an answer
-  missing one is incomplete.
+  request to send at once among them — can push the next one into a refusal.
+- **SND-20** · *engine* — A message that is not a local edit (a control frame, a
+  resync request or answer, the seed) SHOULD go ahead of edits that are waiting.
+  Its outcome goes to whoever sent it, and the scheduler does not retry
+  it, except a control frame (CTL-26) and a piece of an answer sent in pieces
+  (SND-17).
+  *Rationale:* a piece is retried because the pieces before it are already out,
+  and an answer missing one is incomplete.
 - **SND-3** · *engine* — A pending change MUST be sent no later than the first
   moment at which the floor permits after either `maxIntervalMs` has passed since
   its oldest edit or `maxChars` changed characters are pending; otherwise it
@@ -2458,34 +2461,37 @@ follow-up: `due`, the time within which the sender will speak again (SND-14).
   pause would delay it by up to the quiet time for nothing. A provider throttles
   the account, not one message: the next message of another kind would only run
   into the same refusal.
-- **SND-8** · *engine, application* — A send that failed with `too-large` or
-  `rejected`, and a change the engine itself refuses to send (CTL-13), MUST be
-  dropped and reported to the application exactly once. Dropping ends the send
-  job only: the change stays in the sender's document, and every later change
-  builds on it. The engine MUST therefore expose that it holds *undistributed
-  changes* until the transport has accepted its whole state (`resync()`) — every
-  piece of it, when it is split — and nothing has been dropped since; a piece of
-  that state refused for good keeps the mark. A dropped message that carries no
-  change of the sender's own — a resync answer, a request, a heartbeat — MUST NOT
-  set it. The application MUST show that the document holds undistributed changes
-  while the engine exposes them, MUST offer to send the whole state again, and
-  MUST NOT show the document as synchronised meanwhile. A `too-large` refusal of a message within the `maxBytes` the
-  transport's own profile declared MUST additionally be reported as a fault of
-  the transport profile or its binding. An application that keeps a document
-  across restarts MUST keep the undistributed mark with it.
+- **SND-8** · *engine* — A send that failed with `too-large` or `rejected`, and a
+  change the engine itself refuses to send (CTL-13), MUST be dropped and reported
+  to the application exactly once. Dropping ends the send job only: the change
+  stays in the sender's document, and every later change builds on it. The engine
+  MUST therefore expose that it holds *undistributed changes* until the transport
+  has accepted its whole state (`resync()`) — every piece of it, when it is split —
+  and nothing has been dropped since. A piece of that state refused for good keeps
+  the mark; a dropped message that carries no change of the sender's own — a resync
+  answer, a request, a heartbeat — MUST NOT set it.
   *Rationale:* retrying cannot help, and a change that is dropped silently is the
   failure this section exists to prevent. The CRDT cannot take a change back, so
   the author's copy diverges: receivers hold everything the author sends later as
   a pending gap no resync from the creator can fill, since only the author has
   the missing change. Sending the whole state once the cause is fixed — the
   permission restored, a smaller document, a working profile — heals it, because
-  a full-state update depends on nothing before it. An application that merely
-  avoids the word "synchronised" says nothing; the person has to learn that a
-  change of theirs did not go out, and be able to send it once the cause is gone.
-  An answer that does not go out leaves its requester as it was, which asks again
-  (RSY-5, LOS-6); nothing of the responder's own is missing anywhere. A refusal the
-  profile said could not happen is not the sender's fault and must not look like
-  it.
+  a full-state update depends on nothing before it. An answer that does not go out
+  leaves its requester as it was, which asks again (RSY-5, LOS-6); nothing of the
+  responder's own is missing anywhere.
+- **SND-21** · *application* — While the engine exposes undistributed changes
+  (SND-8), the application MUST show that the document holds them, MUST offer to
+  send the whole state again, and MUST NOT show the document as synchronised. An
+  application that keeps a document across restarts MUST keep the undistributed
+  mark with it.
+  *Rationale:* an application that merely avoids the word "synchronised" says
+  nothing; the person has to learn that a change of theirs did not go out, and be
+  able to send it once the cause is gone.
+- **SND-22** · *engine* — A `too-large` refusal of a message within the `maxBytes`
+  the transport's own profile declared MUST be reported, in addition to its report
+  under SND-8, as a fault of the transport profile or its binding.
+  *Rationale:* a refusal the profile said could not happen is not the sender's
+  fault and must not look like it.
 - **SND-9** · *engine* — After a `rate-limited` failure of a message of any kind an
   engine SHOULD widen the spacing between its later sends of every kind, and SHOULD
   relax it again after a run of successful sends.
@@ -2509,40 +2515,52 @@ A lost *final* message leaves no gap for anyone to see: nothing later from the
 same sender is pending behind it. The heartbeat closes that hole.
 
 - **SND-11** · *engine* — When its pacing has a finite `maxIntervalMs`, an engine
-  that has sent an `edit` (a piece of one included), a `control` frame or a
-  `resync-response` in pieces, or that applied an answer — to its own request or
-  to another's — which changed what it holds, owes one `heartbeat`, carrying its
-  state vector and state digest and, from a device of the creator, its control
-  vector and control digest (otherwise `null`), and its stream and number
-  (LOS-13). It MUST send it `maxIntervalMs` after the earlier of its last `edit`
-  and its last `control` frame since its previous heartbeat — when it sent
-  neither, after the last other message or answer that owes one —, and not inside
-  the floor. A `resync-request` or a whole `resync-response` MUST NOT by itself
-  make a heartbeat owed, and MUST NOT delay one that is owed: one that would push
-  the heartbeat past that time goes after it. It MUST NOT send another until
-  something owes one again, MUST NOT send one while a change is pending or being
-  retried. A close does not cancel a heartbeat that is owed (LIF-6). An engine that
-  hears a `resync-request` stating exactly its own state vector and state digest,
-  while what it deleted within the state vector of its latest report (LOS-13)
-  differs from what that report stated, owes a heartbeat that it MUST send as soon
-  as the floor permits, whatever its `maxIntervalMs`.
+  owes one `heartbeat` once it:
+  - has sent an `edit` (a piece of one included), a `control` frame or a
+    `resync-response` in pieces;
+  - or applied an answer — to its own request or to another's — which changed what
+    it holds.
+
+  A `resync-request` or a whole `resync-response` MUST NOT by itself make a
+  heartbeat owed. A heartbeat carries its sender's state vector and state digest
+  and, from a device of the creator, its control vector and control digest
+  (otherwise `null`), and its stream and number (LOS-13).
   *Rationale:* one heartbeat after the last message is enough to reveal a lost
   final message (LOS-4, LOS-10) and costs one message per burst of activity; a
-  repeating heartbeat would spend the rate budget of an idle document. It is what
-  a sender's `due` promises when nothing else follows (SND-14, LOS-11), so it
-  counts from what promised: a request or an answer keeps no promise, and an
-  `edit` and a `control` frame are two sources to a receiver, so a later one of
-  one kind does not keep the other's. Counted from the last message of any kind,
-  an answer to a joiner just after an edit would push the heartbeat past the
-  edit's `due`, and every other participant would suspect the sender. After an
+  repeating heartbeat would spend the rate budget of an idle document. After an
   answer that healed it, it tells the others the new state, so that what their
   evidence showed of the old one ends (LOS-12, LOS-18): its last report would
-  otherwise stand for it, older than what it holds. So would a report that crossed
-  another's deletion, which the engine then received by an ordinary edit: at
-  everyone who holds that deletion it shows a difference in digests (LOS-12), and
-  none of them can end it — nobody has anything to give them, so their requests go
-  unanswered. A request that states what the engine holds is the sign that someone
-  asks in vain, and only a newer report of that stream ends what it asks about.
+  otherwise stand for it, older than what it holds.
+- **SND-23** · *engine* — An engine MUST send a heartbeat it owes by SND-11
+  `maxIntervalMs` after the earlier of its last `edit` and its last `control` frame
+  since its previous heartbeat — when it sent neither, after the last other
+  message or answer that owes one —, and not inside the floor. For every heartbeat
+  it owes (SND-11, SND-24):
+  - a `resync-request` or a whole `resync-response` MUST NOT delay it: one that
+    would push the heartbeat past its time goes after it;
+  - the engine MUST NOT send another until something owes one again, and MUST NOT
+    send one while a change is pending or being retried;
+  - a close does not cancel a heartbeat that is owed (LIF-6).
+
+  *Rationale:* the heartbeat is what a sender's `due` promises when nothing else
+  follows (SND-14, LOS-11), so it counts from what promised: a request or an
+  answer keeps no promise, and an `edit` and a `control` frame are two sources to
+  a receiver, so a later one of one kind does not keep the other's. Counted from
+  the last message of any kind, an answer to a joiner just after an edit would
+  push the heartbeat past the edit's `due`, and every other participant would
+  suspect the sender.
+- **SND-24** · *engine* — An engine that hears a `resync-request` stating exactly
+  its own state vector and state digest, while what it deleted within the state
+  vector of its latest report (LOS-13) differs from what that report stated, owes
+  a heartbeat that it MUST send as soon as the floor permits, whatever its
+  `maxIntervalMs`; SND-23 applies to it otherwise.
+  *Rationale:* without it, a report that crossed another's deletion, which the
+  engine then received by an ordinary edit, would stand for the engine though older
+  than what it holds: at everyone who holds that deletion it shows a difference in
+  digests (LOS-12), and none of them can end it — nobody has anything to give them,
+  so their requests go unanswered.
+  A request that states what the engine holds is the sign that someone asks in
+  vain, and only a newer report of that stream ends what it asks about.
 - **SND-12** · *engine* — A heartbeat MUST count against the floor and MUST NOT be
   retried if its send fails.
   *Rationale:* a lost heartbeat is itself caught by the silence rule (LOS-11); a
@@ -2575,13 +2593,14 @@ attachment ([bindings/](bindings/)), the transport profile states the attachment
 limit, and the engine never needs to know how a frame of a given size travels.
 
 - **SND-17** · *engine* — An engine MUST NOT send a frame larger than the transport's
-  `bounds.maxBytes`. It MUST spread a pending change over several messages when
-  that suffices, and MUST otherwise send an update as several frames of one piece
-  each: several `edit` frames, or several `resync-response` frames with the same
-  `respondsTo`. It MUST send the pieces of one update in order and ahead of any
-  edit made after it, paced by the floor, and MUST NOT make them wait for a typing
-  pause. A piece refused for good (SND-8) MUST drop the pieces of its update still
-  to go.
+  `bounds.maxBytes`:
+  - it MUST spread a pending change over several messages when that suffices;
+  - it MUST otherwise send an update as several frames of one piece each: several
+    `edit` frames, or several `resync-response` frames with the same `respondsTo`.
+
+  It MUST send the pieces of one update in order and ahead of any edit made after
+  it, paced by the floor, and MUST NOT make them wait for a typing pause. A piece
+  refused for good (SND-8) MUST drop the pieces of its update still to go.
   *Rationale:* a piece is useful on its own, so nothing waits for the last one; a
   later edit builds on the split change, and sent first it would arrive first and
   look like a gap to every receiver. The pieces after one that never goes out build
@@ -2833,7 +2852,7 @@ show that first, and the digests are compared once it has arrived.
   every edit that deletes. A deletion of the receiver's own within that vector,
   which the sender had not yet received when it reported, makes the digests differ
   as well: a false alarm, which one whole answer of that stream ends, or its next
-  report, which a request stating what it holds brings at once (SND-11).
+  report, which a request stating what it holds brings at once (SND-24).
 
 ### 10.4 A history the bridge cut short
 
@@ -2979,7 +2998,7 @@ evidence nothing can end:
   heartbeat ends its expectation always.
 - **A report that crossed a deletion.** A report that crossed a deletion the
   receiver holds stays evidence until its stream reports again — at once, once
-  that stream hears a request stating what it holds (SND-11) — or answers the
+  that stream hears a request stating what it holds (SND-24) — or answers the
   receiver whole (LOS-18); while that stream does not run, it stays, and the
   receiver's requests go unanswered.
 - **Many engines of one member.** An engine keeps the reports of a bounded number
@@ -3603,9 +3622,9 @@ keeps its own version 1, with the frame as a JSON string:
    invitation, or a participant's frames, come from another version (DCL-1,
    VER-4).
 5. Show send status and loss evidence; show an error only for a dropped change,
-   and show undistributed changes (SND-8) until a resync has gone out — never
-   "synchronised" meanwhile. Show an answer that lacks a piece (LOS-14) apart from
-   a bootstrap: the trust may be there before all the content is.
+   and show undistributed changes (SND-8, SND-21) until a resync has gone out —
+   never "synchronised" meanwhile. Show an answer that lacks a piece (LOS-14) apart
+   from a bootstrap: the trust may be there before all the content is.
 6. While the engine would refuse an edit — before the bootstrap, while the
    person's permission is `read`, after a close — prevent typing, or hold what
    the person types outside the engine's document (CTL-42). One way to hold: keep
@@ -3714,13 +3733,13 @@ The changes have six reasons, which the tables below cite by letter:
 | CTL-6, TRN-8 | An operation already held is inert, where 1.x judged a frame by its sequence | A: a duplicate is the expected result of a re-offered message, and a set makes it harmless without a sequence. |
 | CTL-15 | The snapshot's layout: operations per target with a control vector and the counters held above a hole, and no policy | A, B; the counters, because an operation superseded above a hole is in no target's heads, and a state restored without them lost the hole. |
 | RSY-8 (with RSY-18) | What `control` carries in an answer; a member reports the creator's counters; every piece names the responder's stream and its own number, the last the count | A: the reports are how a new device of the creator learns what to supersede (CTL-27). D, and a review of draft 2: a requester that holds more than the responder could not tell whether a piece was missing. |
-| SND-2 | A control frame is retried until the messenger takes it, and a piece of an answer; a send asked for at once keeps the floor | A: the operation already holds, so its send is owed, as an edit's is. And a conformance check: a send at once could push the next message into a refusal. |
+| SND-2 (with SND-20) | A control frame is retried until the messenger takes it, and a piece of an answer; a send asked for at once keeps the floor | A: the operation already holds, so its send is owed, as an edit's is. And a conformance check: a send at once could push the next message into a refusal. |
 | SND-1 | A floor, `minChars` or latency that is not finite falls back to its default | A conformance check: an infinite floor stopped every send. |
 | SND-7, SND-9 | A refusal of a message of any kind holds back, and widens the spacing of, the next send of every kind | A conformance check: an answer refused as rate-limited went out again every second. |
-| SND-8, PRF-1 (item 7) | Pieces instead of fragments; a dropped answer, request or heartbeat leaves nothing undistributed; the application shows undistributed changes and offers to send the whole state again | D; and a conformance check: an application that only avoided the word "synchronised" met the rule while it showed everything as sent. |
+| SND-8 (with SND-21 and SND-22), PRF-1 (item 7) | Pieces instead of fragments; a dropped answer, request or heartbeat leaves nothing undistributed; the application shows undistributed changes and offers to send the whole state again | D; and a conformance check: an application that only avoided the word "synchronised" met the rule while it showed everything as sent. |
 | SND-10 | A request that fails to send is no error; its outcome is *failed* | A conformance check: a request is no change, and a failed one showed nowhere. |
 | RSY-3, RSY-4 | A request the floor holds back waits; its expiry counts from when it was sent | A conformance check: an automatic request refused at the floor was spent, and an engine that kept writing never asked. |
-| SND-11 | The heartbeat follows pieces, not fragments, carries the control vector and its sender's stream, counts from the edit or control frame that promised it, and goes at once when a request states what the engine holds while its last report states otherwise | A, D; and a review of draft 2: counted from the last message of any kind, an answer to a joiner pushed it past the edit's `due`. |
+| SND-11 (with SND-23 and SND-24) | The heartbeat follows pieces, not fragments, carries the control vector and its sender's stream, counts from the edit or control frame that promised it, and goes at once when a request states what the engine holds while its last report states otherwise | A, D; and a review of draft 2: counted from the last message of any kind, an answer to a joiner pushed it past the edit's `due`. |
 | ARC-4 | Credentials stay away from the engine and from every component that renders what came through the channel; a sign-in form outside it may pass a typed password to the bridge | "The application" was read as every part of it, which no bridge needing a password can meet. |
 | INV-3, INV-7 | The creator is shown by an identifier the messenger keeps unique, or a name the person gave; an invitation naming the person as creator is a claim | A self-chosen name is what a forger copies, and an invitation naming the person themselves is the forgery they can least recognise. |
 | TRN-11, TRN-12 | Five reasons: `needs-person` for a refusal only a person can lift | An identity not trusted, a device not confirmed or no account was either retried without end (`unavailable`) or dropped (`rejected`); neither serves, and implementations chose differently. |
@@ -3764,6 +3783,7 @@ The changes have six reasons, which the tables below cite by letter:
 | RSY-18, RSY-19 | Parts of RSY-8 and RSY-9 as requirements of their own: the numbers and the state an answer's pieces carry (RSY-18), how the requests kept are keyed, ordered and bounded (RSY-19) | Readability: each was a part of a longer requirement, and requires what it did there |
 | SND-14 to SND-16 | `due`, the pace, local pacing | B. |
 | SND-17 to SND-19 | Pieces | D. |
+| SND-20 to SND-24 | Parts of SND-2, SND-8 and SND-11 as requirements of their own: which messages go first and which are retried (SND-20), what the application shows of undistributed changes (SND-21), a refusal the profile ruled out (SND-22), when a heartbeat goes (SND-23), the heartbeat a request stating one's own state calls for (SND-24) | Readability: each was a part of a longer requirement, and requires what it did there |
 | LOS-9 | The cursor and the instance id replace LOS-8's guess; a new instance is evidence on its own, with or without a cursor, and after a restart one other than the instance restored with the cursor (§6.3) | E: a bridge that offers an instance but no cursor still shows a restart; restored with the cursor, the instance shows what a bridge lost while the engine was gone. |
 | LOS-10, LOS-11 (with LOS-16) | A gap per device; silence judged by `due`, or the pace when longer; another device of one's own member counts like anyone, one's own frames coming back do not; a heartbeat ends the expectations of the frames it holds, a further frame those of its own source | A, B; and wappensc/tdsp#31: a person may write from several devices, and each must notice the others' losses. |
 | LOS-15 to LOS-22 | Parts of the opening of §10, LOS-11, LOS-13, LOS-8 and LOS-14 as requirements of their own: no evidence is no claim of completeness (LOS-15), what ends an expectation (LOS-16), which reports are kept (LOS-17), what ends what a report shows (LOS-18), answering a truncated history (LOS-19), its end at the creator (LOS-20), an answer counted apart and when its evidence ends (LOS-21), pieces that disagree, and bounds (LOS-22) | Readability: each was a part of a longer requirement, or of the section's opening, and requires what it did there |
