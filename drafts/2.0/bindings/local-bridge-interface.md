@@ -80,7 +80,7 @@ unknown route answers 404.
 | `POST /channels/:documentId/bind` | Bind a document to a channel → `createDocument` | `{channelId, creator, profile}` | the binding |
 | `POST /channels/:documentId/send` | → `send` | `{sender, payload}` — the frame's text; `sender` must be the bridge's own account (BRG-16), else 403 | `{deliveryId}` |
 | `GET /channels/:documentId/deliveries` | → `receive` | — | `[{id, documentId, sender, payload}]` |
-| `GET /channels/:documentId/deliveries-since?after=` | Optional → `receiveSince` (TRN-18); `after` absent for all still held | — | `{deliveries: [{id, documentId, sender, payload}], truncated: boolean}`; 404 where the bridge does not offer it |
+| `GET /channels/:documentId/deliveries-since?after=` | Optional → `receiveSince` (TRN-18, TRN-21); `after` absent for all still held | — | `{deliveries: [{id, documentId, sender, payload}], truncated: boolean}`; 404 where the bridge does not offer it |
 | `POST /channels/:documentId/invite` | Send a human-readable invitation into the bound channel | `{actor, text}` — `actor` must be the bridge's own account and the document's creator, else 403 | `{deliveryId}` |
 | `GET /channels/:documentId/integrity-log` | The integrity violations recorded (BRG-15) | — | a list of `{id, sender, reason, …}`, `reason` one of BRG-12's |
 

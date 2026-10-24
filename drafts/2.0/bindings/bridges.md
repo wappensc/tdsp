@@ -29,8 +29,8 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
   ([§3.4](../SPECIFICATION.md#34-send-failures)).
   *Rationale:* an unprovisioned bridge that accepted a send would lose the message
   without saying why; a distinguishable refusal lets the application ask the
-  person to finish the setup, and lets the engine keep the change until then
-  (TRN-20).
+  person to finish the setup (TRN-22), and lets the engine keep the change until
+  then (TRN-20).
 - **BRG-2** · *bridge* — Provisioning MUST NOT pass a credential through the
   engine, through any component that renders content received through the channel,
   or through any interface a document operation uses (ARC-4); what the person needs
