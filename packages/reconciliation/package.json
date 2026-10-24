@@ -1,6 +1,6 @@
 {
   "name": "@tdsp/reconciliation",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "The TDSP document profile yjs-paragraphs/1 and its attribution tracker.",
   "license": "MIT",
   "private": true,
