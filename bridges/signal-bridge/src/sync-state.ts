@@ -180,7 +180,8 @@ export interface SyncStateOptions {
  * `update` may be an attachment, exactly one attachment must accompany it, and what is read
  * is bounded. A failure of the RPC is tried again a couple of times (the file is already
  * on disk, so a real failure is rare); a wrong size or hash is final. Whatever is dropped
- * is a lost message, which loss detection treats like any other.
+ * is a lost message, which loss detection treats like any other. The files an attachment
+ * envelope's message brought are deleted whatever becomes of it (SIG-1).
  */
 export interface SyncState {
   pollOnce(): Promise<void>;
@@ -264,6 +265,13 @@ export function createSyncState(
     return options.attachmentsDir === undefined ? undefined : join(options.attachmentsDir, id);
   }
 
+  /**
+   * How many messages being taken now hold each attachment file. `signal-cli` names the file by the
+   * attachment's remote id (`AttachmentStore`, 0.14.9), so a message presented again names the same
+   * file as the one being read back, and deleting it then would lose a frame on its way in.
+   */
+  const holders = new Map<string, number>();
+
   /** Best effort: the file holds a plaintext frame, and `signal-cli` never removes it itself. */
   function deleteAttachmentFile(id: string): void {
     const file = attachmentFile(id);
@@ -274,6 +282,48 @@ export function createSyncState(
       rmSync(file, { force: true });
     } catch (error) {
       logger.warn("attachment-file-not-deleted", { error });
+    }
+  }
+
+  /**
+   * Deletes the files `incoming` brought that no message being taken now still holds (SIG-1). Only
+   * an id that names a file inside the attachments directory is touched (`isPlainAttachmentId`).
+   */
+  function discardAttachments(incoming: IncomingGroupMessage): void {
+    for (const { id } of incoming.attachments) {
+      if (isPlainAttachmentId(id) && !holders.has(id)) {
+        deleteAttachmentFile(id);
+      }
+    }
+  }
+
+  /**
+   * Takes an attachment envelope, and deletes every file its message brought once done with it,
+   * whatever became of it (SIG-1): delivered, refused, or not read back. A frame refused or never
+   * read is a lost message, which loss detection treats like any other; a plaintext copy of it
+   * kept on disk serves nothing.
+   */
+  async function takeAttachment(
+    incoming: IncomingGroupMessage,
+    envelope: Envelope,
+    ref: AttachmentRef,
+  ): Promise<void> {
+    const held = incoming.attachments.map(({ id }) => id).filter(isPlainAttachmentId);
+    for (const id of held) {
+      holders.set(id, (holders.get(id) ?? 0) + 1);
+    }
+    try {
+      await processAttachment(incoming, envelope, ref);
+    } finally {
+      for (const id of held) {
+        const left = (holders.get(id) ?? 1) - 1;
+        if (left > 0) {
+          holders.set(id, left);
+        } else {
+          holders.delete(id);
+        }
+      }
+      discardAttachments(incoming);
     }
   }
 
@@ -322,7 +372,6 @@ export function createSyncState(
       try {
         if (statSync(file).size > ATTACHMENT_FRAME_LIMIT) {
           logger.warn("attachment-rejected", { reason: "too-large" });
-          deleteAttachmentFile(attached.id);
           return;
         }
       } catch {
@@ -348,8 +397,6 @@ export function createSyncState(
       } else {
         throw error;
       }
-    } finally {
-      deleteAttachmentFile(attached.id);
     }
   }
 
@@ -407,6 +454,10 @@ export function createSyncState(
       if (first.digest !== digest && isBound(first.documentId)) {
         reject(first.documentId, id, incoming.sender, "message-replaced");
       }
+      // Not taken, so whatever file it brought is of no use either (SIG-1).
+      if (envelope.attachment !== undefined) {
+        discardAttachments(incoming);
+      }
       return;
     }
     firstSeen.set(id, { digest, documentId: envelope.documentId });
@@ -415,7 +466,7 @@ export function createSyncState(
       return;
     }
     if (envelope.attachment !== undefined) {
-      processAttachment(incoming, envelope, envelope.attachment).catch((error: unknown) => {
+      takeAttachment(incoming, envelope, envelope.attachment).catch((error: unknown) => {
         logger.warn("attachment-failed", { error });
       });
     }
