@@ -29,6 +29,7 @@ import {
 // resync requests and responses included, rides it (SPECIFICATION.md §13.3).
 export const FRAME_EVENT_TYPE = "de.wappensc.together.tdsp.frame";
 const ENCRYPTED_EVENT_TYPE = "m.room.encrypted";
+const ENCRYPTION_STATE_EVENT_TYPE = "m.room.encryption";
 const REDACTION_EVENT_TYPE = "m.room.redaction";
 
 /**
@@ -231,6 +232,33 @@ export function createSyncState(
   /** `eventId -> documentId`, populated as `recordEvent` records a real delivery — lets a later redaction attribute itself to the right document's own integrity log. */
   const recordedEventDocument = new Map<string, DocumentId>();
   const violations = new Map<DocumentId, IntegrityEntry[]>();
+  /**
+   * The rooms this bridge has seen encrypted while it runs: an `m.room.encryption` state event or
+   * an `m.room.encrypted` event in their timeline, the first `/sync` included. Matrix never turns
+   * a room's encryption off, so a room stays here. With the rooms bound as encrypted, these are
+   * the rooms where an unencrypted frame is never delivered (see `isEncryptedRoom`).
+   */
+  const seenEncrypted = new Set<string>();
+
+  /**
+   * In an encrypted room the carrier of a frame is an `m.room.encrypted` event (SPECIFICATION.md
+   * §13.3), and Megolm's sender is what makes the creator check mean anything there (BND-1,
+   * §15.1). A homeserver can place an unencrypted event in any room under any member's name, so
+   * one that carries a frame in such a room is ignored, never delivered.
+   */
+  function isEncryptedRoom(roomId: string, bindStore: BindStoreData): boolean {
+    if (seenEncrypted.has(roomId)) {
+      return true;
+    }
+    return Object.values(bindStore).some((record) => record.roomId === roomId && record.encrypted);
+  }
+
+  /** Notes `roomId` as encrypted when `event` shows it is. */
+  function noteEncryption(roomId: string, event: RawTimelineEvent): void {
+    if (event.type === ENCRYPTION_STATE_EVENT_TYPE || event.type === ENCRYPTED_EVENT_TYPE) {
+      seenEncrypted.add(roomId);
+    }
+  }
 
   function reject(
     documentId: string,
@@ -446,12 +474,29 @@ export function createSyncState(
     );
 
     if (wasFirstPoll) {
-      return; // establish the timeline baseline only — see this module's own doc comment
+      // Establish the timeline baseline only — see this module's own doc comment — but keep
+      // what it shows about which rooms are encrypted.
+      for (const [roomId, events] of result.roomEvents) {
+        for (const event of events) {
+          noteEncryption(roomId, event);
+        }
+      }
+      return;
     }
     const bindStore = loadBindStore(bindStorePath);
     await retryPendingAttachments();
     for (const [roomId, events] of result.roomEvents) {
       for (const event of events) {
+        // In timeline order: a frame sent before the room's encryption was turned on was valid then.
+        noteEncryption(roomId, event);
+        if (event.type === FRAME_EVENT_TYPE && isEncryptedRoom(roomId, bindStore)) {
+          logger.warn("unencrypted-frame-in-encrypted-room", {
+            roomId,
+            eventId: event.event_id,
+            sender: event.sender,
+          });
+          continue;
+        }
         const logical = await resolveLogicalEvent(event, roomId);
         if (logical) {
           await processLogicalEvent(logical, bindStore);
