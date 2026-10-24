@@ -200,7 +200,7 @@ export function createSyncState(
   const readTimeoutMs = options.readTimeoutMs ?? 60_000;
   const retention = options.retention ?? DEFAULT_DELIVERY_RETENTION;
   const deliveries = new Map<DocumentId, Delivery[]>();
-  /** `"sender:timestamp"` (the same shape as a `Delivery.id`) -> `documentId`, populated as an `update` envelope is recorded — lets a later edit/remote-delete of the same message attribute itself to the right document's own integrity log. */
+  /** `"sender:timestamp"` (the same shape as a `Delivery.id`) -> `documentId`, set as a message is delivered: an edit or remote-delete is recorded only against a message in here, in its document's integrity log (BRG-12). */
   const recordedIdDocument = new Map<string, DocumentId>();
   const violations = new Map<DocumentId, IntegrityEntry[]>();
   /**
@@ -446,14 +446,11 @@ export function createSyncState(
       const editOrDelete = parseIncomingEditOrDelete(params, ownAci);
       if (editOrDelete) {
         const targetId = `${editOrDelete.sender}:${editOrDelete.targetTimestamp}`;
-        // Prefer the ground truth of what this bridge itself recorded for
-        // the targeted message over whatever documentId a tampered edit's
-        // own text claims — the latter is only a fallback for a message
-        // this bridge never saw in the first place.
-        let documentId = recordedIdDocument.get(targetId);
-        if (documentId === undefined && editOrDelete.editedMessage !== undefined) {
-          documentId = parseEnvelope(editOrDelete.editedMessage)?.documentId;
-        }
+        // Only an edit or a delete of a message this bridge delivered is recorded, against that
+        // message's document (BRG-12). One of a message it never delivered changed nothing it
+        // handed up, whatever document the edit's text names; recording it would let anyone in a
+        // bound group fill that document's integrity log.
+        const documentId = recordedIdDocument.get(targetId);
         const reason: IntegrityReason =
           editOrDelete.kind === "edit" ? "message-edited" : "message-remote-deleted";
         // An edit or a delete from another group is not this document's (BRG-10).

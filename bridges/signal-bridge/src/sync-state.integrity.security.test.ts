@@ -248,10 +248,10 @@ describe("a receiver's handling of a messenger-native edit or withdrawal", () =>
     ]);
   });
 
-  it("attributes an edit of a message it never itself recorded by parsing the edit's own claimed documentId", () => {
+  it("never applies an edit of a message it never delivered, and records nothing for it, whatever document its text names (BRG-12)", () => {
     const rpc = new FakeRpc();
     const sync = createSyncState(rpc, bindStorePath);
-    // No original ever recorded — e.g. sent before this bridge process started.
+    // No original ever delivered — e.g. sent before this bridge process started, or never at all.
     rpc.emit(
       "receive",
       editEnvelope(
@@ -262,9 +262,20 @@ describe("a receiver's handling of a messenger-native edit or withdrawal", () =>
       ),
     );
     expect(sync.getDeliveries("doc-1")).toEqual([]);
-    expect(sync.getIntegrityLog("doc-1")).toEqual([
-      { id: "alice:999", sender: ALICE, reason: "message-edited" },
-    ]);
+    expect(sync.getIntegrityLog("doc-1")).toEqual([]);
+  });
+
+  it("records nothing for an edit of an envelope it did not deliver under that id", () => {
+    const rpc = new FakeRpc();
+    const sync = createSyncState(rpc, bindStorePath);
+    // Neither a frame nor an attachment: no protocol message, so nothing delivered under its id.
+    rpc.emit(
+      "receive",
+      groupEnvelope(ALICE, 1000, JSON.stringify({ tdsp: 1, kind: "frame", documentId: "doc-1" })),
+    );
+    rpc.emit("receive", editEnvelope(ALICE, 1000, 2000, frameText("BBBB")));
+    expect(sync.getDeliveries("doc-1")).toEqual([]);
+    expect(sync.getIntegrityLog("doc-1")).toEqual([]);
   });
 
   it("does not crash on a remote-delete it cannot attribute to any document", () => {

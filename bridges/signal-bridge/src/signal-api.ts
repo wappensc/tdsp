@@ -256,8 +256,6 @@ export interface IncomingEditOrDelete {
   readonly groupId: string;
   /** The original message's own `timestamp` — Signal's own target for an edit or a remote-delete, and the second half of this bridge's own `Delivery.id` (`${sender}:${timestamp}`) for whatever it originally sent. */
   readonly targetTimestamp: number;
-  /** An edit's own replacement text — still worth trying to parse as a tdsp envelope purely to recover `documentId` for attribution (never applied as data). `undefined` for a remote-delete, which carries no text at all. */
-  readonly editedMessage: string | undefined;
 }
 
 /**
@@ -292,18 +290,12 @@ export function parseIncomingEditOrDelete(
     if (typeof targetSentTimestamp !== "number" || typeof inner !== "object" || inner === null) {
       return null;
     }
-    const { message, groupInfo } = inner as { message?: unknown; groupInfo?: unknown };
+    const { groupInfo } = inner as { groupInfo?: unknown };
     const groupId = (groupInfo as { groupId?: unknown } | undefined)?.groupId;
     if (typeof groupId !== "string") {
       return null; // not a group message — out of scope, same as parseIncomingGroupMessage
     }
-    return {
-      kind: "edit",
-      sender,
-      groupId,
-      targetTimestamp: targetSentTimestamp,
-      editedMessage: typeof message === "string" ? message : undefined,
-    };
+    return { kind: "edit", sender, groupId, targetTimestamp: targetSentTimestamp };
   }
 
   if (typeof dataMessage === "object" && dataMessage !== null) {
@@ -319,7 +311,7 @@ export function parseIncomingEditOrDelete(
     if (typeof targetTimestamp !== "number" || typeof groupId !== "string") {
       return null;
     }
-    return { kind: "remote-delete", sender, groupId, targetTimestamp, editedMessage: undefined };
+    return { kind: "remote-delete", sender, groupId, targetTimestamp };
   }
 
   return null;
