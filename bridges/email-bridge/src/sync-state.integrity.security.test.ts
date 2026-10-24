@@ -80,7 +80,7 @@ describe("a receiver's handling of a resend under an existing Message-ID", () =>
     expect(sync.getDeliveries("doc-1")).toHaveLength(1); // only the original was ever applied
     expect(sync.getDeliveries("doc-1")[0]?.payload).toBe("AQID");
     expect(sync.getRejections("doc-1")).toEqual([
-      { messageId: "<reused@example.org>", sender: "bob@example.org", reason: "message-id-reused" },
+      { messageId: "<reused@example.org>", sender: "bob@example.org", reason: "message-replaced" },
     ]);
   });
 

@@ -40,8 +40,8 @@ export type RejectionReason =
   | "pgp-unavailable"
   /** A PGP-protected message arrived for a document this bridge has PGP switched off for — a setting mismatch between participants, not something to guess around. */
   | "pgp-disabled-locally"
-  /** A second, distinct message arrived reusing an already-seen `Message-ID` with different text — an attempted messenger-native edit or withdrawal (bindings/bridges.md BRG-12). Never applied; an identical repeat (an ordinary IMAP re-read) is not this reason. */
-  | "message-id-reused"
+  /** Another message, with other text, under an already-seen `Message-ID` — an attempt to replace a message, named as every bridge names it (bindings/bridges.md BRG-12). Never applied; an identical repeat (an ordinary IMAP re-read) is not this reason. */
+  | "message-replaced"
   /** Larger than the bridge reads (BRG-13, `MAX_INCOMING_MAIL_BYTES`): never parsed, decrypted or applied. */
   | "message-too-large";
 
@@ -234,7 +234,7 @@ export function createSyncState(
     const firstSeenDigest = seenMessageIds.get(message.messageId);
     if (firstSeenDigest !== undefined) {
       if (firstSeenDigest !== digestOf(message.text)) {
-        reject(documentId, message, "message-id-reused");
+        reject(documentId, message, "message-replaced");
       }
       return;
     }
