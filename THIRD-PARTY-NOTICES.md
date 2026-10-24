@@ -137,7 +137,7 @@ Greenmail (Apache-2.0) run as containers for testing and are never part of a bri
 | thread-stream | 4.2.0 | MIT | https://github.com/mcollina/thread-stream |
 | tlds | 1.261.0 | MIT | https://github.com/stephenmathieson/node-tlds |
 | uc.micro | 2.1.0 | MIT | https://github.com/markdown-it/uc.micro |
-| yjs | 13.6.32 | MIT | https://github.com/yjs/yjs |
+| yjs | 13.6.33 | MIT | https://github.com/yjs/yjs |
 
 <!-- GENERATED:PACKAGES:END -->
 

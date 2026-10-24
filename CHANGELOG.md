@@ -26,6 +26,11 @@ No byte on the wire changes, and no requirement does.
   and `email.md`. Their text is unchanged; requirements keep their IDs and sections their
   numbers, and §12, §13 and Appendix C of the specification point to them (#81).
 
+### Changed
+
+- `@tdsp/document-protocol` and `@tdsp/reconciliation` need Yjs 13.6.33 or later (was
+  13.6.32) (#84).
+
 ## v1.5.0 — 2026-10-24 · implements TDSP 1.4
 
 No byte on the wire changes from v1.4.0.
