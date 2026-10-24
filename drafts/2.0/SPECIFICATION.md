@@ -1362,10 +1362,12 @@ bootstraps ([§8](#8-bootstrap-and-resync)).
   accepted (CTL-5, RSY-12); the engine would silently never converge.
 - **LIF-5** · *application* — A creator resuming its own document after a restart
   MUST rejoin it as creator with its persisted control state (CTL-26), and MUST
-  NOT create it anew. An application MUST persist that it creates a document — its
-  documentId, and that it is the creator — before it creates the engine that sends
-  the initial state, and MUST resume a document so marked for which it persisted
-  no control state as a device of the creator without control state (CTL-27).
+  NOT create it anew. An application MUST:
+  - persist that it creates a document — its documentId, and that it is the
+    creator — before it creates the engine that sends the initial state;
+  - resume a document so marked for which it persisted no control state as a
+    device of the creator without control state (CTL-27).
+
   *Rationale:* creating anew seeds an empty document over real content and
   starts a control state that knows none of the creator's earlier decisions.
   CTL-26 persists operations, and creating a document issues none: an application
@@ -1376,38 +1378,52 @@ bootstraps ([§8](#8-bootstrap-and-resync)).
 
 An application may also persist a document's content and show it at once after a
 restart, and any participant's control state (CTL-39); TDSP requires only the
-creator's (CTL-26). With a transport that offers `receiveSince` (TRN-18), an application
-that persists content SHOULD persist with it the cursor its engine had reached
-when the content was taken, so that the restarted engine reads on from there and
-learns whether its transport still holds everything since — never a cursor ahead
-of the control state it restores with it (CTL-40). With a transport that offers
-`instance` (TRN-19), it SHOULD persist with the cursor the instance its engine held
-with it: the restarted engine compares it with the transport's at its first read
-(LOS-9), so a bridge that may have lost something while the application was gone
-shows it, and one that kept everything does not. While its engine holds *history
-truncated* evidence (LOS-8, LOS-9), it SHOULD keep the cursor and instance it
-persisted last rather than persist new ones: the new instance would read as the
-one the cursor was read under, and a restart before the evidence ends would read
-on past the loss. The restarted engine
-still sends a resync request when it joins (RSY-1); a non-creator edits only once
-bootstrapped — after a restart possibly by its own restored control state and its
-first read (CTL-41) —, and until then its application prevents typing, or holds
-what the person types outside the engine's document (CTL-42); and persisted content can
-hold changes that never reached anyone else (SND-8).
+creator's (CTL-26).
+
+- **LIF-8** · *application* — An application that persists a document's content
+  SHOULD persist with it:
+  - with a transport that offers `receiveSince` (TRN-18), the cursor its engine had
+    reached when the content was taken — never one ahead of the control state the
+    application restores with the content (CTL-40);
+  - with a transport that offers `instance` (TRN-19), the instance its engine held
+    with that cursor.
+
+  While its engine holds *history truncated* evidence (LOS-8, LOS-9), it SHOULD
+  keep the cursor and instance it persisted last rather than persist new ones.
+  *Rationale:* with the cursor the restarted engine reads on from there and learns
+  whether its transport still holds everything since. It compares the instance
+  with the transport's at its first read (LOS-9), so a bridge that may have lost
+  something while the application was gone shows it, and one that kept everything
+  does not. While the evidence lasts, a new instance would read as the one the
+  cursor was read under, and a restart before the evidence ends would read on past
+  the loss.
+
+After a restart:
+
+- the restarted engine still sends a resync request when it joins (RSY-1);
+- a non-creator edits only once bootstrapped — possibly by its own restored
+  control state and its first read (CTL-41) —, and until then its application
+  prevents typing, or holds what the person types outside the engine's document
+  (CTL-42);
+- persisted content can hold changes that never reached anyone else (SND-8).
 
 ### 6.4 Closing a document
 
 Closing marks a document as finished. It is the only lifecycle transition after
 creation, and it is a control action ([§7](#7-control-state)).
 
-- **LIF-6** · *engine* — After it has applied a close, an engine MUST NOT send
-  `edit` frames of its own, and a device of the creator MUST NOT issue further
-  control operations; one it issued before and has not yet sent it still sends
-  (CTL-26).
-  The engine MUST still apply every valid `edit` frame it receives — an edit sent
-  before the close may arrive after it — MUST still send heartbeats, MUST still
-  accept a creator's `resync-response` and MUST still answer resync requests as
-  [§8](#8-bootstrap-and-resync) prescribes.
+- **LIF-6** · *engine, application* — After it has applied a close, an engine MUST
+  NOT send `edit` frames of its own, and a device of the creator MUST NOT issue
+  further control operations; one it issued before and has not yet sent it still
+  sends (CTL-26). The engine MUST still:
+  - apply every valid `edit` frame it receives — an edit sent before the close may
+    arrive after it;
+  - send heartbeats;
+  - accept a creator's `resync-response`;
+  - answer resync requests as [§8](#8-bootstrap-and-resync) prescribes.
+
+  An application SHOULD show a closed document as still synchronising while its
+  engine suspects a loss ([§10](#10-loss-detection)).
   *Rationale:* a close and the edits sent just before it are unordered on the
   transport (TRN-10). Discarding an edit that arrives after the close would leave
   two receivers of the very same messages with different documents for good — one
@@ -1417,9 +1433,7 @@ creation, and it is a control action ([§7](#7-control-state)).
   sender, which the protocol cannot make without acknowledgements it does not
   have ([§3.3](#33-delivery-semantics)). Heartbeats continue because only a
   heartbeat reveals the loss of the close itself, or of an edit sent just before
-  it (LOS-10, LOS-11). An application SHOULD show a closed document as still
-  synchronising while its engine suspects a loss
-  ([§10](#10-loss-detection)).
+  it (LOS-10, LOS-11).
 - **LIF-7** · *engine* — A close is permanent: nothing — no control frame and no
   control snapshot — reopens a closed document.
   *Rationale:* a reopen would be one more thing a forged or replayed message
@@ -1433,13 +1447,14 @@ The typical case is a profile the joiner's engine does not implement: the creato
 can then invite again, with a new document of a profile the joiner implements,
 since a document's own profile never changes.
 
-- **DCL-1** · *application* — An application whose engine does not implement an
-  invitation's profile SHOULD send a `decline` with the reason
-  `unsupported-profile` and the profiles its engine implements. One that cannot
-  read an invitation because it is of another version (INV-6) sends nothing in
-  reply and SHOULD tell the person that the invitation comes from another version
-  of TDSP. A person who does not want to join MAY decline with the reason
-  `declined`.
+- **DCL-1** · *application* — An application:
+  - whose engine does not implement an invitation's profile SHOULD send a `decline`
+    with the reason `unsupported-profile` and the profiles its engine implements;
+  - that cannot read an invitation because it is of another version (INV-6) sends
+    nothing in reply and SHOULD tell the person that the invitation comes from
+    another version of TDSP.
+
+  A person who does not want to join MAY decline with the reason `declined`.
   *Rationale:* without a message nobody learns why a participant never appears;
   with the list of implemented profiles the creator knows what to invite with. A
   `decline` reaches the creator only in a version both engines implement: the
@@ -2053,7 +2068,7 @@ control state in a member's answer to the device's own request (RSY-8).
   restores is the creator's operations as it last held them, and a union cannot
   undo anything (CTL-25), so the creator's later answer only adds to it.
 - **CTL-40** · *engine, application* — An engine MUST report every change of its
-  control state to its application before it makes observable a cursor (§6.3)
+  control state to its application before it makes observable a cursor (§6.3, LIF-8)
   that reads past the delivery that brought the change. An application that
   restores control state together with content and a cursor MUST restore control
   state at least as new as that cursor: it persists a cursor only once the control
@@ -2093,7 +2108,7 @@ control state in a member's answer to the device's own request (RSY-8).
   bootstrapped (CTL-13) also by control state of its own restored from an earlier
   bootstrap (CTL-39), once all of these hold:
   - it has read on from the cursor persisted with its content
-    ([§6.3](#63-joining-a-document)) through a transport that offers
+    ([§6.3](#63-joining-a-document), LIF-8) through a transport that offers
     `receiveSince`;
   - the answer was not `truncated`;
   - the transport's instance, where it offers one, was the one persisted with the
@@ -2946,7 +2961,7 @@ show that first, and the digests are compared once it has arrived.
   - An engine whose transport offers `instance` (TRN-19), with or without
     `receiveSince`, MUST treat as such evidence too an `instance` other than the
     one that answered its previous read — after a restart, other than the one its
-    application restored with the cursor (§6.3), where it restored one.
+    application restored with the cursor (LIF-8), where it restored one.
 
   Either is evidence on its own.
   *Rationale:* where the bridge can say that something slid out unseen, or that it
@@ -3859,6 +3874,7 @@ The changes have six reasons, which the tables below cite by letter:
 | ARC-5 | An application may carry a document between one person's devices through another service, and tells the person; a device of the creator that takes over carried control state continues under a new tag, and the state gives it a basis only if it was one (with CTL-25, CTL-28, RSY-14) | ARC-1 concerns participants; it said nothing about one person's devices, which a messenger without history cannot bring up to date. Two devices under one tag would notice only once one received what the other issued (CTL-24). |
 | INV-9 | Joining on another device of the person without asking again, when the confirmation travels from where the person gave it | INV-3 protects the creator's identity; the service that carries it is trusted as the person's machine. |
 | INV-10 | The MUST of §11.3's opening, to use the link's form, as a requirement of its own | A MUST without an ID, which §1.3 left informative although it was meant to bind; the content is unchanged |
+| LIF-8 | The SHOULDs of §6.3 on persisting the cursor and the instance with content, as a requirement of their own | SHOULDs without an ID, which §1.3 left informative although they were meant to apply; the content is unchanged |
 | TRN-20 (with TRN-22) | A send refused as `needs-person` is kept, shown, and tried again when the application says the person acted, or after the longest back-off | The person can lift the refusal and waiting cannot; without its own handling it would spin or be dropped. |
 | TRN-18 (with TRN-21), TRN-19 | An optional cursor with `truncated`, answered in the window's order, and truncated also behind what the bridge passed over; a bridge instance id, the epoch of the window, that changes whenever the bridge may have lost something | E: the engine continues after the last delivery an answer held; a gap the bridge skipped, or a loss in a restart, is what it cannot see by itself. |
 | TRN-21, TRN-22 | Parts of TRN-18 and TRN-20 as requirements of their own: the order of a `receiveSince` answer (TRN-21), what the application shows while sending waits for the person (TRN-22) | Readability: each was a part of a longer requirement, and requires what it did there |
@@ -3878,7 +3894,7 @@ The changes have six reasons, which the tables below cite by letter:
 | SND-20 to SND-24 | Parts of SND-2, SND-8 and SND-11 as requirements of their own: which messages go first and which are retried (SND-20), what the application shows of undistributed changes (SND-21), a refusal the profile ruled out (SND-22), when a heartbeat goes (SND-23), the heartbeat a request stating one's own state calls for (SND-24) | Readability: each was a part of a longer requirement, and requires what it did there |
 | LOS-9 | The cursor and the instance id replace LOS-8's guess; a new instance is evidence on its own, with or without a cursor, and after a restart one other than the instance restored with the cursor (§6.3) | E: a bridge that offers an instance but no cursor still shows a restart; restored with the cursor, the instance shows what a bridge lost while the engine was gone. |
 | LOS-10, LOS-11 (with LOS-16) | A gap per device; silence judged by `due`, or the pace when longer; another device of one's own member counts like anyone, one's own frames coming back do not; a heartbeat ends the expectations of the frames it holds, a further frame those of its own source | A, B; and wappensc/tdsp#31: a person may write from several devices, and each must notice the others' losses. |
-| LOS-15 to LOS-22 | Parts of the opening of §10, LOS-11, LOS-13, LOS-8 and LOS-14 as requirements of their own: no evidence is no claim of completeness (LOS-15), what ends an expectation (LOS-16), which reports are kept (LOS-17), what ends what a report shows (LOS-18), answering a truncated history (LOS-19), its end at the creator (LOS-20), an answer counted apart and when its evidence ends (LOS-21), pieces that disagree, and bounds (LOS-22) | Readability: each was a part of a longer requirement, or of the section's opening, and requires what it did there |
+| LOS-15 to LOS-22 | Parts of the opening of §10, LOS-11, LOS-13, LOS-8 and LOS-14 as requirements of their own: no evidence is no claim of completeness (LOS-15), what ends an expectation (LOS-16), which reports are kept (LOS-17), what ends what a report shows (LOS-18), answering a truncated history (LOS-19), its end at the creator (LOS-20), an answer counted apart and when its evidence ends (LOS-21), pieces that disagree, and bounds (LOS-22) | Readability: each was a part of a longer requirement, and requires what it did there; LOS-15 was a MUST NOT without an ID in the section's opening, which §1.3 left informative although it was meant to bind |
 | YJS-4 | A receiver applies content YJS-1 forbids, and projects it one way | A CRDT cannot refuse part of the state it converges to, and engines that project it differently disagree about every attribution offset after it. |
 | VER-3 | The draft marker | A draft must never leave frames that a released 2.0 would read as its own. |
 | VER-4 | An application shows whose frames are of another version | VER-1's loud failure reached only the application, and the person saw a silent participant instead. |
