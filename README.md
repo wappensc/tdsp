@@ -29,6 +29,8 @@ This repository contains
   has verified, and against what, and what it has not;
 - **[CHANGELOG.md](CHANGELOG.md)** — what changed from one release, and one version of the
   specification, to the next.
+- **[drafts/2.0/](drafts/2.0/)** — the working text of TDSP 2.0, not normative and not yet
+  implemented here.
 
 > [!IMPORTANT]
 > **TDSP adds no security layer of its own.** It does not encrypt, sign or
