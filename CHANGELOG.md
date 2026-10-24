@@ -32,6 +32,19 @@ No byte on the wire changes; the new requirements are why this is a minor versio
   one, under a domain its author controls (`com.example.title`), never collides with a
   parameter a later version adds. A promise of the specification, not a requirement on
   applications (#68).
+- BRG-10: a bridge takes a message for a document only from the channel the document is bound
+  to, and ignores one from another channel — an edit or a deletion from there too. Who is in a
+  document's channel is what decides who can write into it (CTL-7, §15.2) (#78).
+
+### Security
+
+- The Signal and the Matrix bridge take a frame for a document only from the group or room it
+  is bound to (BRG-10). They took one from any group or room their account is in, so someone
+  outside the document's channel who knew its documentId — a member removed from the group,
+  say — could write into it, and an edit or a deletion from there was recorded in its
+  integrity log. Permissions and the close were not affected: only the creator's control
+  frames count. The email bridge already checks every message against the thread's
+  participants (EML-2) (#78).
 
 ### Fixed
 

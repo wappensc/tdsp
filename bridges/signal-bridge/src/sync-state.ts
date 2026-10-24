@@ -225,6 +225,16 @@ export function createSyncState(
     return bindStore[documentId] !== undefined; // someone else's document sharing this group otherwise — silently ignored (SPECIFICATION.md §12.5, BRG-13)
   }
 
+  /**
+   * Whether `documentId` is bound to `groupId`: a message for a document counts only from the
+   * group it is bound to (BRG-10). The account is usually in other groups too, with other people;
+   * a frame from one of them would let someone outside the document's group write into it.
+   */
+  function isBoundTo(documentId: string, groupId: string): boolean {
+    const bindStore: BindStoreData = loadBindStore(bindStorePath);
+    return bindStore[documentId]?.groupId === groupId;
+  }
+
   function withTimeout<T>(promise: Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(
@@ -357,7 +367,8 @@ export function createSyncState(
         }
         const reason: IntegrityReason =
           editOrDelete.kind === "edit" ? "message-edited" : "message-remote-deleted";
-        if (documentId !== undefined && isBound(documentId)) {
+        // An edit or a delete from another group is not this document's (BRG-10).
+        if (documentId !== undefined && isBoundTo(documentId, editOrDelete.groupId)) {
           reject(documentId, targetId, editOrDelete.sender, reason);
         } else {
           logger.warn(`${editOrDelete.kind}-unattributed`, {
@@ -370,13 +381,14 @@ export function createSyncState(
     }
     const foreign = foreignEnvelopeVersion(parseJson(incoming.message));
     if (foreign !== undefined) {
+      // Only a log line: nothing is delivered or recorded from it (BRG-10).
       if (isBound(foreign.documentId)) {
         logger.warn("unsupported-envelope-version", foreign);
       }
       return;
     }
     const envelope = parseEnvelope(incoming.message);
-    if (!envelope || !isBound(envelope.documentId)) {
+    if (!envelope || !isBoundTo(envelope.documentId, incoming.groupId)) {
       return;
     }
     if (typeof envelope.frame === "string") {

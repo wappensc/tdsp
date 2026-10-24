@@ -1,6 +1,6 @@
 # TDSP — Together Document Sync Protocol
 
-**Specification · TDSP 1.4 · 18 October 2026**
+**Specification · TDSP 1.4 · 24 October 2026**
 
 ## 1. Introduction
 
@@ -1974,12 +1974,24 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
 
 ### 12.4 Receiving
 
-- **BRG-10** · *bridge* — A bridge MUST route by the envelope's documentId. It MUST
-  ignore silently — without an error and without an integrity record — a message
-  that is not a TDSP envelope, an envelope of an unknown kind, an unparseable
-  body, and an envelope for a documentId it has no binding for.
+- **BRG-10** · *bridge* — A bridge MUST route by the envelope's documentId, and MUST
+  take a message for a document only from the channel that document is bound to.
+  It MUST ignore silently — without an error and without an integrity record — a
+  message that is not a TDSP envelope, an envelope of an unknown kind, an
+  unparseable body, an envelope for a documentId it has no binding for, and one
+  that arrives in another channel than the one its documentId is bound to; an
+  edit, replacement or deletion that arrives in another channel is not attributed
+  to the document either (BRG-12).
   *Rationale:* a channel is shared with human conversation and possibly with other
-  documents; none of those is an anomaly.
+  documents; none of those is an anomaly. Who is in a document's channel decides
+  who can write into it: receivers do not reject an edit for its sender's
+  permission (CTL-7), and the messenger is trusted for channel membership
+  (§15.2). A bridge's account is usually in other channels too, with other
+  people; taking a frame from one of them — for a documentId its sender learned
+  while a member of the document's channel, say — would let someone outside that
+  channel write into the document, and a deletion from there would fill its
+  integrity log with records nobody in the channel caused. The email binding's
+  channel is a fixed participant set, checked for every message (EML-2).
 - **BRG-11** · *bridge* — A bridge MUST make every delivery received for a document
   available, cumulatively and unfiltered (TRN-7); it MAY additionally
   de-duplicate messages its messenger presents twice.
