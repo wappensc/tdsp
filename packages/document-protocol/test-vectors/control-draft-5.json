@@ -1,0 +1,1329 @@
+{
+  "$comment": "TDSP 2.0 draft control-state test vectors (draft revision 5): each vector's operations, merged in any order and as a snapshot, give each member the right listed, on the document and on the layer — `read`, `write`, `revoked` (refused as `read` is, CTL-13, on every layer, LAY-5) or `unknown` (never named, refused by nothing after the bootstrap). On a member's target revoked is narrower than read than write; on a layer's, read than inherit (null) than write (CTL-23). Operations of different devices that name none of the others in `seen` are concurrent (CTL-22). Checked in src/test-vectors.test.ts.",
+  "version": "de.wappensc.together.tdsp.probe.draft-5",
+  "layer": "com.example.comments/1",
+  "vectors": [
+    {
+      "name": "document read; layer read concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document read; layer inherit concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document read; layer read and inherit concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document read; layer write concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "document read; layer read and write concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document read; layer inherit and write concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document read; layer read and inherit and write concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "DDDDDDDDDDDDDDDDDDDDDD",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document write; layer read concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document write; layer inherit concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "document write; layer read and inherit concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document write; layer write concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "document write; layer read and write concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document write; layer inherit and write concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "document write; layer read and inherit and write concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "DDDDDDDDDDDDDDDDDDDDDD",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document revoked; layer read concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "document revoked; layer inherit concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "document revoked; layer read and inherit concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "document revoked; layer write concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "document revoked; layer read and write concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "document revoked; layer inherit and write concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "document revoked; layer read and inherit and write concurrently",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "DDDDDDDDDDDDDDDDDDDDDD",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "document unknown; layer read concurrently",
+      "operations": [
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document unknown; layer inherit concurrently",
+      "operations": [
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "unknown"
+        }
+      }
+    },
+    {
+      "name": "document unknown; layer read and inherit concurrently",
+      "operations": [
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document unknown; layer write concurrently",
+      "operations": [
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "document unknown; layer read and write concurrently",
+      "operations": [
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document unknown; layer inherit and write concurrently",
+      "operations": [
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "unknown"
+        }
+      }
+    },
+    {
+      "name": "document unknown; layer read and inherit and write concurrently",
+      "operations": [
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "DDDDDDDDDDDDDDDDDDDDDD",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document read and write concurrently; layer read",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document read and write concurrently; layer inherit",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document read and write concurrently; layer write",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "document read and revoked concurrently; layer read",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "document read and revoked concurrently; layer inherit",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "document read and revoked concurrently; layer write",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "document write and revoked concurrently; layer read",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "document write and revoked concurrently; layer inherit",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "document write and revoked concurrently; layer write",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "CCCCCCCCCCCCCCCCCCCCCC",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "document write; layer read, and a reset to inherit concurrently: the restriction holds",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 2,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document write; layer read, then a reset to inherit that had seen it: the reset holds",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 2,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {
+            "AAAAAAAAAAAAAAAAAAAAAA": 2
+          }
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "document read; layer write, and a reset to inherit concurrently: the reset holds",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 2,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "document revoked, then granted again by a device that had seen it: no longer revoked",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        },
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 2,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "BBBBBBBBBBBBBBBBBBBBBB",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {
+            "AAAAAAAAAAAAAAAAAAAAAA": 1
+          }
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "one dot, a member's read and revoke: revoked",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "one dot, a layer's read and inherit: read",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 2,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 2,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "one dot, a layer's inherit and write: inherit",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:bob",
+          "value": "read",
+          "seen": {}
+        },
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 2,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": "write",
+          "seen": {}
+        },
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 2,
+          "target": "layer:com.example.comments/1:member:bob",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "a member never named is unknown, also on a layer; one revoked is revoked",
+      "operations": [
+        {
+          "device": "AAAAAAAAAAAAAAAAAAAAAA",
+          "counter": 1,
+          "target": "member:carol",
+          "value": null,
+          "seen": {}
+        }
+      ],
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "unknown"
+        },
+        "carol": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    }
+  ]
+}

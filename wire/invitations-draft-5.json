@@ -1,0 +1,41 @@
+{
+  "$comment": "The draft engine's invitation links at draft revision 5, frozen like frames-draft-5.json.",
+  "version": "de.wappensc.together.tdsp.probe.draft-5",
+  "entries": [
+    {
+      "name": "Matrix",
+      "invitation": {
+        "messenger": "matrix",
+        "documentId": "doc-1",
+        "creatorMemberId": "@alice:example.org",
+        "channelId": "!room:example.org",
+        "profile": "yjs-paragraphs/1"
+      },
+      "link": "tdsp=de.wappensc.together.tdsp.probe.draft-5&provider=matrix&documentId=doc-1&creatorMemberId=%40alice%3Aexample.org&channelId=%21room%3Aexample.org&profile=yjs-paragraphs%2F1"
+    },
+    {
+      "name": "email with PGP, and an application's own parameter to ignore",
+      "invitation": {
+        "messenger": "email",
+        "documentId": "doc-2",
+        "creatorMemberId": "alice@example.org",
+        "threadRoot": "<root-1@example.org>",
+        "recipients": ["alice@example.org", "bob@example.org"],
+        "pgp": true,
+        "profile": "yjs-paragraphs/1"
+      },
+      "link": "tdsp=de.wappensc.together.tdsp.probe.draft-5&provider=email&documentId=doc-2&creatorMemberId=alice%40example.org&threadRoot=%3Croot-1%40example.org%3E&recipients=alice%40example.org%2Cbob%40example.org&pgp=1&profile=yjs-paragraphs%2F1"
+    },
+    {
+      "name": "a policy with a leading zero is dropped, the invitation still opens",
+      "invitation": {
+        "messenger": "signal",
+        "documentId": "doc-3",
+        "creatorMemberId": "c0ffee",
+        "channelId": "g1",
+        "profile": "yjs-paragraphs/1"
+      },
+      "link": "tdsp=de.wappensc.together.tdsp.probe.draft-5&provider=signal&documentId=doc-3&creatorMemberId=c0ffee&channelId=g1&profile=yjs-paragraphs%2F1"
+    }
+  ]
+}

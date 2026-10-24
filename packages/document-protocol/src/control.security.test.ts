@@ -7,8 +7,9 @@ import type {
   RawChannel,
 } from "@tdsp/messenger-port";
 import { TransportSendError } from "@tdsp/messenger-port";
-import { createDocument, encodeUpdate, getPlainText, insertPlainText } from "@tdsp/reconciliation";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getPlainText, insertPlainText } from "@tdsp/reconciliation";
+import { describe, expect, it } from "vitest";
+import { ControlState } from "./control-state";
 import { encodeControlFrame, encodeResyncResponseFrame } from "./framing";
 import {
   ControlFrameRejectedError,
@@ -18,32 +19,18 @@ import {
 } from "./index";
 
 /**
- * Who may change a document, and what everyone else refuses (SPECIFICATION.md §7): the
- * creator's control frames, permissions and their enforcement on send, a joiner's bootstrap,
- * replayed, stale and forged control state, closing, snapshots, and a creator's persisted
- * control state and outbox (CTL-12). Security tests: only the CI role may change this file
- * (.github/CODEOWNERS, CONTRIBUTING.md).
+ * Who may change a document, and what everyone else refuses (SPECIFICATION.md §7,
+ * §1): control state as operations of the creator's devices, merged by union; permissions and
+ * their enforcement on send; a joiner's bootstrap; replayed, stale, forged and reported control
+ * state; closing; two devices of the creator at once; persistence and a restored or new device.
+ * Security tests: only the CI role may change this file (.github/CODEOWNERS).
  */
 
 const DOCUMENT_ID = "doc-1";
-
-/** Every test here is about control state, not batching: each sends at once. */
 const IMMEDIATE = { batchWindowMs: 0 };
+const AS_ALICE = { ...IMMEDIATE, creatorMemberId: "alice" };
 
-/**
- * Simulates a transport with NO message history for a newly-observing
- * member — exactly what a freshly linked Signal device sees (signal-cli has no
- * history or backfill command). The mock itself does not reproduce this — its
- * `receive()` always replays the entire history — so this fake is how the
- * join-time bootstrap path is verified without a real Signal account.
- *
- * Wraps a real `InMemoryMessengerPort` for everything except `receive()`:
- * the *first* call for a given member establishes a baseline (however
- * many deliveries already existed at that moment) and returns nothing;
- * every later call returns only what arrived since. `inner` is exposed so
- * tests can inspect the real, unfiltered delivery count without
- * perturbing any member's own baseline by calling through the fake.
- */
+/** A transport with no history for a newly observing member, as a linked Signal device sees it. */
 class NoHistoryMessengerPort implements MessengerPort {
   readonly inner = new InMemoryMessengerPort();
   #baselineByMember = new Map<string, number>();
@@ -60,7 +47,7 @@ class NoHistoryMessengerPort implements MessengerPort {
     return this.inner.listChannels(member);
   }
 
-  /** Simulates the member's application restarting: a history-less transport shows the new instance nothing from before. */
+  /** A restarted instance of `member` sees nothing from before. */
   forgetHistory(documentId: DocumentId, member: MemberId): void {
     this.#baselineByMember.delete(`${documentId}:${member}`);
   }
@@ -77,1577 +64,869 @@ class NoHistoryMessengerPort implements MessengerPort {
   }
 }
 
-describe("control frames", () => {
-  const AS_ALICE = { ...IMMEDIATE, creatorMemberId: "alice" };
+async function pair(messenger: MessengerPort) {
+  const applyErrors: unknown[] = [];
+  const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+  const bob = await DocumentEngine.join(
+    DOCUMENT_ID,
+    "bob",
+    messenger,
+    (error, context) => {
+      if (context === "apply") applyErrors.push(error);
+    },
+    AS_ALICE,
+  );
+  return { alice, bob, applyErrors };
+}
 
-  // The in-memory transport models no membership or permission at all, so the
-  // protocol-level behaviour under test is all that decides each outcome.
-  async function pair(messenger: InMemoryMessengerPort) {
-    const applyErrors: unknown[] = [];
-    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
-    const bob = await DocumentEngine.join(
-      DOCUMENT_ID,
-      "bob",
-      messenger,
-      (error, context) => {
-        if (context === "apply") applyErrors.push(error);
-      },
-      AS_ALICE,
-    );
-    return { alice, bob, applyErrors };
+/** A few rounds of polling and sending, until nothing more moves. */
+async function settle(...engines: DocumentEngine[]): Promise<void> {
+  for (let round = 0; round < 4; round++) {
+    for (const engine of engines) {
+      await engine.sync();
+      await engine.flush().catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
   }
+}
 
+const TAG = "M".repeat(22);
+
+/** A control operation as anyone could write it; whether it counts is the receiver's check. */
+function op(
+  counter: number,
+  target: string,
+  value: unknown,
+  seen: Record<string, number> = {},
+): string {
+  return encodeControlFrame({
+    documentId: DOCUMENT_ID,
+    device: TAG,
+    counter,
+    target: target as "member:bob",
+    value: value as "read",
+    seen,
+  });
+}
+
+function snapshotOf(state: ControlState) {
+  return { profile: "yjs-paragraphs/1", ...state.snapshot() };
+}
+
+function forgedResponse(control: object): string {
+  return encodeResyncResponseFrame({
+    documentId: DOCUMENT_ID,
+    respondsTo: "00000000000000ff",
+    update: new Uint8Array([0, 0]),
+    control,
+  });
+}
+
+describe("permissions and their enforcement", () => {
   it("the creator's grant reaches another client, which then knows the permission", async () => {
     const messenger = new InMemoryMessengerPort();
     const { alice, bob } = await pair(messenger);
     await alice.setMembership("bob", "write");
     await bob.sync();
-
     expect(bob.permissionOf("bob")).toBe("write");
     expect(bob.permissionOf("alice")).toBe("creator");
     expect(alice.permissionOf("bob")).toBe("write");
-    expect(bob.controlSequence).toBe(1);
   });
 
-  it("a member demoted to read refuses to send, permanently, and the refusal is a named error", async () => {
+  it("a member set to read refuses to send, permanently, and the refusal is a named error", async () => {
     const messenger = new InMemoryMessengerPort();
-    const broadcastErrors: unknown[] = [];
-    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
-    const bob = await DocumentEngine.join(
-      DOCUMENT_ID,
-      "bob",
-      messenger,
-      (error, context) => {
-        if (context === "broadcast") broadcastErrors.push(error);
-      },
-      AS_ALICE,
-    );
-    await alice.sync(); // bootstraps bob (CTL-13)
-    await alice.setMembership("bob", "write");
+    const { alice, bob } = await pair(messenger);
+    await alice.sync();
     await bob.sync();
-    bob.edit((fragment) => insertPlainText(fragment, 0, "allowed"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(broadcastErrors).toHaveLength(0);
-
     await alice.setMembership("bob", "read");
     await bob.sync();
-    bob.edit((fragment) => insertPlainText(fragment, 0, "refused"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(broadcastErrors).toHaveLength(1);
-    expect(broadcastErrors[0]).toBeInstanceOf(SendRefusedError);
-    expect((broadcastErrors[0] as SendRefusedError).reason).toBe("read-only");
-  });
-
-  it("a joiner may not edit before the creator has bootstrapped it", async () => {
-    const messenger = new InMemoryMessengerPort();
-    const errors: unknown[] = [];
-    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
-    const bob = await DocumentEngine.join(
-      DOCUMENT_ID,
-      "bob",
-      messenger,
-      (error) => errors.push(error),
-      AS_ALICE,
-    );
     expect(bob.mayEdit).toBe(false);
-    bob.edit((fragment) => insertPlainText(fragment, 0, "too early"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(errors).toHaveLength(1);
-    expect((errors[0] as SendRefusedError).reason).toBe("awaiting-bootstrap");
-    await alice.sync();
-    expect(getPlainText(alice.fragment)).not.toContain("too early");
+    await expect(bob.resync()).rejects.toBeInstanceOf(SendRefusedError);
+    await expect(bob.resync()).rejects.toMatchObject({ reason: "read-only" });
   });
 
-  it("once bootstrapped, a joiner whose permission is still unknown may edit", async () => {
+  it("a joiner may not edit before the creator has bootstrapped it, and may once it has, while its permission is unknown", async () => {
     const messenger = new InMemoryMessengerPort();
-    const errors: unknown[] = [];
-    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
-    const bob = await DocumentEngine.join(
-      DOCUMENT_ID,
-      "bob",
-      messenger,
-      (error) => errors.push(error),
-      AS_ALICE,
-    );
+    const { alice, bob } = await pair(messenger);
+    expect(bob.mayEdit).toBe(false);
+    await expect(bob.resync()).rejects.toMatchObject({ reason: "awaiting-bootstrap" });
     await alice.sync();
-    await bob.sync(); // the creator's answer
+    await bob.sync();
+    expect(bob.hasCompletedBootstrap).toBe(true);
     expect(bob.permissionOf("bob")).toBeUndefined();
     expect(bob.mayEdit).toBe(true);
-    bob.edit((fragment) => insertPlainText(fragment, 0, "in time "));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(errors).toHaveLength(0);
-    await alice.sync();
-    expect(getPlainText(alice.fragment)).toContain("in time");
   });
 
   it("the creator may always edit its own open document", async () => {
     const messenger = new InMemoryMessengerPort();
     const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
     expect(alice.mayEdit).toBe(true);
-    await alice.closeDocument();
-    expect(alice.mayEdit).toBe(false);
-  });
-
-  it("a control frame from anyone but the creator is ignored, and reported as such", async () => {
-    const messenger = new InMemoryMessengerPort();
-    const { alice, bob, applyErrors } = await pair(messenger);
-    await messenger.send(
-      DOCUMENT_ID,
-      "mallory",
-      encodeControlFrame({
-        documentId: DOCUMENT_ID,
-        sequence: 1,
-        action: "membership",
-        member: "mallory",
-        permission: "write",
-      }),
-    );
-    await bob.sync();
-    await alice.sync();
-
-    expect(bob.permissionOf("mallory")).toBeUndefined();
-    const rejected = applyErrors.filter((e) => e instanceof ControlFrameRejectedError);
-    expect(rejected).toHaveLength(1);
-    expect((rejected[0] as ControlFrameRejectedError).reason).toBe("not-from-creator");
   });
 
   it("refuses to join without the creator's member id, which the invitation always carries (LIF-4)", async () => {
-    // Such a client could accept no control frame and no resync response, and would
-    // silently never converge; the rules for an unknown creator remain as a defence.
-    const messenger = new InMemoryMessengerPort();
-    await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
     await expect(
-      DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, IMMEDIATE),
-    ).rejects.toThrow(/without the creator's member id/);
-    await expect(
-      DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, { creatorMemberId: "" }),
-    ).rejects.toThrow(/without the creator's member id/);
+      DocumentEngine.join(DOCUMENT_ID, "bob", new InMemoryMessengerPort(), undefined, IMMEDIATE),
+    ).rejects.toThrow(/creator/);
+  });
+});
+
+describe("authority: only the creator's operations count (CTL-5)", () => {
+  it("an operation from anyone but the creator is ignored, and reported as such", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { bob, applyErrors } = await pair(messenger);
+    await messenger.send(DOCUMENT_ID, "mallory", op(1, "member:mallory", "write"));
+    await bob.sync();
+    expect(bob.permissionOf("mallory")).toBeUndefined();
+    expect(applyErrors).toEqual([expect.objectContaining({ reason: "not-from-creator" })]);
   });
 
-  it("closes the replay gap: an old signed frame resent under a new delivery id is inert", async () => {
+  it("an operation that names the creator is ignored, and reported", async () => {
     const messenger = new InMemoryMessengerPort();
-    const { alice, bob } = await pair(messenger);
-    const oldGrant = encodeControlFrame({
-      documentId: DOCUMENT_ID,
-      sequence: 1,
-      action: "membership",
-      member: "bob",
-      permission: "write",
-    });
-    await alice.setMembership("bob", "write"); // sequence 1
-    await alice.setMembership("bob", "read"); // sequence 2: demoted
+    const { bob, applyErrors } = await pair(messenger);
+    await messenger.send(DOCUMENT_ID, "alice", op(1, "member:alice", "read"));
     await bob.sync();
-    expect(bob.permissionOf("bob")).toBe("read");
-
-    // Anyone who once received sequence 1 can resend those exact bytes, as
-    // alice, under a fresh delivery id — the email-adapter replay.
-    await messenger.send(DOCUMENT_ID, "alice", oldGrant);
-    await bob.sync();
-
-    expect(bob.permissionOf("bob")).toBe("read");
-  });
-
-  it("a late frame for a member nobody has mentioned since still applies, and the gap closes", async () => {
-    const messenger = new InMemoryMessengerPort();
-    const { alice, bob } = await pair(messenger);
-    messenger.holdNextSend("alice");
-    await alice.setMembership("carol", "write"); // sequence 1, held back
-    await alice.setMembership("bob", "read"); // sequence 2, delivered
-    await bob.sync();
-
-    expect(bob.permissionOf("bob")).toBe("read");
-    expect(bob.permissionOf("carol")).toBeUndefined();
-    expect(bob.controlGaps).toEqual([1]);
-
-    messenger.releaseHeld(DOCUMENT_ID);
-    await bob.sync();
-
-    expect(bob.permissionOf("carol")).toBe("write");
-    expect(bob.controlGaps).toEqual([]);
-  });
-
-  it("a control message lost in transit is a detectable gap", async () => {
-    const messenger = new InMemoryMessengerPort();
-    const { alice, bob } = await pair(messenger);
-    messenger.dropNextSend("alice");
-    await alice.setMembership("carol", "write"); // sequence 1, dropped
-    await alice.setMembership("bob", "write"); // sequence 2
-    await bob.sync();
-
-    expect(bob.controlGaps).toEqual([1]);
-    expect(bob.controlSequence).toBe(2);
-  });
-
-  it("a control send refused for good does not consume a sequence number", async () => {
-    const messenger = new InMemoryMessengerPort();
-    const { alice, bob } = await pair(messenger);
-    const refusing: MessengerPort = {
-      createDocument: (documentId, creator) => messenger.createDocument(documentId, creator),
-      receive: (documentId, member) => messenger.receive(documentId, member),
-      listChannels: (member) => messenger.listChannels(member),
-      transportProfile: () => messenger.transportProfile(),
-      send: async () => {
-        throw new TransportSendError("rejected", "the provider refused it");
-      },
-    };
-    const persisted: PersistedControlState[] = [];
-    const refused = await DocumentEngine.join(DOCUMENT_ID, "alice", refusing, () => {}, {
-      ...AS_ALICE,
-      controlState: alice.controlState,
-      onControlStateChange: (state) => persisted.push(state),
-    });
-    await expect(refused.setMembership("bob", "write")).rejects.toThrow("refused");
-    // The messenger took nothing, so the number is free again (CTL-12).
-    expect(persisted.at(-1)?.pendingControl).toBeUndefined();
-    expect(refused.controlSequence).toBe(0);
-
-    await alice.setMembership("bob", "write");
-    await bob.sync();
-
-    expect(alice.controlSequence).toBe(1);
-    expect(bob.controlSequence).toBe(1);
-    expect(bob.controlGaps).toEqual([]);
+    expect(bob.permissionOf("alice")).toBe("creator");
+    expect(applyErrors).toEqual([expect.objectContaining({ reason: "names-the-creator" })]);
   });
 
   it("only the creator can change membership or close, and the creator's own record is fixed", async () => {
     const messenger = new InMemoryMessengerPort();
     const { alice, bob } = await pair(messenger);
-
-    await expect(bob.setMembership("bob", "write")).rejects.toThrow(/not the creator/);
+    await expect(bob.setMembership("carol", "write")).rejects.toThrow(/not the creator/);
     await expect(bob.closeDocument()).rejects.toThrow(/not the creator/);
     await expect(alice.setMembership("alice", "read")).rejects.toThrow(/permanent/);
-    await expect(alice.setMembership("bob", "creator" as unknown as "write")).rejects.toThrow(
-      /creator status cannot be granted/,
+    await expect(alice.setMembership("bob", "creator" as "read")).rejects.toThrow(
+      /cannot be granted/,
     );
   });
 
-  it("closing is idempotent and terminal: nothing more can be granted afterwards", async () => {
-    const messenger = new InMemoryMessengerPort();
-    const { alice } = await pair(messenger);
-    await alice.closeDocument();
-    await alice.closeDocument();
-
-    expect(alice.closed).toBe(true);
-    expect(alice.controlSequence).toBe(1);
-    await expect(alice.setMembership("bob", "write")).rejects.toBeInstanceOf(SendRefusedError);
-  });
-
-  function forgedResponse(snapshot: unknown): string {
-    return encodeResyncResponseFrame({
-      documentId: DOCUMENT_ID,
-      respondsTo: "f0f0f0f0f0f0f0f0",
-      update: encodeUpdate(createDocument()),
-      attribution: null,
-      control: snapshot as Record<string, unknown>,
-    });
-  }
-
-  /**
-   * SPECIFICATION.md LIF-6: a close stops new edits at their sender, not in delivery.
-   * Bob's edit and Alice's close are unordered on the transport; whichever a receiver sees
-   * first, it must end with the same content — discarding an edit that arrives after the
-   * close would leave two receivers of the same messages with different documents for good.
-   */
-  async function closeRace(order: "edit-first" | "close-first") {
+  it("a replayed operation under a new delivery id is inert", async () => {
     const messenger = new InMemoryMessengerPort();
     const { alice, bob } = await pair(messenger);
-    const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", messenger, undefined, AS_ALICE);
-    alice.edit((fragment) => insertPlainText(fragment, 0, "before "));
-    await alice.sync(); // bootstraps bob and carol (CTL-13)
+    await alice.setMembership("bob", "write");
+    await alice.setMembership("bob", "read");
     await bob.sync();
-    await carol.sync();
+    const deliveries = await messenger.receive(DOCUMENT_ID, "bob");
+    const first = deliveries.find((d) => d.payload.includes('"value":"write"')) as Delivery;
+    await messenger.send(DOCUMENT_ID, "alice", first.payload);
+    await bob.sync();
+    expect(bob.permissionOf("bob")).toBe("read");
+  });
+});
 
-    messenger.holdNextSend("bob");
-    bob.edit((fragment) => insertPlainText(fragment, 7, "bob's late words"));
-    await bob.flush();
-    messenger.holdNextSend("alice");
-    await alice.closeDocument();
-    messenger.releaseHeld(DOCUMENT_ID, order === "edit-first" ? [0, 1] : [1, 0]);
-
-    await carol.sync();
-    await alice.sync();
-    return { alice, carol };
-  }
-
-  it("an edit sent before a close is applied whichever arrives first, so every receiver converges", async () => {
-    const editFirst = await closeRace("edit-first");
-    const closeFirst = await closeRace("close-first");
-
-    for (const { alice, carol } of [editFirst, closeFirst]) {
-      expect(carol.closed).toBe(true);
-      expect(getPlainText(carol.fragment)).toBe("before bob's late words");
-      expect(getPlainText(alice.fragment)).toBe("before bob's late words");
+describe("merging operations (CTL-23, CTL-25, LOS-10)", () => {
+  it("a late operation applies whenever it arrives: order does not matter", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { alice, bob } = await pair(messenger);
+    await alice.setMembership("carol", "write");
+    await alice.setMembership("bob", "read");
+    await alice.setMembership("carol", "read");
+    const reversed = new InMemoryMessengerPort();
+    const sent = (await messenger.receive(DOCUMENT_ID, "alice")).filter((d) =>
+      d.payload.includes('"kind":"control"'),
+    );
+    await reversed.createDocument(DOCUMENT_ID, "alice");
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", reversed, undefined, AS_ALICE);
+    for (const delivery of [...sent].reverse()) {
+      await reversed.send(DOCUMENT_ID, "alice", delivery.payload);
+    }
+    await dave.sync();
+    await bob.sync();
+    for (const client of [bob, dave]) {
+      expect(client.permissionOf("carol")).toBe("read");
+      expect(client.permissionOf("bob")).toBe("read");
     }
   });
 
-  it("after a close, no client sends an edit of its own", async () => {
+  it("a lost operation is a hole, believed after a latency, and the creator heals it though there is no content to send", async () => {
     const messenger = new InMemoryMessengerPort();
     const { alice, bob } = await pair(messenger);
-    await alice.closeDocument();
     await bob.sync();
+    messenger.dropNextSend("alice");
+    await alice.setMembership("carol", "write"); // lost
+    await alice.setMembership("bob", "read");
+    await bob.sync();
+    expect(bob.permissionOf("carol")).toBeUndefined();
+    expect(bob.permissionOf("bob")).toBe("read");
+
+    await bob.requestResync();
+    await alice.sync();
+    await bob.sync();
+    expect(bob.permissionOf("carol")).toBe("write");
+    expect(bob.controlVector).toEqual(alice.controlVector);
+  });
+
+  it("a client that is fully up to date on content and control gets no answer at all", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { alice, bob } = await pair(messenger);
+    await alice.setMembership("bob", "write");
+    await alice.sync();
+    await bob.sync();
+    await bob.requestResync();
     const before = (await messenger.receive(DOCUMENT_ID, "alice")).length;
-
-    bob.edit((fragment) => insertPlainText(fragment, 0, "after the close"));
-    await bob.flush().catch(() => {});
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    const after = await messenger.receive(DOCUMENT_ID, "alice");
-    expect(after.slice(before).map((d) => JSON.parse(d.payload).kind)).not.toContain("edit");
+    await alice.sync();
+    expect((await messenger.receive(DOCUMENT_ID, "alice")).length).toBe(before);
   });
 
   it("a snapshot from anyone but the creator is ignored", async () => {
     const messenger = new InMemoryMessengerPort();
     const { bob } = await pair(messenger);
+    const forged = new ControlState();
+    forged.add({ device: TAG, counter: 1, target: "member:mallory", value: "write", seen: {} });
+    forged.add({ device: TAG, counter: 2, target: "close", value: true, seen: {} });
+    await messenger.send(DOCUMENT_ID, "mallory", forgedResponse(snapshotOf(forged)));
+    await bob.sync();
+    expect(bob.closed).toBe(false);
+    expect(bob.permissionOf("mallory")).toBeUndefined();
+  });
+
+  it("an older snapshot of the creator undoes nothing, and none reopens a closed document", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { alice, bob } = await pair(messenger);
+    await alice.sync();
+    await bob.sync();
+    const old = alice.controlState;
+    await alice.setMembership("bob", "read");
+    await alice.closeDocument();
+    await bob.sync();
+    // Replayed by anyone who kept it: the creator's earlier snapshot, as an answer to nobody.
+    await messenger.send(DOCUMENT_ID, "alice", forgedResponse(old));
+    await bob.sync();
+    expect(bob.permissionOf("bob")).toBe("read");
+    expect(bob.closed).toBe(true);
+  });
+
+  it("a closed document still bootstraps a joiner, who learns it is closed and who may read", async () => {
+    const messenger = new NoHistoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await alice.setMembership("carol", "read");
+    await alice.closeDocument();
+    await alice.sync(); // a history-less transport shows alice only what comes after her first look
+    const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", messenger, undefined, AS_ALICE);
+    await settle(alice, carol);
+    expect(carol.hasCompletedBootstrap).toBe(true);
+    expect(carol.closed).toBe(true);
+    expect(carol.permissionOf("carol")).toBe("read");
+  });
+});
+
+describe("closing (LIF-7)", () => {
+  it("is idempotent and terminal: nothing more can be granted afterwards", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { alice, bob } = await pair(messenger);
+    await alice.closeDocument();
+    await alice.closeDocument();
+    await expect(alice.setMembership("bob", "write")).rejects.toBeInstanceOf(SendRefusedError);
+    await bob.sync();
+    expect(bob.closed).toBe(true);
+  });
+
+  it("an edit sent before a close is applied whichever arrives first, and no client sends one after", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { alice, bob } = await pair(messenger);
+    await alice.sync();
+    await bob.sync();
+    bob.edit((fragment) => insertPlainText(fragment, 0, "before"));
+    await bob.flush();
+    await alice.closeDocument();
+    await alice.sync();
+    await bob.sync();
+    expect(getPlainText(alice.fragment)).toBe("before");
+    expect(bob.mayEdit).toBe(false);
+    await expect(bob.resync()).rejects.toMatchObject({ reason: "closed" });
+  });
+});
+
+describe("two devices of the creator at once (CTL-22, CTL-23)", () => {
+  it("concurrent decisions on one member: the narrower holds everywhere; an informed later one stands, even wider", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const laptop = await DocumentEngine.create(
+      DOCUMENT_ID,
+      "alice",
+      messenger,
+      undefined,
+      AS_ALICE,
+    );
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    const tablet = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await settle(laptop, tablet, bob);
+    // Neither has seen the other's decision when it makes its own.
+    await Promise.all([laptop.setMembership("bob", "write"), tablet.setMembership("bob", "read")]);
+    await settle(laptop, tablet, bob);
+    for (const client of [laptop, tablet, bob]) {
+      expect(client.permissionOf("bob")).toBe("read");
+    }
+    expect(laptop.controlState).toEqual(tablet.controlState);
+    // Having seen both, the laptop decides again: its wider choice now holds everywhere.
+    await laptop.setMembership("bob", "write");
+    await settle(laptop, tablet, bob);
+    for (const client of [laptop, tablet, bob]) {
+      expect(client.permissionOf("bob")).toBe("write");
+    }
+  });
+
+  it("each device takes its own counters: no number is ever taken twice, whoever acts", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const laptop = await DocumentEngine.create(
+      DOCUMENT_ID,
+      "alice",
+      messenger,
+      undefined,
+      AS_ALICE,
+    );
+    const tablet = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await laptop.setMembership("bob", "write");
+    await tablet.setMembership("carol", "read");
+    await settle(laptop, tablet);
+    expect(laptop.deviceTag).not.toBe(tablet.deviceTag);
+    expect(laptop.controlVector).toEqual({
+      [laptop.deviceTag as string]: 1,
+      [tablet.deviceTag as string]: 1,
+    });
+    expect(laptop.controlAnomalies).toEqual([]);
+  });
+});
+
+describe("persistence and decisions offline (CTL-26)", () => {
+  it("persists an operation, as unsent, before the messenger sees it; nothing changes when that fails", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const persisted: PersistedControlState[] = [];
+    let failing = false;
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      onControlStateChange: (state) => {
+        if (failing) throw new Error("disk full");
+        persisted.push(state);
+      },
+    });
+    const sentBefore = (await messenger.receive(DOCUMENT_ID, "alice")).length;
+    await alice.setMembership("bob", "write");
+    // The first state that holds the operation: the one reported when the document was created,
+    // with nothing decided yet, comes before it (CTL-26, CTL-28).
+    const first = persisted.find(
+      (state) => (state.unsent?.length ?? 0) > 0,
+    ) as PersistedControlState;
+    expect(first.unsent).toHaveLength(1);
+    expect(first.unsent?.[0]).toContain('"target":"member:bob"');
+    expect(persisted.at(-1)?.unsent).toBeUndefined();
+
+    failing = true;
+    await expect(alice.setMembership("carol", "read")).rejects.toThrow(/disk full/);
+    expect(alice.permissionOf("carol")).toBeUndefined();
+    expect((await messenger.receive(DOCUMENT_ID, "alice")).length).toBe(sentBefore + 1);
+  });
+
+  it("a decision made offline holds at once, is retried, and reaches the others when the messenger is back", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { alice, bob } = await pair(messenger);
+    await alice.sync();
+    await bob.sync();
+    let offline = true;
+    const send = messenger.send.bind(messenger);
+    messenger.send = async (documentId, sender, payload) => {
+      if (offline && sender === "alice") {
+        throw new TransportSendError("unavailable", "offline");
+      }
+      return send(documentId, sender, payload);
+    };
+    const decided = alice.setMembership("bob", "read");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(alice.permissionOf("bob")).toBe("read");
+    expect(alice.sendStatus.state).toBe("retrying");
+    offline = false;
+    await alice.flush();
+    await decided;
+    await bob.sync();
+    expect(bob.permissionOf("bob")).toBe("read");
+  });
+
+  it("a restarted device sends what it had not sent, continues its counter, and its snapshot lists everyone", async () => {
+    const messenger = new NoHistoryMessengerPort();
+    let saved: PersistedControlState | undefined;
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      onControlStateChange: (state) => {
+        saved = state;
+      },
+    });
+    await alice.setMembership("bob", "write");
+    // An operation persisted as unsent when the application stopped: crafted as the device would.
+    const tag = alice.deviceTag as string;
+    const pending = encodeControlFrame({
+      documentId: DOCUMENT_ID,
+      device: tag,
+      counter: 2,
+      target: "member:carol",
+      value: "read",
+      seen: {},
+    });
+    const state = { ...(saved as PersistedControlState), unsent: [pending] };
+    alice.dispose();
+    messenger.forgetHistory(DOCUMENT_ID, "alice");
+    const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      controlState: state,
+    });
+    await restarted.flush();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(restarted.deviceTag).toBe(tag);
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
+    await settle(restarted, dave);
+    expect(dave.permissionOf("bob")).toBe("write");
+    expect(dave.permissionOf("carol")).toBe("read");
+    await restarted.setMembership("erin", "read");
+    expect(restarted.controlVector[tag]).toBe(3);
+  });
+
+  it("persisted control state is ignored for anyone but the creator", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const forged = new ControlState();
+    forged.add({ device: TAG, counter: 1, target: "member:bob", value: "write", seen: {} });
+    await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, {
+      ...AS_ALICE,
+      controlState: { control: forged.snapshot() },
+    });
+    expect(bob.permissionOf("bob")).toBeUndefined();
+  });
+});
+
+describe("a device restored from an older backup (CTL-24)", () => {
+  it("changes its tag when it sees its own tag under a counter it does not hold; everyone merges both and converges", async () => {
+    const messenger = new InMemoryMessengerPort();
+    let backup: PersistedControlState | undefined;
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      onControlStateChange: (state) => {
+        backup ??= state.unsent === undefined && state.counter === 1 ? state : undefined;
+      },
+    });
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await alice.setMembership("bob", "write"); // counter 1, backed up
+    await alice.setMembership("carol", "write"); // counter 2, after the backup
+    await settle(alice, bob);
+    alice.dispose();
+    const errors: unknown[] = [];
+    const restored = await DocumentEngine.join(
+      DOCUMENT_ID,
+      "alice",
+      messenger,
+      (error) => errors.push(error),
+      {
+        ...AS_ALICE,
+        controlState: backup as PersistedControlState,
+      },
+    );
+    await settle(restored, bob);
+    // Reading its own counter 2 from the history, it took a new tag before issuing anything.
+    expect(restored.deviceTag).not.toBe(alice.deviceTag);
+    await restored.setMembership("dave", "read");
+    await settle(restored, bob);
+    expect(bob.permissionOf("carol")).toBe("write");
+    expect(bob.permissionOf("dave")).toBe("read");
+    expect(bob.controlAnomalies).toEqual([]);
+    expect(
+      errors.some((e) => e instanceof ControlFrameRejectedError && e.reason === "anomaly"),
+    ).toBe(true);
+  });
+});
+
+describe("a new device of the creator and participants' reports (CTL-27, CTL-29)", () => {
+  /** Alice's only device decided, then was lost; the transport keeps no history for a new one. */
+  async function lostDevice() {
+    const messenger = new NoHistoryMessengerPort();
+    const old = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await old.setMembership("carol", "read");
+    await old.setMembership("bob", "write");
+    await settle(old, bob);
+    old.dispose();
+    const fresh = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    return { messenger, bob, fresh };
+  }
+
+  it("takes from a member's answer only what to supersede: its grant then holds everywhere, even wider", async () => {
+    const { bob, fresh } = await lostDevice();
+    await settle(fresh, bob);
+    await fresh.setMembership("carol", "write");
+    await settle(fresh, bob);
+    expect(bob.permissionOf("carol")).toBe("write");
+    expect(bob.permissionOf("bob")).toBe("write");
+  });
+
+  it("never takes a reported value into its control state; it may show it as unconfirmed", async () => {
+    const { bob, fresh } = await lostDevice();
+    await settle(fresh, bob);
+    expect(fresh.permissionOf("carol")).toBeUndefined();
+    expect(fresh.memberPermissions.size).toBe(0);
+    expect(fresh.reportedControlState?.targets["member:carol"]).toBeDefined();
+  });
+
+  it("a forged report cannot grant anything: values from a member's answer never apply anywhere", async () => {
+    const { messenger, bob, fresh } = await lostDevice();
+    // Mallory answers the new device's request with a report naming herself a writer.
+    const forged = new ControlState();
+    forged.add({ device: TAG, counter: 1, target: "member:mallory", value: "write", seen: {} });
+    await messenger.inner.send(
+      DOCUMENT_ID,
+      "mallory",
+      encodeResyncResponseFrame({
+        documentId: DOCUMENT_ID,
+        respondsTo: "0000000000000001",
+        update: new Uint8Array([0, 0]),
+        control: snapshotOf(forged),
+      }),
+    );
+    await settle(fresh, bob);
+    expect(fresh.permissionOf("mallory")).toBeUndefined();
+    expect(bob.permissionOf("mallory")).toBeUndefined();
+  });
+
+  it("without any basis it answers a joiner without a snapshot, so nobody is bootstrapped with empty rights", async () => {
+    const messenger = new NoHistoryMessengerPort();
+    const old = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await old.setMembership("dave", "read");
+    old.dispose();
+    const fresh = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
+    await settle(fresh, dave);
+    expect(dave.hasCompletedBootstrap).toBe(false);
+    expect(dave.mayEdit).toBe(false);
+  });
+});
+
+describe("bounded against anything a peer sends (CTL-30)", () => {
+  it("holds operations of at most 64 creator devices and refuses, and reports, the rest", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { bob, applyErrors } = await pair(messenger);
+    // Even from the creator's own account: tags are not authenticated beyond it (CTL-5).
+    for (let i = 0; i < 100; i++) {
+      const device = `d${String(i).padStart(21, "0")}`;
+      await messenger.send(
+        DOCUMENT_ID,
+        "alice",
+        encodeControlFrame({
+          documentId: DOCUMENT_ID,
+          device,
+          counter: 1,
+          target: `member:m${i}` as "member:bob",
+          value: "read",
+          seen: {},
+        }),
+      );
+    }
+    await bob.sync();
+    expect(Object.keys(bob.controlVector)).toHaveLength(64);
+    expect(bob.memberPermissions.size).toBe(64);
+    expect(
+      applyErrors.filter((e) => e instanceof ControlFrameRejectedError && e.reason === "refused"),
+    ).toHaveLength(36);
+  });
+
+  it("holds at most 1024 counters above a hole of one device", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { bob, applyErrors } = await pair(messenger);
+    for (let counter = 2; counter <= 1030; counter++) {
+      await messenger.send(DOCUMENT_ID, "alice", op(counter, "member:bob", "read"));
+    }
+    await bob.sync();
+    expect(
+      applyErrors.filter((e) => e instanceof ControlFrameRejectedError && e.reason === "refused"),
+    ).toHaveLength(5);
+  });
+
+  it("holds at most 3 MiB of control state, whatever the creator's account sends, and is then in a capacity conflict", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { bob, applyErrors } = await pair(messenger);
+    // What each operation had seen of 40 devices makes it about 2.5 KB: the bytes bind before the
+    // bound on targets.
+    const padding = Object.fromEntries(
+      Array.from({ length: 40 }, (_, k) => [`P${String(k).padStart(21, "0")}`, 7]),
+    );
+    for (let counter = 1; counter <= 3_000; counter++) {
+      await messenger.send(
+        DOCUMENT_ID,
+        "alice",
+        op(counter, `member:@${String(counter).padStart(250, "x")}`, "read", padding),
+      );
+    }
+    await bob.sync();
+    const held = new ControlState();
+    expect(held.merge({ vector: bob.controlVector, targets: {} })).toBe(0);
+    expect(bob.memberPermissions.size).toBeLessThan(3_000);
+    expect(
+      applyErrors.filter((e) => e instanceof ControlFrameRejectedError && e.reason === "refused")
+        .length,
+    ).toBeGreaterThan(0);
+    expect(new TextEncoder().encode(JSON.stringify(bob.controlState)).length).toBeLessThan(
+      3_145_728 + 1_024,
+    );
+    expect(bob.capacityConflict).toBe(true);
+    expect(bob.mayEdit).toBe(false);
+  });
+
+  it("takes the operation that fills the hole, so the bound does not block its own healing", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { bob } = await pair(messenger);
+    for (let counter = 2; counter <= 1025; counter++) {
+      await messenger.send(DOCUMENT_ID, "alice", op(counter, "member:bob", "read"));
+    }
+    await bob.sync();
+    expect(bob.controlVector[TAG]).toBeUndefined(); // counter 1 is missing: a hole
+    await messenger.send(DOCUMENT_ID, "alice", op(1, "member:bob", "read"));
+    await bob.sync();
+    expect(bob.controlVector[TAG]).toBe(1025);
+  });
+});
+
+describe("a basis for a new creator device's control state (CTL-28)", () => {
+  async function lost() {
+    const messenger = new NoHistoryMessengerPort();
+    const old = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await old.setMembership("carol", null); // carol was removed
+    await old.setMembership("bob", "write");
+    await settle(old, bob);
+    old.dispose();
+    const fresh = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await settle(fresh, bob);
+    return { messenger, bob, fresh };
+  }
+
+  it("is not given by reports or by its own operations: its rights stay unconfirmed", async () => {
+    const { fresh } = await lost();
+    expect(fresh.reportedControlState).toBeDefined();
+    await fresh.setMembership("dave", "read");
+    expect(fresh.controlConfirmed).toBe(false);
+  });
+
+  it("without one, a joiner it never decided about is not bootstrapped by it: a removed member does not come back unseen", async () => {
+    const { messenger, fresh } = await lost();
+    const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", messenger, undefined, AS_ALICE);
+    await settle(fresh, carol);
+    expect(carol.hasCompletedBootstrap).toBe(false);
+    expect(carol.mayEdit).toBe(false);
+  });
+
+  it("a joiner it decided about itself is bootstrapped with its snapshot", async () => {
+    const { messenger, fresh } = await lost();
+    await fresh.setMembership("dave", "read");
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
+    await settle(fresh, dave);
+    expect(dave.hasCompletedBootstrap).toBe(true);
+    expect(dave.permissionOf("dave")).toBe("read");
+  });
+
+  it("is given by the creator's operations read from the channel's history", async () => {
+    const messenger = new InMemoryMessengerPort(); // keeps history
+    const old = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await old.setMembership("bob", "write");
+    old.dispose();
+    const fresh = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    expect(fresh.controlConfirmed).toBe(true);
+    expect(fresh.permissionOf("bob")).toBe("write");
+  });
+});
+
+describe("a revoked member is not an unknown one (CTL-13, CTL-23, §7.1)", () => {
+  it("refuses to send once the creator revoked its permission, as a reader does, and says why", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const refusals: unknown[] = [];
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await alice.setMembership("bob", "write");
+    const bob = await DocumentEngine.join(
+      DOCUMENT_ID,
+      "bob",
+      messenger,
+      (error) => {
+        if (error instanceof SendRefusedError) refusals.push(error);
+      },
+      AS_ALICE,
+    );
+    await settle(alice, bob);
+    bob.edit((fragment) => insertPlainText(fragment, 0, "Plan"));
+    await settle(bob, alice);
+    expect(getPlainText(alice.fragment)).toBe("Plan");
+
+    await alice.setMembership("bob", null);
+    await settle(alice, bob);
+    expect(bob.rightOf("bob")).toBe("revoked");
+    expect(bob.permissionOf("bob")).toBeUndefined();
+    expect(bob.revokedMembers.has("bob")).toBe(true);
+    expect(bob.mayEdit).toBe(false);
+    await expect(bob.resync()).rejects.toMatchObject({ reason: "revoked" });
+    bob.edit((fragment) => insertPlainText(fragment, 4, " B"));
+    await settle(bob, alice);
+    expect(getPlainText(alice.fragment)).toBe("Plan");
+    expect(refusals).toEqual([expect.objectContaining({ reason: "revoked" })]);
+  });
+
+  it("concurrent read and revoke from two devices of the creator: revoked everywhere, never write", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const laptop = await DocumentEngine.create(
+      DOCUMENT_ID,
+      "alice",
+      messenger,
+      undefined,
+      AS_ALICE,
+    );
+    await laptop.setMembership("bob", "write");
+    const tablet = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await settle(laptop, tablet, bob);
+    expect(bob.mayEdit).toBe(true);
+    // Neither has seen the other's decision when it makes its own.
+    await Promise.all([laptop.setMembership("bob", "read"), tablet.setMembership("bob", null)]);
+    await settle(laptop, tablet, bob);
+    for (const client of [laptop, tablet, bob]) {
+      expect(client.rightOf("bob")).toBe("revoked");
+      expect(client.memberPermissions.has("bob")).toBe(false);
+    }
+    expect(bob.mayEdit).toBe(false);
+    await expect(bob.resync()).rejects.toMatchObject({ reason: "revoked" });
+  });
+
+  it("a member the creator never named stays unknown beside a revoked one, and may edit after the bootstrap", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await alice.setMembership("carol", null);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await settle(alice, bob);
+    expect(bob.rightOf("bob")).toBeUndefined();
+    expect(bob.rightOf("carol")).toBe("revoked");
+    expect(bob.mayEdit).toBe(true);
+  });
+
+  it("a revoked member's restored state refuses its edits after a restart too", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await alice.setMembership("bob", "write");
+    await alice.setMembership("bob", null);
+    let saved: PersistedControlState | undefined;
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, {
+      ...AS_ALICE,
+      onControlStateChange: (state) => {
+        saved = state;
+      },
+    });
+    await settle(alice, bob);
+    expect(saved?.bootstrapped).toBe(true);
+    bob.dispose();
+    const restarted = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, {
+      ...AS_ALICE,
+      controlState: saved as PersistedControlState,
+    });
+    expect(restarted.rightOf("bob")).toBe("revoked");
+    expect(restarted.mayEdit).toBe(false);
+    await expect(restarted.resync()).rejects.toMatchObject({ reason: "revoked" });
+  });
+});
+
+describe("what only a member's report holds, and the creator's confirmation (CTL-29, CTL-33)", () => {
+  it("a forged report is shown, never applied, and a confirmation grants nothing it names", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      autoResync: false,
+    });
+    await alice.setMembership("bob", "write");
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await settle(alice, bob);
+    // Alice asks; Mallory, in the channel, answers her request with a report naming herself a writer.
+    await alice.requestResync();
+    const request = (await messenger.receive(DOCUMENT_ID, "mallory"))
+      .map((delivery) => JSON.parse(delivery.payload) as { kind: string; requestId?: string })
+      .filter((frame) => frame.kind === "resync-request")
+      .at(-1) as { requestId: string };
+    const forged = new ControlState();
+    forged.add({ device: TAG, counter: 1, target: "member:mallory", value: "write", seen: {} });
+    forged.add({ device: TAG, counter: 2, target: "member:bob", value: "write", seen: {} });
     await messenger.send(
       DOCUMENT_ID,
       "mallory",
-      forgedResponse({ sequence: 9, closed: true, members: { mallory: "write" } }),
-    );
-    await bob.sync();
-
-    expect(bob.closed).toBe(false);
-    expect(bob.permissionOf("mallory")).toBeUndefined();
-    expect(bob.controlSequence).toBe(0);
-  });
-
-  it("a snapshot never reopens a closed document", async () => {
-    const messenger = new InMemoryMessengerPort();
-    const { alice, bob } = await pair(messenger);
-    await alice.closeDocument();
-    await bob.sync();
-    expect(bob.closed).toBe(true);
-
-    await messenger.send(
-      DOCUMENT_ID,
-      "alice",
-      forgedResponse({ sequence: 10, closed: false, members: {} }),
-    );
-    await bob.sync();
-
-    expect(bob.closed).toBe(true);
-  });
-
-  it("a snapshot older than what a client already applied is ignored", async () => {
-    const messenger = new InMemoryMessengerPort();
-    const { alice, bob } = await pair(messenger);
-    await alice.setMembership("carol", "write"); // sequence 1
-    await alice.setMembership("dora", "read"); // sequence 2
-    await alice.setMembership("erin", "write"); // sequence 3
-    await bob.sync();
-    expect(bob.permissionOf("carol")).toBe("write");
-
-    // A stale snapshot (sequence 1, and it knows nobody) must not wipe what bob knows.
-    await messenger.send(
-      DOCUMENT_ID,
-      "alice",
-      forgedResponse({ sequence: 1, closed: false, members: {} }),
-    );
-    await bob.sync();
-
-    expect(bob.permissionOf("carol")).toBe("write");
-    expect(bob.permissionOf("erin")).toBe("write");
-    expect(bob.controlSequence).toBe(3);
-  });
-
-  it("a closed document still bootstraps a joiner, who learns it is closed from the creator", async () => {
-    const messenger = new NoHistoryMessengerPort();
-    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
-    await alice.sync(); // establishes alice's own receive() baseline before dave ever joins
-    alice.edit((fragment) => insertPlainText(fragment, 0, "finished text"));
-    await alice.closeDocument();
-
-    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
-    await alice.sync(); // the creator answers, even though the document is closed
-    await dave.sync();
-
-    expect(dave.hasCompletedBootstrap).toBe(true);
-    expect(getPlainText(dave.fragment)).toBe("finished text");
-    expect(dave.closed).toBe(true);
-  });
-
-  it("a joiner on a history-less transport learns everyone's permissions from the creator's snapshot", async () => {
-    const messenger = new NoHistoryMessengerPort();
-    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
-    await alice.sync(); // establishes alice's own receive() baseline before dave ever joins
-    await alice.setMembership("bob", "write"); // sequence 1
-    await alice.setMembership("carol", "read"); // sequence 2
-    await alice.setMembership("bob", null); // sequence 3: revoked again
-
-    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
-    expect(dave.memberPermissions.size).toBe(0); // no history: it heard none of the frames
-    await alice.sync();
-    await dave.sync();
-
-    expect(dave.permissionOf("carol")).toBe("read");
-    expect(dave.permissionOf("bob")).toBeUndefined(); // revoked, so absent from the snapshot
-    expect(dave.controlSequence).toBe(3);
-    expect(dave.controlGaps).toEqual([]);
-  });
-
-  it("a control frame at or below a snapshot's sequence is stale once the snapshot is adopted", async () => {
-    const messenger = new NoHistoryMessengerPort();
-    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
-    await alice.sync(); // establishes alice's own receive() baseline before dave ever joins
-    await alice.setMembership("carol", "read"); // sequence 1
-    await alice.setMembership("carol", "write"); // sequence 2
-
-    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
-    await alice.sync();
-    await dave.sync();
-    expect(dave.permissionOf("carol")).toBe("write");
-
-    // Replaying sequence 1 (carol -> read) after the snapshot must not undo it.
-    await messenger.send(
-      DOCUMENT_ID,
-      "alice",
-      encodeControlFrame({
+      encodeResyncResponseFrame({
         documentId: DOCUMENT_ID,
-        sequence: 1,
-        action: "membership",
-        member: "carol",
-        permission: "read",
+        respondsTo: request.requestId,
+        update: new Uint8Array([0, 0]),
+        control: snapshotOf(forged),
       }),
     );
-    await dave.sync();
-
-    expect(dave.permissionOf("carol")).toBe("write");
-  });
-
-  describe("healing control state through a resync", () => {
-    it("the creator answers a client that only lost a control frame, though there is no content to send", async () => {
-      const messenger = new InMemoryMessengerPort();
-      const { alice, bob } = await pair(messenger);
-      await bob.sync();
-      messenger.dropNextSend("alice");
-      await alice.setMembership("carol", "write"); // sequence 1, lost
-      await alice.setMembership("bob", "read"); // sequence 2
-      await bob.sync();
-      expect(bob.controlGaps).toEqual([1]);
-      expect(bob.permissionOf("carol")).toBeUndefined();
-
-      await bob.requestResync();
-      await alice.sync();
-      await bob.sync();
-
-      expect(bob.permissionOf("carol")).toBe("write");
-      expect(bob.permissionOf("bob")).toBe("read");
-      expect(bob.controlGaps).toEqual([]);
+    await settle(alice, bob);
+    expect(alice.controlDivergences).toContainEqual({
+      reporter: "mallory",
+      target: "member:mallory",
+      reported: "write",
+      held: undefined,
     });
+    expect(alice.permissionOf("mallory")).toBeUndefined();
+    expect(bob.permissionOf("mallory")).toBeUndefined();
 
-    it("a client that is fully up to date on content and control gets no answer at all", async () => {
-      const messenger = new InMemoryMessengerPort();
-      const { alice, bob } = await pair(messenger);
-      await alice.setMembership("bob", "write");
-      await alice.sync(); // answers bob's join-time request, so it is not counted below
-      await bob.sync();
-      alice.edit((fragment) => insertPlainText(fragment, 0, "caught up"));
-      await bob.sync();
-
-      await bob.requestResync();
-      // Measured after bob's own resync-request frame, so only what alice's
-      // own sync() adds is being checked.
-      const before = (await messenger.receive(DOCUMENT_ID, "alice")).length;
-      await alice.sync();
-
-      expect((await messenger.receive(DOCUMENT_ID, "alice")).length).toBe(before);
-    });
-  });
-
-  describe("a creator that re-attaches to its own document (CTL-12)", () => {
-    async function restart(messenger: InMemoryMessengerPort, controlState?: PersistedControlState) {
-      return DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
-        ...AS_ALICE,
-        ...(controlState ? { controlState } : {}),
-      });
+    await alice.confirmRights();
+    await settle(alice, bob);
+    for (const client of [alice, bob]) {
+      expect(client.rightOf("mallory")).toBe("revoked");
+      expect(client.permissionOf("bob")).toBe("write");
     }
+  });
 
-    it("without its persisted control state, a restarted creator that cannot read its own earlier frames issues nothing — and told to proceed, its next frame is stale everywhere, the failure this option exists to prevent", async () => {
-      const messenger = new NoHistoryMessengerPort();
-      const alice = await DocumentEngine.create(
-        DOCUMENT_ID,
-        "alice",
-        messenger,
-        undefined,
-        AS_ALICE,
-      );
-      const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
-      await alice.sync();
-      await bob.sync();
-      await alice.setMembership("bob", "write"); // sequence 1
-      await alice.setMembership("carol", "read"); // sequence 2
-      await bob.sync();
+  it("a member's report is never a device's own decision: confirming is refused to anyone but the creator", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { bob } = await pair(messenger);
+    await expect(bob.confirmRights()).rejects.toThrow(/not the creator/);
+    expect(bob.controlDivergences).toEqual([]);
+  });
+});
 
-      messenger.forgetHistory(DOCUMENT_ID, "alice");
-      const restarted = await DocumentEngine.join(
-        DOCUMENT_ID,
-        "alice",
-        messenger,
-        undefined,
-        AS_ALICE,
-      );
-      const sentBefore = (await messenger.inner.receive(DOCUMENT_ID, "x")).length;
-      const refusal = await restarted.setMembership("bob", "read").catch((error: unknown) => error);
-      expect(refusal).toBeInstanceOf(ControlFrameRejectedError);
-      expect((refusal as ControlFrameRejectedError).reason).toBe("control-state-unknown"); // CTL-19
-      expect((await messenger.inner.receive(DOCUMENT_ID, "x")).length).toBe(sentBefore);
+/**
+ * A member on several devices (RSY-6, RSY-8, RSY-12, RSY-13): a device brings another device of
+ * its own member up to date, its control state included, so it need not wait for the creator.
+ */
+describe("a member on several devices", () => {
+  async function phoneOnline(permission: "read" | "write") {
+    const port = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
+    await alice.setMembership("bob", permission);
+    alice.edit((fragment) => insertPlainText(fragment, 0, "from alice"));
+    const phone = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
+    await alice.sync(); // answers the phone; from here on alice is offline
+    await phone.sync();
+    expect(phone.hasCompletedBootstrap).toBe(true);
+    return { port, alice, phone };
+  }
 
-      restarted.proceedWithUnknownControlState(); // the person accepted the risk
-      await restarted.setMembership("bob", "read"); // issued as 1 again: stale or a conflict
-      await bob.sync();
+  it("a new device is brought up to date by its other device while the creator is offline, and may write", async () => {
+    const { port, phone } = await phoneOnline("write");
+    const laptop = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
+    expect(laptop.hasCompletedBootstrap).toBe(false);
+    await phone.sync(); // answers its own member's other device
+    await laptop.sync();
 
-      expect(bob.permissionOf("bob")).toBe("write"); // the demotion never took effect
+    expect(laptop.hasCompletedBootstrap).toBe(true);
+    expect(laptop.permissionOf("bob")).toBe("write");
+    expect(getPlainText(laptop.fragment)).toBe("from alice");
+    laptop.edit((fragment) => insertPlainText(fragment, 0, "laptop: "));
+    await phone.sync();
+    expect(getPlainText(phone.fragment)).toBe("laptop: from alice");
+  });
+
+  it("a read-only member's new device learns it is read-only from its other device", async () => {
+    const { port, phone } = await phoneOnline("read");
+    const laptop = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
+    await phone.sync();
+    await laptop.sync();
+
+    expect(laptop.hasCompletedBootstrap).toBe(true);
+    expect(laptop.permissionOf("bob")).toBe("read");
+    const errors: unknown[] = [];
+    const refusing = await DocumentEngine.join(DOCUMENT_ID, "bob", port, (e) => errors.push(e), {
+      ...AS_ALICE,
     });
-
-    it("without it, a restarted creator that reads every frame it sent continues after them", async () => {
-      const messenger = new InMemoryMessengerPort();
-      const { alice, bob, applyErrors } = await pair(messenger);
-      await alice.setMembership("bob", "write"); // 1
-      await alice.setMembership("carol", "read"); // 2
-      await bob.sync();
-
-      const restarted = await restart(messenger); // no state, but the transport keeps history
-      expect(restarted.controlSequence).toBe(2);
-      await restarted.setMembership("bob", "read"); // 3
-      await bob.sync();
-
-      expect(bob.permissionOf("bob")).toBe("read");
-      expect(bob.permissionOf("carol")).toBe("read");
-      expect(
-        applyErrors.filter(
-          (error) =>
-            error instanceof ControlFrameRejectedError && error.reason === "sequence-conflict",
-        ),
-      ).toEqual([]);
-    });
-
-    it("with it, the counter continues and the next frame counts", async () => {
-      const messenger = new InMemoryMessengerPort();
-      const { alice, bob } = await pair(messenger);
-      await alice.setMembership("bob", "write"); // 1
-      await alice.setMembership("carol", "read"); // 2
-      await bob.sync();
-
-      const restarted = await restart(messenger, alice.controlState);
-      expect(restarted.controlSequence).toBe(2);
-      await restarted.setMembership("bob", "read"); // 3
-      await bob.sync();
-
-      expect(restarted.controlSequence).toBe(3);
-      expect(bob.permissionOf("bob")).toBe("read");
-      expect(bob.controlGaps).toEqual([]);
-    });
-
-    it("and its control snapshot, sent to a joiner, still lists everyone it had granted", async () => {
-      const messenger = new NoHistoryMessengerPort();
-      const alice = await DocumentEngine.create(
-        DOCUMENT_ID,
-        "alice",
-        messenger,
-        undefined,
-        AS_ALICE,
-      );
-      await alice.setMembership("bob", "write");
-      await alice.setMembership("carol", "read");
-
-      const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
-        ...AS_ALICE,
-        controlState: alice.controlState,
-      });
-      const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
-      await restarted.sync();
-      await dave.sync();
-
-      expect(dave.permissionOf("bob")).toBe("write");
-      expect(dave.permissionOf("carol")).toBe("read");
-      expect(dave.controlSequence).toBe(2);
-    });
-
-    it("is ignored for anyone but the creator: a non-creator always re-bootstraps its control state", async () => {
-      const messenger = new InMemoryMessengerPort();
-      await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
-      const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, {
-        ...AS_ALICE,
-        controlState: { sequence: 9, closed: true, members: { bob: "read" } },
-      });
-
-      expect(bob.closed).toBe(false);
-      expect(bob.controlSequence).toBe(0);
-      expect(bob.permissionOf("bob")).toBeUndefined();
-    });
-
-    /**
-     * SPECIFICATION.md CTL-12, CTL-17: the outbox. A creator that crashes between the
-     * messenger accepting a control frame and persisting that it did must never give the
-     * frame's number to another action.
-     */
-    describe("the control outbox", () => {
-      const grantCarolRead = (sequence: number) =>
-        encodeControlFrame({
-          documentId: DOCUMENT_ID,
-          sequence,
-          action: "membership",
-          member: "carol",
-          permission: "read",
-        });
-
-      it("persists a control frame as pending before the messenger sees it", async () => {
-        const messenger = new InMemoryMessengerPort();
-        let persisted: PersistedControlState | undefined;
-        let persistedWhenSent: PersistedControlState | undefined;
-        const watching: MessengerPort = {
-          createDocument: (documentId, creator) => messenger.createDocument(documentId, creator),
-          receive: (documentId, member) => messenger.receive(documentId, member),
-          listChannels: (member) => messenger.listChannels(member),
-          transportProfile: () => messenger.transportProfile(),
-          send: (documentId: DocumentId, sender: MemberId, payload: string) => {
-            persistedWhenSent = persisted;
-            return messenger.send(documentId, sender, payload);
-          },
-        };
-        const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", watching, undefined, {
-          ...AS_ALICE,
-          onControlStateChange: (state) => {
-            persisted = state;
-          },
-        });
-        await alice.setMembership("bob", "write");
-        expect(persistedWhenSent?.pendingControl).toContain('"member":"bob"');
-        expect(persisted?.pendingControl).toBeUndefined(); // committed afterwards
-        expect(persisted?.sequence).toBe(1);
-      });
-
-      it("after a crash once the messenger had accepted it, resends the same frame and uses the next number", async () => {
-        const messenger = new InMemoryMessengerPort();
-        const { alice, bob } = await pair(messenger);
-        await alice.setMembership("bob", "write"); // 1
-        const pending = grantCarolRead(2);
-        await messenger.send(DOCUMENT_ID, "alice", pending); // accepted — then the crash
-        const restarted = await restart(messenger, {
-          ...alice.controlState,
-          pendingControl: pending,
-        });
-
-        await restarted.setMembership("dave", "write");
-        await bob.sync();
-
-        expect(restarted.controlSequence).toBe(3); // 2 stayed carol's
-        expect(bob.permissionOf("carol")).toBe("read");
-        expect(bob.permissionOf("dave")).toBe("write");
-        expect(bob.controlGaps).toEqual([]);
-      });
-
-      it("after a crash before the send, sends the pending frame first", async () => {
-        const messenger = new InMemoryMessengerPort();
-        const { alice, bob } = await pair(messenger);
-        await alice.setMembership("bob", "write"); // 1
-        const restarted = await restart(messenger, {
-          ...alice.controlState,
-          pendingControl: grantCarolRead(2),
-        });
-
-        await restarted.setMembership("dave", "write");
-        await bob.sync();
-
-        expect(restarted.controlSequence).toBe(3);
-        expect(bob.permissionOf("carol")).toBe("read");
-        expect(bob.permissionOf("dave")).toBe("write");
-        // The very text persisted, byte for byte, and before the new frame.
-        const sent = (await messenger.receive(DOCUMENT_ID, "bob"))
-          .filter((d) => d.sender === "alice" && JSON.parse(d.payload).kind === "control")
-          .map((d) => d.payload);
-        expect(sent.slice(-2)[0]).toBe(grantCarolRead(2));
-        expect(JSON.parse(sent.at(-1) as string).sequence).toBe(3);
-      });
-
-      it("sends nothing when the application cannot persist the frame, and the number stays free", async () => {
-        const messenger = new InMemoryMessengerPort();
-        let storageFull = true;
-        const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
-          ...AS_ALICE,
-          onControlStateChange: () => {
-            if (storageFull) {
-              throw new Error("storage is full");
-            }
-          },
-        });
-        const controlFrames = async () =>
-          (await messenger.receive(DOCUMENT_ID, "alice")).filter(
-            (d) => JSON.parse(d.payload).kind === "control",
-          );
-
-        await expect(alice.setMembership("bob", "write")).rejects.toThrow("storage is full");
-        expect(await controlFrames()).toHaveLength(0);
-        expect(alice.controlState).not.toHaveProperty("pendingControl");
-        expect(alice.controlSequence).toBe(0);
-
-        storageFull = false;
-        await alice.setMembership("bob", "write");
-        expect(await controlFrames()).toHaveLength(1);
-        expect(alice.controlSequence).toBe(1);
-      });
-
-      it("keeps a frame restored as pending pending when persisting it again fails", async () => {
-        const messenger = new InMemoryMessengerPort();
-        const { alice, bob } = await pair(messenger);
-        await alice.setMembership("bob", "write"); // 1
-        const pending = grantCarolRead(2);
-        let storageFull = true;
-        const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
-          ...AS_ALICE,
-          controlState: { ...alice.controlState, pendingControl: pending },
-          onControlStateChange: () => {
-            if (storageFull) {
-              throw new Error("storage is full");
-            }
-          },
-        });
-        await expect(restarted.setMembership("dave", "write")).rejects.toThrow("storage is full");
-        const sent = async () =>
-          (await messenger.receive(DOCUMENT_ID, "alice"))
-            .filter((d) => JSON.parse(d.payload).kind === "control")
-            .map((d) => d.payload);
-        expect(await sent()).not.toContain(pending);
-
-        storageFull = false;
-        await restarted.setMembership("dave", "write");
-        await bob.sync();
-        expect((await sent()).slice(-2)[0]).toBe(pending); // still owed, and first
-        expect(restarted.controlSequence).toBe(3);
-        expect(bob.permissionOf("carol")).toBe("read");
-      });
-
-      it("a receiver refuses a different frame under a number it already holds, and says so", async () => {
-        const messenger = new InMemoryMessengerPort();
-        const { alice, bob, applyErrors } = await pair(messenger);
-        await alice.setMembership("bob", "write"); // 1
-        await bob.sync();
-        await messenger.send(DOCUMENT_ID, "alice", grantCarolRead(1)); // 1 again, another action
-        await bob.sync();
-
-        expect(bob.permissionOf("carol")).toBeUndefined();
-        expect(
-          applyErrors.some(
-            (error) =>
-              error instanceof ControlFrameRejectedError && error.reason === "sequence-conflict",
-          ),
-        ).toBe(true);
-      });
-    });
-
-    /**
-     * SPECIFICATION.md CTL-12, SND-7: a send that failed only for now — `unavailable`,
-     * `rate-limited`, or anything unclassified (TRN-12) — may have been delivered all the
-     * same. Its frame stays pending and is retried until the transport accepts it or refuses
-     * it for good; its number never goes to another action.
-     */
-    describe("a control send that fails for now", () => {
-      beforeEach(() => {
-        vi.useFakeTimers();
-      });
-
-      afterEach(() => {
-        vi.useRealTimers();
-      });
-
-      /** The creator granted bob `write` as control frame 1, and crashed before recording that it was sent. */
-      async function crashAfterSend(messenger: MessengerPort) {
-        const states: PersistedControlState[] = [];
-        const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
-          ...AS_ALICE,
-          onControlStateChange: (state) => states.push(structuredClone(state)),
-        });
-        const applyErrors: unknown[] = [];
-        const bob = await DocumentEngine.join(
-          DOCUMENT_ID,
-          "bob",
-          messenger,
-          (error, context) => {
-            if (context === "apply") applyErrors.push(error);
-          },
-          AS_ALICE,
-        );
-        await alice.sync();
-        await bob.sync();
-        await alice.setMembership("bob", "write");
-        const crashState = states.find(
-          (state) => state.pendingControl !== undefined && state.sequence === 0,
-        ) as PersistedControlState;
-        alice.dispose();
-        await bob.sync();
-        expect(bob.permissionOf("bob")).toBe("write");
-        return { bob, crashState, applyErrors };
-      }
-
-      function restart(messenger: MessengerPort, controlState: PersistedControlState) {
-        const persisted: PersistedControlState[] = [];
-        return DocumentEngine.join(DOCUMENT_ID, "alice", messenger, () => {}, {
-          ...AS_ALICE,
-          controlState,
-          onControlStateChange: (state) => persisted.push(structuredClone(state)),
-        }).then((alice) => ({ alice, persisted }));
-      }
-
-      const conflicts = (errors: readonly unknown[]) =>
-        errors.filter(
-          (error) =>
-            error instanceof ControlFrameRejectedError && error.reason === "sequence-conflict",
-        );
-
-      it("is retried until the transport accepts it, and the action completes only then", async () => {
-        const messenger = new InMemoryMessengerPort();
-        const { alice, bob } = await pair(messenger);
-        const persisted: PersistedControlState[] = [];
-        const creator = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, () => {}, {
-          ...AS_ALICE,
-          controlState: alice.controlState,
-          onControlStateChange: (state) => persisted.push(structuredClone(state)),
-        });
-        messenger.disconnect("alice");
-        let settled = false;
-        const grant = creator.setMembership("bob", "write").finally(() => {
-          settled = true;
-        });
-        await vi.advanceTimersByTimeAsync(5_000);
-
-        expect(settled).toBe(false); // not failed: still being sent
-        expect(creator.sendStatus.state).toBe("retrying");
-        expect(persisted.at(-1)?.pendingControl).toContain('"member":"bob"'); // still owed
-
-        messenger.reconnect("alice");
-        await vi.advanceTimersByTimeAsync(10_000);
-        await grant;
-        expect(persisted.at(-1)?.pendingControl).toBeUndefined();
-        expect(creator.controlSequence).toBe(1);
-        await bob.sync();
-        expect(bob.permissionOf("bob")).toBe("write");
-      });
-
-      it("a restarted creator offline at once keeps its pending frame, and later actions still work (history)", async () => {
-        const messenger = new InMemoryMessengerPort();
-        const { bob, crashState, applyErrors } = await crashAfterSend(messenger);
-        messenger.disconnect("alice"); // offline right after the restart
-        const { alice, persisted } = await restart(messenger, crashState);
-        const grant = alice.setMembership("carol", "read");
-        await vi.advanceTimersByTimeAsync(5_000);
-        expect(persisted.every((state) => state.pendingControl === crashState.pendingControl)).toBe(
-          true,
-        );
-
-        messenger.reconnect("alice");
-        await vi.advanceTimersByTimeAsync(10_000);
-        await grant;
-        expect(alice.controlSequence).toBe(2); // 1 stayed the grant to bob
-        await bob.sync();
-        expect(bob.permissionOf("carol")).toBe("read");
-        expect(conflicts(applyErrors)).toEqual([]);
-      });
-
-      it("a restarted creator never sends a different frame under its pending number (no history)", async () => {
-        const messenger = new NoHistoryMessengerPort();
-        const { bob, crashState, applyErrors } = await crashAfterSend(messenger);
-        messenger.forgetHistory(DOCUMENT_ID, "alice"); // the restarted creator sees nothing from before
-        messenger.inner.disconnect("alice");
-        const { alice } = await restart(messenger, crashState);
-        const grant = alice.setMembership("carol", "read");
-        await vi.advanceTimersByTimeAsync(5_000);
-
-        messenger.inner.reconnect("alice");
-        await vi.advanceTimersByTimeAsync(10_000);
-        await grant;
-        expect(alice.controlSequence).toBe(2);
-        await bob.sync();
-        expect(bob.permissionOf("carol")).toBe("read"); // creator and participant agree
-        expect(conflicts(applyErrors)).toEqual([]);
-        const controlTexts = (await messenger.inner.receive(DOCUMENT_ID, "x"))
-          .filter((d) => d.sender === "alice" && JSON.parse(d.payload).kind === "control")
-          .map((d) => d.payload);
-        const underOne = new Set(controlTexts.filter((text) => JSON.parse(text).sequence === 1));
-        expect([...underOne]).toEqual([crashState.pendingControl]); // only ever the one frame
-      });
-
-      it("a restarted creator sends its pending frame without waiting for its next action", async () => {
-        const messenger = new InMemoryMessengerPort();
-        const { bob, crashState } = await crashAfterSend(messenger);
-        messenger.disconnect("alice");
-        const { alice, persisted } = await restart(messenger, crashState);
-        await vi.advanceTimersByTimeAsync(5_000);
-        expect(alice.controlSequence).toBe(0);
-
-        messenger.reconnect("alice");
-        await vi.advanceTimersByTimeAsync(10_000);
-        expect(alice.controlSequence).toBe(1);
-        expect(persisted.at(-1)?.pendingControl).toBeUndefined();
-        await bob.sync();
-        expect(bob.permissionOf("bob")).toBe("write");
-      });
-
-      it("a creator disposed while retrying keeps the frame pending, and its restart sends it", async () => {
-        const messenger = new InMemoryMessengerPort();
-        const { alice, bob } = await pair(messenger);
-        const persisted: PersistedControlState[] = [];
-        const creator = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, () => {}, {
-          ...AS_ALICE,
-          controlState: alice.controlState,
-          onControlStateChange: (state) => persisted.push(structuredClone(state)),
-        });
-        messenger.disconnect("alice");
-        const grant = creator.setMembership("bob", "write").catch((error: unknown) => error);
-        await vi.advanceTimersByTimeAsync(5_000);
-        creator.dispose();
-        expect(await grant).toBeInstanceOf(Error); // this engine gave up...
-        const last = persisted.at(-1) as PersistedControlState;
-        expect(last.pendingControl).toContain('"member":"bob"'); // ...the frame did not
-
-        messenger.reconnect("alice");
-        const { alice: restarted } = await restart(messenger, last);
-        await vi.advanceTimersByTimeAsync(10_000);
-        expect(restarted.controlSequence).toBe(1);
-        await bob.sync();
-        expect(bob.permissionOf("bob")).toBe("write");
-      });
-    });
-
-    /**
-     * One creator on several devices (#31, option B). Each device runs an engine under the
-     * creator's member id; a device counts a number another device of the creator used as
-     * taken. Two devices acting at the very same moment still collide (CTL-17): a limit of 1.x.
-     */
-    describe("a creator on several devices", () => {
-      /** The creator's desktop granted bob `write` (1); a tablet starts from a copy of that state. */
-      async function desktopAndTablet(port: MessengerPort) {
-        const desktop = await DocumentEngine.create(
-          DOCUMENT_ID,
-          "alice",
-          port,
-          undefined,
-          AS_ALICE,
-        );
-        await desktop.setMembership("bob", "write"); // 1
-        const applyErrors: unknown[] = [];
-        const bob = await DocumentEngine.join(
-          DOCUMENT_ID,
-          "bob",
-          port,
-          (error, context) => {
-            if (context === "apply") applyErrors.push(error);
-          },
-          AS_ALICE,
-        );
-        const tabletErrors: unknown[] = [];
-        const tabletStates: PersistedControlState[] = [];
-        const tablet = await DocumentEngine.join(
-          DOCUMENT_ID,
-          "alice",
-          port,
-          (error) => tabletErrors.push(error),
-          {
-            ...AS_ALICE,
-            controlState: desktop.controlState,
-            onControlStateChange: (state) => tabletStates.push(structuredClone(state)),
-          },
-        );
-        await bob.sync();
-        return { desktop, tablet, bob, applyErrors, tabletErrors, tabletStates };
-      }
-
-      const conflicts = (errors: readonly unknown[]) =>
-        errors.filter(
-          (error) =>
-            error instanceof ControlFrameRejectedError && error.reason === "sequence-conflict",
-        );
-
-      it("a device takes the next number after one its other device used, and persists it", async () => {
-        const port = new InMemoryMessengerPort();
-        const { desktop, tablet, bob, applyErrors, tabletStates } = await desktopAndTablet(port);
-
-        await desktop.setMembership("carol", "write"); // 2, on the desktop
-        await tablet.sync();
-        expect(tablet.controlSequence).toBe(2);
-        expect(tablet.permissionOf("carol")).toBe("write");
-        expect(tabletStates.at(-1)?.sequence).toBe(2); // what a restart of the tablet resumes from
-
-        await tablet.setMembership("bob", "read"); // 3, on the tablet
-        await desktop.sync();
-        await bob.sync();
-        expect(tablet.controlSequence).toBe(3);
-        expect(desktop.controlSequence).toBe(3);
-        expect(bob.permissionOf("bob")).toBe("read");
-        expect(bob.permissionOf("carol")).toBe("write");
-        expect(conflicts(applyErrors)).toEqual([]);
-
-        await desktop.closeDocument(); // 4, the desktop again
-        await bob.sync();
-        expect(bob.closed).toBe(true);
-        expect(conflicts(applyErrors)).toEqual([]);
-      });
-
-      it("a pending frame whose number another device took is given up and reported, never sent", async () => {
-        const port = new InMemoryMessengerPort();
-        const { desktop, bob, applyErrors } = await desktopAndTablet(port);
-        // The tablet persisted a grant to dave as pending (2) and stopped before sending it...
-        const pending = encodeControlFrame({
-          documentId: DOCUMENT_ID,
-          sequence: 2,
-          action: "membership",
-          member: "dave",
-          permission: "write",
-        });
-        const tabletState = { ...desktop.controlState, pendingControl: pending };
-        // ...while the desktop used 2 for another action.
-        await desktop.setMembership("carol", "write"); // 2
-
-        const errors: unknown[] = [];
-        const states: PersistedControlState[] = [];
-        const tablet = await DocumentEngine.join(
-          DOCUMENT_ID,
-          "alice",
-          port,
-          (e) => errors.push(e),
-          {
-            ...AS_ALICE,
-            controlState: tabletState,
-            onControlStateChange: (state) => states.push(structuredClone(state)),
-          },
-        );
-        expect(conflicts(errors)).toHaveLength(1); // reported, once
-        expect(states.at(-1)?.pendingControl).toBeUndefined(); // given up for good
-        expect(tablet.controlSequence).toBe(2);
-        const sentUnderTwo = (await port.receive(DOCUMENT_ID, "x"))
-          .filter((d) => d.sender === "alice" && JSON.parse(d.payload).sequence === 2)
-          .map((d) => d.payload);
-        expect(sentUnderTwo).not.toContain(pending);
-
-        await tablet.setMembership("dave", "write"); // asked again: 3
-        await bob.sync();
-        expect(bob.permissionOf("dave")).toBe("write");
-        expect(bob.permissionOf("carol")).toBe("write");
-        expect(conflicts(applyErrors)).toEqual([]);
-      });
-
-      it("a device that lacks a frame another device sent issues nothing until it has it", async () => {
-        const inner = new InMemoryMessengerPort();
-        let hideFromTablet = new Set<string>();
-        let tabletReads = 0;
-        // The desktop and the tablet both read as "alice". Once hiding starts, only the tablet
-        // reads again, so whatever is hidden is hidden from the tablet.
-        const port: MessengerPort = {
-          createDocument: (d, c) => inner.createDocument(d, c),
-          listChannels: (m) => inner.listChannels(m),
-          transportProfile: () => inner.transportProfile(),
-          send: (d, sender, payload) => inner.send(d, sender, payload),
-          receive: async (d, m) => {
-            const all = await inner.receive(d, m);
-            return tabletReads > 0 && m === "alice"
-              ? all.filter((delivery) => !hideFromTablet.has(delivery.id))
-              : all;
-          },
-        };
-        const { desktop, tablet, bob, applyErrors } = await desktopAndTablet(port);
-        tabletReads = 1;
-        await desktop.setMembership("carol", "write"); // 2
-        hideFromTablet = new Set(
-          (await inner.receive(DOCUMENT_ID, "x")).map((d) => d.id).slice(-1),
-        );
-        await desktop.setMembership("dave", "write"); // 3
-        await tablet.sync(); // sees 3, not 2
-
-        const sentBefore = (await inner.receive(DOCUMENT_ID, "x")).length;
-        const refusal = await tablet.setMembership("erin", "read").catch((error: unknown) => error);
-        expect((refusal as ControlFrameRejectedError).reason).toBe("sequence-conflict");
-        expect((await inner.receive(DOCUMENT_ID, "x")).length).toBe(sentBefore); // nothing sent
-
-        hideFromTablet = new Set(); // 2 arrives after all
-        await tablet.sync();
-        expect(tablet.controlSequence).toBe(3);
-        await tablet.setMembership("erin", "read"); // 4
-        await bob.sync();
-        expect(bob.permissionOf("erin")).toBe("read");
-        expect(bob.permissionOf("dave")).toBe("write");
-        expect(
-          applyErrors.filter(
-            (error) =>
-              error instanceof ControlFrameRejectedError && error.reason === "sequence-conflict",
-          ),
-        ).toEqual([]);
-      });
-
-      it("a frame still being retried is given up as soon as another device's frame takes its number", async () => {
-        vi.useFakeTimers();
-        try {
-          const inner = new InMemoryMessengerPort();
-          let tabletOffline = false;
-          let tabletSends = 0;
-          // Only the tablet's sends fail; it still reads what arrives.
-          const port: MessengerPort = {
-            createDocument: (d, c) => inner.createDocument(d, c),
-            receive: (d, m) => inner.receive(d, m),
-            listChannels: (m) => inner.listChannels(m),
-            transportProfile: () => inner.transportProfile(),
-            send: async (d, sender, payload) => {
-              if (sender === "alice" && tabletOffline) {
-                tabletSends += 1;
-                throw new TransportSendError("unavailable", "tablet offline");
-              }
-              return inner.send(d, sender, payload);
-            },
-          };
-          const { desktop, tablet, bob, applyErrors } = await desktopAndTablet(port);
-
-          tabletOffline = true;
-          const grant = tablet.setMembership("dave", "write").catch((error: unknown) => error); // 2, retrying
-          await vi.advanceTimersByTimeAsync(2_000);
-          tabletOffline = false; // the desktop may send; so may the tablet, from here on
-          const desktopsTwo = desktop.setMembership("carol", "write"); // 2, sent
-          await desktopsTwo;
-          tabletOffline = true;
-          await tablet.sync(); // the tablet sees the desktop's 2
-          tabletOffline = false;
-          const attemptsBefore = tabletSends;
-          await vi.advanceTimersByTimeAsync(60_000); // the next retry would be due
-
-          const outcome = await grant;
-          expect(outcome).toBeInstanceOf(ControlFrameRejectedError);
-          expect((outcome as ControlFrameRejectedError).reason).toBe("sequence-conflict");
-          expect(tabletSends).toBe(attemptsBefore);
-          await bob.sync();
-          expect(bob.permissionOf("dave")).toBeUndefined(); // never sent under 2
-          expect(conflicts(applyErrors)).toEqual([]);
-
-          await tablet.setMembership("dave", "write"); // 3
-          await bob.sync();
-          expect(bob.permissionOf("dave")).toBe("write");
-        } finally {
-          vi.useRealTimers();
-        }
-      });
-    });
-
-    /**
-     * A device of the creator that starts without persisted control state (CTL-19): a new
-     * device on a messenger that shows no history, or one whose state was lost. It cannot tell
-     * a free control number from a taken one, so it issues nothing, answers without a snapshot,
-     * persists nothing and is not bootstrapped until another device of the creator tells it the
-     * control state, it reads the creator's frames from 1 on, or the person lets it proceed.
-     */
-    describe("a device of the creator without control state", () => {
-      /** Answers go out at once: several devices answer several requests here (RSY-9). */
-      const AS_ALICE_NOW = { ...AS_ALICE, resyncResponseThrottleMs: 0 };
-
-      /** The mock transport; after `cut()` nobody sees any earlier message, as on a messenger without history. */
-      function historyCutPort() {
-        const inner = new InMemoryMessengerPort();
-        let hiddenUpTo = -1;
-        const port: MessengerPort = {
-          createDocument: (d, c) => inner.createDocument(d, c),
-          listChannels: (m) => inner.listChannels(m),
-          transportProfile: () => inner.transportProfile(),
-          send: (d, sender, payload) => inner.send(d, sender, payload),
-          receive: async (d, m) =>
-            (await inner.receive(d, m)).filter((delivery) => Number(delivery.id) > hiddenUpTo),
-        };
-        const sent = async () => inner.receive(DOCUMENT_ID, "x");
-        const cut = async () => {
-          hiddenUpTo = Number((await sent()).at(-1)?.id ?? -1);
-        };
-        return { port, sent, cut };
-      }
-
-      async function settle(...engines: DocumentEngine[]) {
-        for (let round = 0; round < 4; round++) {
-          for (const engine of engines) {
-            await engine.sync();
-            await engine.flush();
-          }
-        }
-      }
-
-      /** Alice's laptop granted bob `write` (1) and carol `read` (2), then went off; the history is gone. */
-      async function laptopGoneOff() {
-        const { port, sent, cut } = historyCutPort();
-        const laptop = await DocumentEngine.create(
-          DOCUMENT_ID,
-          "alice",
-          port,
-          undefined,
-          AS_ALICE_NOW,
-        );
-        await laptop.setMembership("bob", "write"); // 1
-        await laptop.setMembership("carol", "read"); // 2
-        laptop.edit((fragment) => insertPlainText(fragment, 0, "content"));
-        const bobErrors: unknown[] = [];
-        const bob = await DocumentEngine.join(
-          DOCUMENT_ID,
-          "bob",
-          port,
-          (error) => bobErrors.push(error),
-          AS_ALICE_NOW,
-        );
-        await settle(laptop, bob);
-        const laptopState = laptop.controlState;
-        laptop.dispose();
-        await cut();
-        const tabletErrors: unknown[] = [];
-        const tabletStates: PersistedControlState[] = [];
-        const tablet = await DocumentEngine.join(
-          DOCUMENT_ID,
-          "alice",
-          port,
-          (error) => tabletErrors.push(error),
-          {
-            ...AS_ALICE_NOW,
-            onControlStateChange: (state) => tabletStates.push(structuredClone(state)),
-          },
-        );
-        return { port, sent, cut, laptopState, bob, bobErrors, tablet, tabletErrors, tabletStates };
-      }
-
-      it("issues nothing, persists nothing and is not bootstrapped by another member's answer", async () => {
-        const { sent, bob, bobErrors, tablet, tabletStates } = await laptopGoneOff();
-        await settle(tablet, bob); // bob answers with content, and no control state (RSY-8)
-        expect(getPlainText(tablet.fragment)).toBe("content");
-        expect(tablet.controlStateKnown).toBe(false);
-        expect(tablet.hasCompletedBootstrap).toBe(false);
-        expect(tabletStates).toEqual([]);
-
-        const sentBefore = (await sent()).length;
-        const refusal = await tablet
-          .setMembership("dave", "write")
-          .catch((error: unknown) => error);
-        expect(refusal).toBeInstanceOf(ControlFrameRejectedError);
-        expect((refusal as ControlFrameRejectedError).reason).toBe("control-state-unknown");
-        for (const action of [() => tablet.closeDocument(), () => tablet.setSyncPolicy({})]) {
-          const other = await action().catch((error: unknown) => error);
-          expect((other as ControlFrameRejectedError).reason).toBe("control-state-unknown");
-        }
-        expect((await sent()).length).toBe(sentBefore); // no number reused
-        expect(tablet.permissionOf("dave")).toBeUndefined();
-        await settle(tablet, bob);
-        expect(bobErrors).toEqual([]);
-        expect(bob.permissionOf("carol")).toBe("read");
-      });
-
-      it("answers without a snapshot, so neither a joiner nor another such device takes an empty one", async () => {
-        const { port, laptopState, bob, tablet } = await laptopGoneOff();
-        await settle(tablet, bob);
-        const carol = await DocumentEngine.join(
-          DOCUMENT_ID,
-          "carol",
-          port,
-          undefined,
-          AS_ALICE_NOW,
-        );
-        const phone = await DocumentEngine.join(
-          DOCUMENT_ID,
-          "alice",
-          port,
-          undefined,
-          AS_ALICE_NOW,
-        );
-        await settle(tablet, bob, carol, phone);
-        const answers = (await port.receive(DOCUMENT_ID, "x"))
-          .filter((d) => d.sender === "alice")
-          .map((d) => JSON.parse(d.payload))
-          .filter((frame) => frame.kind === "resync-response");
-        expect(answers.length).toBeGreaterThan(0);
-        expect(answers.map((frame) => frame.control)).toEqual(answers.map(() => null));
-        expect(getPlainText(carol.fragment)).toBe("content"); // the content still comes
-        expect(carol.hasCompletedBootstrap).toBe(false);
-        expect(carol.mayEdit).toBe(false); // carol is read-only, which only the laptop knows
-        expect(phone.controlStateKnown).toBe(false);
-
-        // The laptop comes back with its persisted state and answers.
-        const laptop = await DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, {
-          ...AS_ALICE_NOW,
-          controlState: laptopState,
-        });
-        await carol.requestResync();
-        await settle(laptop, carol);
-        expect(carol.hasCompletedBootstrap).toBe(true);
-        expect(carol.permissionOf("carol")).toBe("read");
-        expect(carol.mayEdit).toBe(false);
-      });
-
-      it("learns the control state from another device of the creator, then persists it and issues after it", async () => {
-        const { laptopState, port, cut, bob, bobErrors, tablet, tabletStates } =
-          await laptopGoneOff();
-        await settle(tablet, bob);
-        await cut(); // the laptop does not see the tablet's first request, so it does not answer it
-        const laptop = await DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, {
-          ...AS_ALICE_NOW,
-          controlState: laptopState,
-        });
-        await laptop.setMembership("erin", "read"); // 3, which the tablet sees without 1 and 2
-        await tablet.sync();
-        expect(tablet.controlStateKnown).toBe(false);
-        expect(tabletStates).toEqual([]); // a frame applied, still nothing to persist
-
-        // Restarted, the tablet finds nothing persisted and joins without control state again;
-        // this time the laptop is there to answer.
-        tablet.dispose();
-        const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, {
-          ...AS_ALICE_NOW,
-          onControlStateChange: (state) => tabletStates.push(structuredClone(state)),
-        });
-        await settle(laptop, restarted);
-        expect(restarted.controlStateKnown).toBe(true);
-        expect(restarted.hasCompletedBootstrap).toBe(true);
-        expect(restarted.controlSequence).toBe(3);
-        expect(restarted.permissionOf("carol")).toBe("read");
-        expect(tabletStates.at(-1)?.sequence).toBe(3); // what a restart of the tablet resumes from
-
-        await restarted.setMembership("dave", "write"); // 4
-        await settle(restarted, bob, laptop);
-        expect(bob.permissionOf("dave")).toBe("write");
-        expect(bob.permissionOf("erin")).toBe("read");
-        expect(laptop.controlSequence).toBe(4);
-        expect(bobErrors).toEqual([]);
-      });
-
-      it("completes its bootstrap once it has read the creator's frames from 1, even if the answer came first", async () => {
-        const inner = new InMemoryMessengerPort();
-        let hideControlFromTablet = false;
-        let laptopsLastId = Number.POSITIVE_INFINITY;
-        // Once the laptop is off, the tablet is the only one reading as "alice". It never sees
-        // the laptop's answer to bob, whose snapshot would tell it the control state at once.
-        const hidden = (delivery: Delivery) => {
-          const kind = JSON.parse(delivery.payload).kind;
-          return (
-            (hideControlFromTablet && kind === "control") ||
-            (kind === "resync-response" &&
-              delivery.sender === "alice" &&
-              Number(delivery.id) <= laptopsLastId)
-          );
-        };
-        const port: MessengerPort = {
-          createDocument: (d, c) => inner.createDocument(d, c),
-          listChannels: (m) => inner.listChannels(m),
-          transportProfile: () => inner.transportProfile(),
-          send: (d, sender, payload) => inner.send(d, sender, payload),
-          receive: async (d, m) =>
-            (await inner.receive(d, m)).filter(
-              (delivery) =>
-                !(m === "alice" && laptopsLastId !== Number.POSITIVE_INFINITY && hidden(delivery)),
-            ),
-        };
-        const laptop = await DocumentEngine.create(
-          DOCUMENT_ID,
-          "alice",
-          port,
-          undefined,
-          AS_ALICE_NOW,
-        );
-        await laptop.setMembership("bob", "write"); // 1
-        await laptop.setMembership("carol", "read"); // 2
-        laptop.edit((fragment) => insertPlainText(fragment, 0, "content"));
-        const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE_NOW);
-        await settle(laptop, bob);
-        laptop.dispose();
-        laptopsLastId = Number((await inner.receive(DOCUMENT_ID, "x")).at(-1)?.id);
-
-        hideControlFromTablet = true; // the control frames arrive late
-        const tablet = await DocumentEngine.join(
-          DOCUMENT_ID,
-          "alice",
-          port,
-          undefined,
-          AS_ALICE_NOW,
-        );
-        await settle(tablet, bob);
-        expect(getPlainText(tablet.fragment)).toBe("content"); // bob's answer
-        expect(tablet.hasCompletedBootstrap).toBe(false);
-
-        hideControlFromTablet = false;
-        await tablet.sync();
-        expect(tablet.controlStateKnown).toBe(true);
-        expect(tablet.hasCompletedBootstrap).toBe(true);
-        expect(tablet.controlSequence).toBe(2);
-      });
-
-      it("proceeds when told to, persists from then on, and is bootstrapped by the answer it had", async () => {
-        const { bob, tablet, tabletStates } = await laptopGoneOff();
-        await settle(tablet, bob);
-        tablet.proceedWithUnknownControlState(); // the person accepted that a change may conflict
-        expect(tablet.controlStateKnown).toBe(true);
-        expect(tablet.hasCompletedBootstrap).toBe(true);
-        expect(tabletStates).toHaveLength(1);
-
-        await tablet.setMembership("dave", "write"); // issued as 1: the risk the person accepted
-        expect(tablet.controlSequence).toBe(1);
-        expect(() => bob.proceedWithUnknownControlState()).toThrow(/not the creator/);
-      });
-    });
-
-    /**
-     * A member on several devices (#31, option B; RSY-6, RSY-8, RSY-12, CTL-11, CTL-13): a
-     * device brings another device of its own member up to date, its control state included,
-     * so it need not wait for the creator. Nobody else takes that control state.
-     */
-    describe("a member on several devices", () => {
-      async function phoneOnline(permission: "read" | "write") {
-        const port = new InMemoryMessengerPort();
-        const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
-        await alice.setMembership("bob", permission);
-        alice.edit((fragment) => insertPlainText(fragment, 0, "from alice"));
-        const phone = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
-        await alice.sync(); // answers the phone; from here on alice is offline
-        await phone.sync();
-        expect(phone.hasCompletedBootstrap).toBe(true);
-        return { port, alice, phone };
-      }
-
-      it("a new device is brought up to date by its other device while the creator is offline, and may write", async () => {
-        const { port, phone } = await phoneOnline("write");
-        const laptop = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
-        expect(laptop.hasCompletedBootstrap).toBe(false);
-        await phone.sync(); // answers its own member's other device
-        await laptop.sync();
-
-        expect(laptop.hasCompletedBootstrap).toBe(true);
-        expect(laptop.permissionOf("bob")).toBe("write");
-        expect(getPlainText(laptop.fragment)).toBe("from alice");
-        laptop.edit((fragment) => insertPlainText(fragment, 0, "laptop: "));
-        await phone.sync();
-        expect(getPlainText(phone.fragment)).toBe("laptop: from alice");
-      });
-
-      it("a read-only member's new device learns it is read-only from its other device", async () => {
-        const { port, phone } = await phoneOnline("read");
-        const laptop = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
-        await phone.sync();
-        await laptop.sync();
-
-        expect(laptop.hasCompletedBootstrap).toBe(true);
-        expect(laptop.permissionOf("bob")).toBe("read");
-        const errors: unknown[] = [];
-        const refusing = await DocumentEngine.join(
-          DOCUMENT_ID,
-          "bob",
-          port,
-          (e) => errors.push(e),
-          {
-            ...AS_ALICE,
-          },
-        );
-        await phone.sync();
-        await refusing.sync();
-        refusing.edit((fragment) => insertPlainText(fragment, 0, "not allowed"));
-        await refusing.flush().catch(() => {});
-        expect(errors.some((e) => e instanceof SendRefusedError && e.reason === "read-only")).toBe(
-          true,
-        );
-      });
-
-      it("a device that lacks a control frame passes on content only, and does not bootstrap the other", async () => {
-        const inner = new InMemoryMessengerPort();
-        let hidden = new Set<string>();
-        const port: MessengerPort = {
-          createDocument: (d, c) => inner.createDocument(d, c),
-          listChannels: (m) => inner.listChannels(m),
-          transportProfile: () => inner.transportProfile(),
-          send: (d, sender, payload) => inner.send(d, sender, payload),
-          receive: async (d, m) => (await inner.receive(d, m)).filter((x) => !hidden.has(x.id)),
-        };
-        const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
-        await alice.setMembership("bob", "write"); // 1
-        const phone = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
-        await alice.sync();
-        await phone.sync();
-        await alice.setMembership("carol", "read"); // 2: the phone will not see it
-        hidden = new Set((await inner.receive(DOCUMENT_ID, "x")).map((x) => x.id).slice(-1));
-        await alice.setMembership("dave", "read"); // 3
-        alice.edit((fragment) => insertPlainText(fragment, 0, "text"));
-        await phone.sync();
-        expect(phone.controlGaps).toEqual([2]);
-
-        const laptop = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
-        await phone.sync();
-        await laptop.sync();
-        expect(getPlainText(laptop.fragment)).toBe("text"); // content, yes
-        expect(laptop.hasCompletedBootstrap).toBe(false); // but it waits for the creator
-      });
-
-      it("a control snapshot from any other member is ignored, even as an answer to one's own request", async () => {
-        const { port, alice } = await phoneOnline("write");
-        await alice.setMembership("carol", "read");
-        const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", port, undefined, AS_ALICE);
-        await alice.sync();
-        await carol.sync();
-        expect(carol.permissionOf("carol")).toBe("read");
-
-        await carol.requestResync();
-        const request = (await port.receive(DOCUMENT_ID, "x"))
-          .filter((d) => d.sender === "carol")
-          .map((d) => JSON.parse(d.payload))
-          .filter((frame) => frame.kind === "resync-request")
-          .at(-1);
-        // bob, another member, answers carol's request with control state granting carol write.
-        await port.send(
-          DOCUMENT_ID,
-          "bob",
-          encodeResyncResponseFrame({
-            documentId: DOCUMENT_ID,
-            respondsTo: request.requestId,
-            update: encodeUpdate(createDocument()),
-            attribution: null,
-            control: {
-              profile: "yjs-paragraphs/1",
-              sequence: 99,
-              closed: false,
-              members: { bob: "write", carol: "write" },
-            },
-          }),
-        );
-        await carol.sync();
-        expect(carol.permissionOf("carol")).toBe("read");
-        expect(carol.controlSequence).toBeLessThan(99);
-      });
-
-      it("a new device of the creator is brought up to date by its other device and continues after its number", async () => {
-        const port = new NoHistoryMessengerPort(); // the tablet can learn nothing from history
-        // Answers right away, so the desktop answers the tablet and then bob without waiting.
-        const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, {
-          ...AS_ALICE,
-          resyncResponseThrottleMs: 0,
-        });
-        await alice.setMembership("bob", "write"); // 1
-        await alice.setMembership("carol", "read"); // 2
-        await alice.sync();
-
-        const tablet = await DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
-        expect(tablet.controlSequence).toBe(0);
-        await alice.sync(); // the desktop answers the tablet, its own member's other device
-        await tablet.sync();
-        expect(tablet.permissionOf("carol")).toBe("read");
-        expect(tablet.controlSequence).toBe(2);
-
-        await tablet.setMembership("carol", "write"); // 3
-        const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
-        await alice.sync();
-        await bob.sync();
-        expect(bob.permissionOf("carol")).toBe("write");
-        expect(bob.controlSequence).toBe(3);
-      });
-    });
-
-    it("reports every change to the control state, so the application can persist it", async () => {
-      const messenger = new InMemoryMessengerPort();
-      const seen: number[] = [];
-      const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
-        ...AS_ALICE,
-        onControlStateChange: (state) =>
-          seen.push(state.pendingControl === undefined ? state.sequence : -state.sequence - 1),
-      });
-      await alice.setMembership("bob", "write");
-      await alice.closeDocument();
-
-      // Each frame is announced as pending (negative here) before it is sent, then committed.
-      expect(seen).toEqual([-1, 1, -2, 2]);
-      expect(alice.controlState).toMatchObject({
-        sequence: 2,
-        closed: true,
-        members: { bob: "write" },
-      });
-    });
+    await phone.sync();
+    await refusing.sync();
+    refusing.edit((fragment) => insertPlainText(fragment, 0, "not allowed"));
+    await refusing.flush().catch(() => {});
+    expect(errors.some((e) => e instanceof SendRefusedError && e.reason === "read-only")).toBe(
+      true,
+    );
   });
 });

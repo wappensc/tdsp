@@ -29,8 +29,12 @@ export interface ResyncStatus {
   readonly expiresAt: number | null;
   /** Whether the outstanding (or, when idle, the most recent) request was made by the client itself rather than a person. */
   readonly automatic: boolean;
-  /** What became of the most recent request: someone answered it, or nobody did before it expired. `null` before any. */
-  readonly lastOutcome: "answered" | "unanswered" | null;
+  /**
+   * What became of the most recent request: someone answered it, nobody did before it expired, or it
+   * could not be sent (SND-10) — a request is no change, so its failure is no error, and this is
+   * where it shows. `null` before any.
+   */
+  readonly lastOutcome: "answered" | "unanswered" | "failed" | null;
 }
 
 export class ResyncGate {
@@ -38,7 +42,7 @@ export class ResyncGate {
   #outstanding: { at: number; expiresAt: number; automatic: boolean } | null = null;
   #lastRequestAt: number | null = null;
   #lastAutomatic = false;
-  #lastOutcome: "answered" | "unanswered" | null = null;
+  #lastOutcome: ResyncStatus["lastOutcome"] = null;
 
   constructor(now: () => number = () => Date.now()) {
     this.#now = now;
@@ -74,10 +78,27 @@ export class ResyncGate {
     return { sent: true };
   }
 
-  /** The send failed: nothing went out, so nothing is outstanding and the floor is not used up. */
+  /**
+   * The request went out — it may have waited in the send scheduler for the floor first: its
+   * expiry, and the floor before the next one, count from now (RSY-3, RSY-4). Nothing changes
+   * if it was answered or expired meanwhile.
+   */
+  sent(expiryMs: number): void {
+    const now = this.#now();
+    if (this.#outstanding !== null) {
+      this.#outstanding = { ...this.#outstanding, at: now, expiresAt: now + expiryMs };
+    }
+    this.#lastRequestAt = now;
+  }
+
+  /**
+   * The send failed: nothing went out, so nothing is outstanding and the floor is not used up (RSY-4);
+   * the outcome is `failed` (SND-10).
+   */
   abort(previousRequestAt: number | null): void {
     this.#outstanding = null;
     this.#lastRequestAt = previousRequestAt;
+    this.#lastOutcome = "failed";
   }
 
   /** When the most recent request was made, for `abort()`. */

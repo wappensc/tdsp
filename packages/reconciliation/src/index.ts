@@ -101,15 +101,98 @@ export function observeFragment(fragment: ReconciledFragment, listener: () => vo
 /** Subscribes to every local and remote change; returns an unsubscribe function. */
 export function observeUpdates(
   doc: ReconciledDocument,
-  listener: (update: Uint8Array, origin: unknown) => void,
+  listener: (update: Uint8Array, origin: unknown, transaction: Y.Transaction) => void,
 ): () => void {
-  doc.on("update", listener);
-  return () => doc.off("update", listener);
+  const handler = (update: Uint8Array, origin: unknown, _doc: Y.Doc, transaction: Y.Transaction) =>
+    listener(update, origin, transaction);
+  doc.on("update", handler);
+  return () => doc.off("update", handler);
+}
+
+/**
+ * The names of the top-level shared types a transaction changed: every changed type leads, through
+ * its items' parents, to one of them (verified for inserts, deletions and formatting, nested types
+ * and mixed transactions, in this package's tests).
+ */
+export function changedRoots(doc: ReconciledDocument, transaction: Y.Transaction): Set<string> {
+  const names = new Map<unknown, string>();
+  for (const [name, type] of doc.share) {
+    names.set(type, name);
+  }
+  const roots = new Set<string>();
+  for (const changed of transaction.changed.keys()) {
+    let type = changed;
+    while (type._item !== null) {
+      type = type._item.parent as typeof changed;
+    }
+    const name = names.get(type);
+    if (name !== undefined) {
+      roots.add(name);
+    }
+  }
+  return roots;
 }
 
 /** Runs `mutator` as one reconciliation transaction, tagged with `origin` if given. */
 export function transact(doc: ReconciledDocument, mutator: () => void, origin?: unknown): void {
   doc.transact(mutator, origin);
+}
+
+/**
+ * What `doc` deleted, canonically (Appendix A): its state since its own state vector, an update
+ * of no structs and its whole delete set, the same bytes for the same state whatever the order
+ * the updates came in, merged or not, garbage-collected or not (verified for each of these).
+ */
+export function encodeDeletions(doc: ReconciledDocument): Uint8Array {
+  return Y.encodeStateAsUpdate(doc, Y.encodeStateVector(doc));
+}
+
+/**
+ * What `doc` deleted of the items `stateVector` counts (Appendix A): `encodeDeletions`' encoding, with
+ * each client's ranges cut at that client's clock in `stateVector` and a client left with none dropped.
+ * With `doc`'s own state vector it is `encodeDeletions` byte for byte, since a replica deletes only
+ * items it holds. What a receiver that holds more compares with a sender's state digest (LOS-12).
+ * Throws if `stateVector` is not a state vector.
+ */
+export function encodeDeletionsWithin(
+  doc: ReconciledDocument,
+  stateVector: Uint8Array,
+): Uint8Array {
+  const counted = Y.decodeStateVector(stateVector);
+  const clients: [number, { clock: number; len: number }[]][] = [];
+  for (const [client, items] of Y.decodeUpdate(encodeDeletions(doc)).ds.clients) {
+    const limit = counted.get(client) ?? 0;
+    const kept = items
+      .filter((item) => item.clock < limit)
+      .map((item) => ({ clock: item.clock, len: Math.min(item.len, limit - item.clock) }));
+    if (kept.length > 0) {
+      clients.push([client, kept]);
+    }
+  }
+  // As Yjs writes a delete set in update encoding version 1: no structs, the number of clients,
+  // then each client in descending order of its id with its ranges, every number a varuint.
+  clients.sort((a, b) => b[0] - a[0]);
+  const bytes: number[] = [0];
+  writeVarUint(bytes, clients.length);
+  for (const [client, items] of clients) {
+    writeVarUint(bytes, client);
+    writeVarUint(bytes, items.length);
+    for (const item of items) {
+      writeVarUint(bytes, item.clock);
+      writeVarUint(bytes, item.len);
+    }
+  }
+  return Uint8Array.from(bytes);
+}
+
+/** A variable-length unsigned integer as Yjs (lib0) writes one: seven bits a byte, lowest first. */
+function writeVarUint(bytes: number[], value: number): void {
+  let rest = value;
+  while (rest > 0x7f) {
+    bytes.push(0x80 | (rest & 0x7f));
+    rest = Math.floor(rest / 128);
+  }
+  bytes.push(rest);
 }
 
 export function encodeUpdate(doc: ReconciledDocument): Uint8Array {
@@ -128,7 +211,7 @@ export function encodeStateVector(doc: ReconciledDocument): Uint8Array {
  * Whether `doc` holds any update `remoteStateVector` does not already
  * account for — the gate `document-protocol`'s resync-response logic
  * uses to avoid answering a request with nothing new to offer
- * (SPECIFICATION.md RSY-7). Compares state
+ * (SPECIFICATION.md RSY-17). Compares state
  * vectors directly (per-client clock comparison) rather than checking
  * whether `encodeUpdateSince`'s output happens to be the empty-update
  * encoding, so this does not depend on that encoding's byte-level shape.
@@ -173,15 +256,44 @@ export function lacksUpdatesOf(doc: ReconciledDocument, remoteStateVector: Uint8
 }
 
 /**
- * The client ids `doc` is waiting on: it holds later updates from each and is missing
- * an earlier one (Yjs's `pendingStructs.missing`, verified to name the
- * client and the clock). Empty when nothing is pending. Only ever an *indication*: a
- * gap that is a late predecessor rather than a loss looks identical until the
- * predecessor arrives, which is why a caller has to wait before it believes one.
+ * Whether `stateVector` holds every item `update` inserts: for each client the update carries,
+ * the state vector reaches the clock after its last struct (`Y.parseUpdateMeta`'s `to`). What an
+ * update deletes no state vector counts, so an update that only deletes is held by every one.
+ */
+export function stateVectorHolds(stateVector: Uint8Array, update: Uint8Array): boolean {
+  const held = Y.decodeStateVector(stateVector);
+  for (const [client, clock] of Y.parseUpdateMeta(update).to) {
+    if ((held.get(client) ?? 0) < clock) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * The client ids `doc` is waiting on (PRF-1 item 2, Appendix A): it holds later updates from each
+ * and is missing an earlier one (Yjs's `pendingStructs.missing`, verified to name the client and
+ * the clock), or it holds a deletion of items of theirs it has not received (`pendingDs`, a delete
+ * set in update encoding version 2) — an update that only deletes is held as well, and shows no
+ * other gap. Empty when nothing is pending. Only ever an *indication*: a gap that is a late
+ * predecessor rather than a loss looks identical until the predecessor arrives, which is why a
+ * caller has to wait before it believes one.
  */
 export function pendingGapClients(doc: ReconciledDocument): number[] {
+  const clients = new Set<number>();
   const pending = doc.store.pendingStructs;
-  return pending === null ? [] : [...pending.missing.keys()];
+  if (pending !== null) {
+    for (const client of pending.missing.keys()) {
+      clients.add(client);
+    }
+  }
+  const pendingDeletions = doc.store.pendingDs;
+  if (pendingDeletions !== null) {
+    for (const client of Y.decodeUpdateV2(pendingDeletions).ds.clients.keys()) {
+      clients.add(client);
+    }
+  }
+  return [...clients];
 }
 
 /** The client ids that authored the insertions in `update`; how a caller learns which client belongs to which sender. */
@@ -207,6 +319,69 @@ export function isEmptyStateVector(stateVector: Uint8Array): boolean {
   return stateVector.length === 1 && stateVector[0] === 0;
 }
 
+/**
+ * Whether `update` reads as exactly one Yjs update of encoding version 1, every struct and the whole
+ * delete set and no byte after them, without applying it (PRF-1 items 1 and 9, Appendix A).
+ * `Y.applyUpdate` integrates an update's structs before it reads its delete set, so bytes that fail
+ * there leave part of themselves in the document; checked first, nothing of them is applied
+ * (FRM-6). Yjs reads an update as far as it goes and ignores what follows; a byte after it is
+ * refused, so that one byte string has one reading (§4.4).
+ */
+export function isUpdate(update: Uint8Array): boolean {
+  // Yjs's own reader, given a decoder whose position this one can see afterwards.
+  let read: { readonly arr: Uint8Array; readonly pos: number } | undefined;
+  class Watched extends Y.UpdateDecoderV1 {
+    constructor(decoder: ConstructorParameters<typeof Y.UpdateDecoderV1>[0]) {
+      super(decoder);
+      read = decoder;
+    }
+  }
+  try {
+    Y.decodeUpdateV2(update, Watched);
+  } catch {
+    return false;
+  }
+  return read !== undefined && read.arr === update && read.pos === update.length;
+}
+
+/**
+ * Whether `stateVector` reads as a Yjs state vector to its last byte (PRF-1 items 3 and 9, Appendix A):
+ * the number of entries, then a client id and a clock for each, every one a variable-length
+ * unsigned integer. A responder keeps a request to answer later (RSY-9), so a vector that fails
+ * only when it is compared would fail every answer after it.
+ */
+export function isStateVector(stateVector: Uint8Array): boolean {
+  try {
+    Y.decodeStateVector(stateVector);
+  } catch {
+    return false;
+  }
+  let at = 0;
+  const readVarUint = (): number | undefined => {
+    let value = 0;
+    let factor = 1;
+    while (at < stateVector.length) {
+      const byte = stateVector[at++] as number;
+      value += (byte & 0x7f) * factor;
+      if (byte < 0x80) {
+        return value;
+      }
+      factor *= 128;
+    }
+    return undefined;
+  };
+  const entries = readVarUint();
+  if (entries === undefined) {
+    return false;
+  }
+  for (let i = 0; i < entries * 2; i += 1) {
+    if (readVarUint() === undefined) {
+      return false;
+    }
+  }
+  return at === stateVector.length;
+}
+
 export function applyUpdate(doc: ReconciledDocument, update: Uint8Array, origin?: unknown): void {
   Y.applyUpdate(doc, update, origin);
 }
@@ -230,3 +405,4 @@ export {
   observePlainTextChanges,
   type PlainTextChange,
 } from "./attribution";
+export { splitUpdate, UnsplittableUpdateError } from "./split";

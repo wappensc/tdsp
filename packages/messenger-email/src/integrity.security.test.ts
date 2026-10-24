@@ -272,7 +272,7 @@ describe("describeKeyWarnings", () => {
     expect(warning?.text).toContain("trust on first use");
   });
 
-  it("never calls a key verified: a match is consistency, not verification (EML-8)", () => {
+  it("never calls a key verified: a match is consistency, not verification (EML-8, EML-13)", () => {
     const states = ["match", "missing-locally", "different-locally"] as const;
     for (const comparison of states) {
       const badge = describeKeyComparison(entry({ isCreator: true, comparison }));

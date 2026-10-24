@@ -1,6 +1,8 @@
 import {
   applyUpdate,
   createDocument,
+  encodeDeletions,
+  encodeDeletionsWithin,
   encodeStateVector,
   encodeUpdate,
   encodeUpdateSince,
@@ -9,15 +11,19 @@ import {
   getPlainText,
   hasUpdatesSince,
   isEmptyStateVector,
+  isStateVector,
+  isUpdate,
   lacksUpdatesOf,
   observePlainTextChanges,
   type PlainTextChange,
   pendingGapClients,
   type ReconciledDocument,
+  splitUpdate,
+  stateVectorHolds,
   transact,
   updateClientIds,
 } from "@tdsp/reconciliation";
-import { isProfileId } from "./framing";
+import { type Frame, FrameDecodeError, isProfileId } from "./framing";
 
 /**
  * A document's plain-text projection (SPECIFICATION.md PRF-1, item 6): what attribution counts
@@ -74,6 +80,20 @@ export interface DocumentProfile {
   createEmpty(): ReconciledDocument;
   /** Applies an update in any order, holding one whose predecessors are missing (item 1). */
   applyUpdate(document: ReconciledDocument, update: Uint8Array, origin: unknown): void;
+  /**
+   * Whether `update` reads completely as exactly one update of this profile, no byte after it,
+   * without applying it (PRF-1, item 9): what the engine checks before it applies anything of a
+   * frame (FRM-6), so that bytes that fail halfway leave nothing behind. Optional: without it the
+   * engine uses `isUpdate`, which reads any Yjs update of version 1.
+   */
+  isUpdate?(update: Uint8Array): boolean;
+  /**
+   * Whether `stateVector` reads completely as exactly one state vector of this profile, no byte
+   * after it (PRF-1, items 3 and 9): checked before a frame that carries one is handled or kept
+   * (FRM-6). Optional: without it the engine uses `isStateVector`, which reads a Yjs state vector to
+   * its last byte.
+   */
+  isStateVector?(stateVector: Uint8Array): boolean;
   /** The whole state as one update. */
   encodeState(document: ReconciledDocument): Uint8Array;
   /** The updates `stateVector` lacks; with the empty state vector, the whole state (item 4). */
@@ -90,12 +110,114 @@ export interface DocumentProfile {
   /** Whose updates one update carries, as the CRDT names them. */
   updateClientIds(update: Uint8Array): number[];
   /**
+   * Whether `stateVector` holds `update`, as the state vector summarises it (PRF-1, item 3): what a heartbeat holds of an edit,
+   * which ends the silence the edit left open (LOS-16). Optional: without it the engine uses
+   * `stateVectorHolds`, which reads any Yjs update of version 1.
+   */
+  holdsUpdate?(stateVector: Uint8Array, update: Uint8Array): boolean;
+  /**
+   * What the replica deleted, as one canonical encoding (PRF-1, item 8): equal for equal states,
+   * whatever the order updates came in. Its digest is what a state vector does not show (LOS-12).
+   * Optional: without it the engine uses `encodeDeletions`, the encoding Appendix A defines.
+   */
+  encodeDeletions?(document: ReconciledDocument): Uint8Array;
+  /**
+   * What the replica deleted of the items `stateVector` counts, in the same encoding (PRF-1, item
+   * 8): within the replica's own state vector exactly `encodeDeletions`. What a receiver that holds
+   * more compares with a sender's state digest (LOS-12). Optional: without it the engine uses
+   * `encodeDeletionsWithin`, Appendix A's — unless the profile brings its own `encodeDeletions`, and
+   * then it compares digests only where the state vectors are equal.
+   */
+  encodeDeletionsWithin?(document: ReconciledDocument, stateVector: Uint8Array): Uint8Array;
+  /**
+   * The pieces of an update, each at most `maxBytes` long: each a valid update, applicable in any
+   * order and with duplicates, one without its predecessors held (PRF-1). Throws
+   * `UnsplittableUpdateError` for an indivisible unit larger than a piece (SND-19). Optional:
+   * without it the engine uses `splitUpdate`, which splits any Yjs update of version 1.
+   */
+  splitUpdate?(update: Uint8Array, maxBytes: number): Uint8Array[];
+  /**
    * The plain-text projection (PRF-1, item 6). Optional: without one the engine uses
    * `PARAGRAPH_PROJECTION`, which fits a profile keeping paragraphs of text in `content`, as
    * one that adds headings, lists or marks to `yjs-paragraphs/1` does. A profile whose text
    * lives elsewhere, or counts more than paragraphs, brings its own.
    */
   readonly projection?: ProfileProjection;
+}
+
+/** How a profile tells whether a state vector holds an update (PRF-1, item 3): its own way, or the Yjs one. */
+export function holderOf(
+  profile: DocumentProfile,
+): (stateVector: Uint8Array, update: Uint8Array) => boolean {
+  return profile.holdsUpdate ?? stateVectorHolds;
+}
+
+/** How a profile encodes what a replica deleted (PRF-1, item 8): its own way, or Appendix A's. */
+export function deletionsOf(
+  profile: DocumentProfile,
+): (document: ReconciledDocument) => Uint8Array {
+  return profile.encodeDeletions ?? encodeDeletions;
+}
+
+/**
+ * How a profile encodes what a replica deleted of the items a state vector counts (PRF-1, item 8):
+ * its own way, Appendix A's, or — for a profile that encodes deletions its own way but not these —
+ * none, so that digests are compared at equal state vectors only.
+ */
+export function deletionsWithinOf(
+  profile: DocumentProfile,
+): ((document: ReconciledDocument, stateVector: Uint8Array) => Uint8Array) | undefined {
+  if (profile.encodeDeletionsWithin !== undefined) {
+    return profile.encodeDeletionsWithin;
+  }
+  return profile.encodeDeletions === undefined ? encodeDeletionsWithin : undefined;
+}
+
+/** How a profile reads an update and a state vector without applying them (FRM-6): its own way, or the Yjs one. */
+export function readerOf(profile: DocumentProfile): {
+  readonly isUpdate: (update: Uint8Array) => boolean;
+  readonly isStateVector: (stateVector: Uint8Array) => boolean;
+} {
+  return {
+    isUpdate: profile.isUpdate ?? isUpdate,
+    isStateVector: profile.isStateVector ?? isStateVector,
+  };
+}
+
+/**
+ * Rejects a frame whose update or state vector the document's profile cannot read, as
+ * `invalid-field` (§4.4, FRM-6, FRM-7, PRF-1 item 9), before anything of it is applied or kept: a
+ * CRDT may apply part of an update before it fails on the rest, and a request kept to answer later
+ * (RSY-9) whose state vector fails only when compared would fail every answer after it. Bytes after
+ * a complete update or state vector are not one the profile reads (§4.4).
+ */
+export function checkProfileReads(frame: Frame, profile: DocumentProfile): void {
+  const reader = readerOf(profile);
+  const update =
+    frame.kind === "edit" || frame.kind === "resync-response" ? frame.update : undefined;
+  if (update !== undefined && !reader.isUpdate(update)) {
+    throw new FrameDecodeError(
+      "invalid-field",
+      `the ${frame.kind}'s update is not one of the profile ${profile.id}`,
+    );
+  }
+  const stateVector =
+    frame.kind === "edit" || frame.kind === "decline" || frame.kind === "control"
+      ? null
+      : frame.stateVector;
+  if (stateVector !== null && !reader.isStateVector(stateVector)) {
+    throw new FrameDecodeError(
+      "invalid-field",
+      `the ${frame.kind}'s state vector is not one of the profile ${profile.id}`,
+    );
+  }
+}
+
+/** How a profile splits an update into pieces (PRF-1): its own way, or the Yjs one. */
+export function splitterOf(
+  profile: DocumentProfile,
+): (update: Uint8Array, maxBytes: number) => Uint8Array[] {
+  return profile.splitUpdate ?? splitUpdate;
 }
 
 /** The one profile this specification defines (Appendix A). */
@@ -110,6 +232,8 @@ const yjsParagraphs1: DocumentProfile = {
   },
   createEmpty: () => createDocument(),
   applyUpdate: (document, update, origin) => applyUpdate(document, update, origin),
+  isUpdate: (update) => isUpdate(update),
+  isStateVector: (stateVector) => isStateVector(stateVector),
   encodeState: (document) => encodeUpdate(document),
   encodeStateSince: (document, stateVector) => encodeUpdateSince(document, stateVector),
   encodeStateVector: (document) => encodeStateVector(document),
@@ -118,6 +242,10 @@ const yjsParagraphs1: DocumentProfile = {
   lacksUpdatesOf: (document, stateVector) => lacksUpdatesOf(document, stateVector),
   pendingGapClients: (document) => pendingGapClients(document),
   updateClientIds: (update) => updateClientIds(update),
+  holdsUpdate: (stateVector, update) => stateVectorHolds(stateVector, update),
+  encodeDeletions: (document) => encodeDeletions(document),
+  encodeDeletionsWithin: (document, stateVector) => encodeDeletionsWithin(document, stateVector),
+  splitUpdate: (update, maxBytes) => splitUpdate(update, maxBytes),
   projection: PARAGRAPH_PROJECTION,
 };
 

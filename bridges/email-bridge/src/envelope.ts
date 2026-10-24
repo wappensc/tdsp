@@ -96,7 +96,7 @@ export function encodeInvite(invite: InvitePayload): string {
  * pattern-checked, and unknown extra fields are simply dropped.
  */
 export function decodeInvite(text: string): InvitePayload | undefined {
-  // Deeper than any TDSP message may nest: not one, and never handed to the parser (§1.6).
+  // Deeper than any TDSP message may nest: not one, and never handed to the parser (§1.6, JSN-1).
   if (jsonTextTooDeep(text)) {
     return undefined;
   }
@@ -209,7 +209,7 @@ export function encodeEnvelope(envelope: EmailEnvelope): string {
 export function foreignEnvelopeVersion(
   text: string,
 ): { documentId: string; version: number } | undefined {
-  // Deeper than any TDSP message may nest: not one, and never handed to the parser (§1.6).
+  // Deeper than any TDSP message may nest: not one, and never handed to the parser (§1.6, JSN-1).
   if (jsonTextTooDeep(text)) {
     return undefined;
   }
@@ -231,7 +231,7 @@ export function foreignEnvelopeVersion(
 }
 
 export function decodeEnvelope(text: string): EmailEnvelope | undefined {
-  // Deeper than any TDSP message may nest: not one, and never handed to the parser (§1.6).
+  // Deeper than any TDSP message may nest: not one, and never handed to the parser (§1.6, JSN-1).
   if (jsonTextTooDeep(text)) {
     return undefined;
   }

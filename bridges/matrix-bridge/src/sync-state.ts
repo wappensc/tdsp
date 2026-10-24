@@ -91,7 +91,7 @@ function isReplaceRelation(content: unknown): boolean {
 /**
  * What a protocol event carries: the frame inline (`frame`, its JSON text as a string), or — for a frame too large
  * for an event body — a reference to a media file holding it (`attachment`, bindings/matrix.md §13.3).
- * Exactly one of the two; anything else is not a protocol event.
+ * Exactly one of the two (bindings/bridges.md BND-4); anything else is not a protocol event.
  */
 type FrameEnvelope =
   | { readonly documentId: string; readonly frame: string; readonly attachment?: undefined }

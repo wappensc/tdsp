@@ -388,8 +388,8 @@ export function describeKeyWarnings(keys: PgpKeys): readonly KeyWarning[] {
 export function describeKeyComparison(entry: KeyReportEntry): string {
   switch (entry.comparison) {
     case "match":
-      // Consistent with what the user held before — not a verification (SPECIFICATION.md
-      // EML-8): a keyring holds keys however they got there.
+      // Consistent with what the user held before — not a verification (bindings/email.md
+      // EML-8, EML-13): a keyring holds keys however they got there.
       return "same key as in your keyring — consistent, not verified by this";
     case "missing-locally":
       return "not in your keyring";

@@ -2,9 +2,7 @@ import type { TransportProfile } from "@tdsp/messenger-port";
 import { describe, expect, it } from "vitest";
 import {
   clampSyncPolicy,
-  decodeSyncPolicyParam,
   effectiveSyncPolicy,
-  encodeSyncPolicyParam,
   resolveSyncPolicy,
   syncPolicyFromJson,
   syncPolicyToJson,
@@ -27,6 +25,32 @@ describe("resolveSyncPolicy", () => {
     expect(policy.maxChars).toBe(Number.POSITIVE_INFINITY);
   });
 
+  it("falls back to the default for a value that is not finite, unless it may mean no limit (SND-1)", () => {
+    // An infinite floor, minimum or latency would starve every pending change, or every wait for evidence.
+    const policy = resolveSyncPolicy({
+      minIntervalMs: Number.POSITIVE_INFINITY,
+      maxIntervalMs: 60_000,
+      minChars: Number.POSITIVE_INFINITY,
+      expectedLatencyMs: Number.POSITIVE_INFINITY,
+    });
+    expect(policy).toEqual({
+      minIntervalMs: 0,
+      maxIntervalMs: 60_000,
+      minChars: 0,
+      maxChars: Number.POSITIVE_INFINITY,
+      expectedLatencyMs: 0,
+    });
+    // Where Infinity is how "no limit" is spelled inside the client, it stays.
+    expect(
+      resolveSyncPolicy({
+        maxIntervalMs: Number.POSITIVE_INFINITY,
+        maxChars: Number.POSITIVE_INFINITY,
+      }),
+    ).toEqual(resolveSyncPolicy());
+    // A value of another type, as an untyped caller may pass, is no number either.
+    expect(resolveSyncPolicy({ minIntervalMs: "5000" as never }).minIntervalMs).toBe(0);
+  });
+
   it("never lets maxIntervalMs sit below the floor — the floor wins", () => {
     const policy = resolveSyncPolicy({ minIntervalMs: 30_000, maxIntervalMs: 10_000 });
     expect(policy.maxIntervalMs).toBe(30_000);
@@ -43,36 +67,16 @@ describe("resolveSyncPolicy", () => {
   });
 });
 
-/** A transport shaped like the email provider profile: a floor of 15 s, 30 s suggested. */
+/** A transport shaped like the email bridge: a floor of 15 s, 30 s suggested (SND-16). */
 const EMAIL_LIKE: TransportProfile = {
   bounds: { minIntervalMs: 15_000, maxBytes: 100_000 },
-  profiles: [
-    {
-      id: "standard",
-      label: "Standard",
-      description: "",
-      values: {
-        minIntervalMs: 30_000,
-        maxIntervalMs: 120_000,
-        minChars: 0,
-        maxChars: null,
-        expectedLatencyMs: 60_000,
-      },
-    },
-    {
-      id: "patient",
-      label: "Patient",
-      description: "",
-      values: {
-        minIntervalMs: 60_000,
-        maxIntervalMs: 300_000,
-        minChars: 0,
-        maxChars: null,
-        expectedLatencyMs: 120_000,
-      },
-    },
-  ],
-  defaultProfile: "standard",
+  pacing: {
+    minIntervalMs: 30_000,
+    maxIntervalMs: 120_000,
+    minChars: 0,
+    maxChars: null,
+    expectedLatencyMs: 60_000,
+  },
 };
 
 describe("effectiveSyncPolicy", () => {
@@ -80,18 +84,49 @@ describe("effectiveSyncPolicy", () => {
     expect(effectiveSyncPolicy(undefined, undefined)).toEqual(resolveSyncPolicy());
   });
 
-  it("takes the transport's default profile when nothing was chosen", () => {
+  it("takes the transport's suggested pacing when nothing was chosen", () => {
     const policy = effectiveSyncPolicy(EMAIL_LIKE, undefined);
     expect(policy.minIntervalMs).toBe(30_000);
     expect(policy.maxIntervalMs).toBe(120_000);
     expect(policy.expectedLatencyMs).toBe(60_000);
-    expect(policy.minChars).toBe(0); // the profile's own value
+    expect(policy.minChars).toBe(0); // the suggestion's own value
   });
 
   it("lets what was chosen win over the transport's suggestion, value by value", () => {
     const policy = effectiveSyncPolicy(EMAIL_LIKE, { minIntervalMs: 45_000 });
     expect(policy.minIntervalMs).toBe(45_000);
     expect(policy.maxIntervalMs).toBe(120_000); // still the transport's
+  });
+
+  it("lays what was chosen over the transport's raw values, and only then makes them consistent (SND-16)", () => {
+    // The transport's minChars counts once the application gives a longest wait; made consistent
+    // on its own first, it would already have been dropped for want of one.
+    const minCharsOnly: TransportProfile = {
+      bounds: { minIntervalMs: null, maxBytes: null },
+      pacing: {
+        minIntervalMs: 0,
+        maxIntervalMs: null,
+        minChars: 50,
+        maxChars: null,
+        expectedLatencyMs: 0,
+      },
+    };
+    expect(effectiveSyncPolicy(minCharsOnly, { maxIntervalMs: 30_000 }).minChars).toBe(50);
+    // A suggested longest wait below the suggested floor is raised only if the floor that is run
+    // is above it: here the application's lower floor leaves the transport's 20 s standing.
+    const inverted: TransportProfile = {
+      bounds: { minIntervalMs: null, maxBytes: null },
+      pacing: {
+        minIntervalMs: 30_000,
+        maxIntervalMs: 20_000,
+        minChars: 0,
+        maxChars: null,
+        expectedLatencyMs: 0,
+      },
+    };
+    const policy = effectiveSyncPolicy(inverted, { minIntervalMs: 10_000 });
+    expect(policy.minIntervalMs).toBe(10_000);
+    expect(policy.maxIntervalMs).toBe(20_000);
   });
 
   it("does not let an explicit undefined erase the transport's suggestion", () => {
@@ -119,21 +154,13 @@ describe("effectiveSyncPolicy", () => {
   it("applies the bounds even to a transport with no suggestions of its own", () => {
     const boundsOnly: TransportProfile = {
       bounds: { minIntervalMs: 1000, maxBytes: null },
-      profiles: [
-        {
-          id: "none",
-          label: "None",
-          description: "",
-          values: {
-            minIntervalMs: 0,
-            maxIntervalMs: null,
-            minChars: 0,
-            maxChars: null,
-            expectedLatencyMs: 0,
-          },
-        },
-      ],
-      defaultProfile: "none",
+      pacing: {
+        minIntervalMs: 0,
+        maxIntervalMs: null,
+        minChars: 0,
+        maxChars: null,
+        expectedLatencyMs: 0,
+      },
     };
     expect(effectiveSyncPolicy(boundsOnly, { minIntervalMs: 100 }).minIntervalMs).toBe(1000);
     expect(effectiveSyncPolicy(boundsOnly, undefined).minIntervalMs).toBe(1000);
@@ -154,7 +181,7 @@ describe("clampSyncPolicy", () => {
   });
 });
 
-describe("a policy as JSON and as a link parameter", () => {
+describe("a policy as JSON", () => {
   const standard = resolveSyncPolicy({
     minIntervalMs: 30_000,
     maxIntervalMs: 120_000,
@@ -187,31 +214,5 @@ describe("a policy as JSON and as a link parameter", () => {
   it("makes a policy it reads consistent, so a hostile one cannot starve a pending change", () => {
     const read = syncPolicyFromJson({ ...syncPolicyToJson(standard), maxIntervalMs: 1000 });
     expect(read?.maxIntervalMs).toBe(30_000); // never below the floor
-  });
-
-  it("round-trips through the short form a link carries", () => {
-    const text = encodeSyncPolicyParam(standard, 7);
-    expect(text).toBe("30000,120000,5,inf,60000@7");
-    expect(decodeSyncPolicyParam(text)).toEqual({ policy: standard, sequence: 7 });
-  });
-
-  it("defaults the sequence to 0, the policy a document was created with", () => {
-    expect(encodeSyncPolicyParam(standard).endsWith("@0")).toBe(true);
-  });
-
-  it.each([
-    "",
-    "30000,120000,5,inf,60000", // no sequence
-    "30000,120000,5,inf@0", // four numbers
-    "30000,120000,5,inf,60000,1@0", // six
-    "30000,120000,5,inf,60000@x",
-    "30000,120000,-5,inf,60000@0",
-    "30000,120000,5,1.5,60000@0",
-    "inf,120000,5,inf,60000@0", // the floor cannot be unlimited
-    "30000,120000,5,inf,inf@0", // nor the latency
-    "30000, 120000,5,inf,60000@0",
-    "30000,120000,5,inf,60000@99999999999999999999",
-  ])("refuses %j as a link parameter", (text) => {
-    expect(decodeSyncPolicyParam(text)).toBeUndefined();
   });
 });

@@ -7,8 +7,6 @@ import {
   parseTransportProfile,
   retainNewest,
   TransportSendError,
-  type TransportSendFailure,
-  transportPolicyProfile,
   transportSendErrorFromHttp,
 } from "./index";
 
@@ -20,9 +18,19 @@ describe("TransportSendError", () => {
     expect(new TransportSendError("rejected", "x").retryable).toBe(false);
   });
 
-  it("counts a reason none of the four as unavailable, so it is retried (TRN-12)", () => {
-    // An adapter of a later version may name a reason this one does not know.
-    const unknown = new TransportSendError("needs-person" as unknown as TransportSendFailure, "x");
+  it("keeps a refusal only a person can lift, and says it waits for the person (TRN-11, TRN-20)", () => {
+    const refusal = new TransportSendError("needs-person", "an identity to trust");
+    expect(refusal.retryable).toBe(true);
+    expect(refusal.needsPerson).toBe(true);
+    for (const reason of ["rate-limited", "unavailable", "too-large", "rejected"] as const) {
+      expect(new TransportSendError(reason, "x").needsPerson).toBe(false);
+    }
+  });
+
+  it("counts a reason outside the five as unavailable: worth retrying (TRN-12)", () => {
+    // An adapter written without these types, or an error decoded from another process, may carry
+    // a reason nobody classified; dropping the change on it is what TRN-12 forbids.
+    const unknown = new TransportSendError("timeout" as never, "x");
     expect(unknown.retryable).toBe(true);
   });
 
@@ -45,14 +53,17 @@ describe("transportSendErrorFromHttp", () => {
     expect(from(413).reason).toBe("too-large");
   });
 
-  it.each([400, 403, 404, 409, 422])(
-    "maps %i to rejected: asking again changes nothing",
-    (status) => {
-      const error = from(status);
-      expect(error.reason).toBe("rejected");
-      expect(error.retryable).toBe(false);
-    },
-  );
+  it("maps 409 to needs-person: a state the person ends, not one waiting ends (LBI-6)", () => {
+    const error = from(409);
+    expect(error.reason).toBe("needs-person");
+    expect(error.needsPerson).toBe(true);
+  });
+
+  it.each([400, 403, 404, 422])("maps %i to rejected: asking again changes nothing", (status) => {
+    const error = from(status);
+    expect(error.reason).toBe("rejected");
+    expect(error.retryable).toBe(false);
+  });
 
   it.each([500, 502, 503, 504, 401, 408, 418])(
     "maps %i, and any status nobody classified, to unavailable: never drop a change on a failure nobody thought about",
@@ -96,51 +107,22 @@ describe("transportSendErrorFromHttp", () => {
   });
 });
 
-describe("parseTransportProfile (SPECIFICATION.md §3.5, TRN-13)", () => {
-  const values = () => ({
+describe("parseTransportProfile (SND-16; TRN-13)", () => {
+  const pacing = () => ({
     minIntervalMs: 30_000,
     maxIntervalMs: 120_000,
     minChars: 0,
     maxChars: null,
     expectedLatencyMs: 60_000,
   });
-  const standard = () => ({
-    id: "standard",
-    label: "Standard",
-    description: "One message per 30 s",
-    values: values(),
+  const valid = () => ({ bounds: { minIntervalMs: 15_000, maxBytes: 32_000 }, pacing: pacing() });
+  const withPacing = (changes: Record<string, unknown>) => ({
+    ...valid(),
+    pacing: { ...pacing(), ...changes },
   });
-  const local = () => ({
-    id: "local",
-    label: "Local",
-    description: "",
-    values: {
-      minIntervalMs: 0,
-      maxIntervalMs: null,
-      minChars: 0,
-      maxChars: null,
-      expectedLatencyMs: 0,
-    },
-  });
-  const valid = () => ({
-    bounds: { minIntervalMs: 15_000, maxBytes: 32_000 },
-    profiles: [standard(), local()],
-    defaultProfile: "standard",
-  });
-  /** `valid()` with the standard profile replaced by `entry`. */
-  const withStandard = (entry: unknown) => ({ ...valid(), profiles: [entry, local()] });
-  /** `valid()` with the standard profile's values changed. */
-  const withValues = (changes: Record<string, unknown>) =>
-    withStandard({ ...standard(), values: { ...values(), ...changes } });
-  /** `valid()` with the standard profile's values missing one field. */
-  const withoutValue = (key: string) => {
-    const { [key]: _omitted, ...rest } = values() as Record<string, unknown>;
-    return withStandard({ ...standard(), values: rest });
-  };
-  /** `valid()` with the standard profile missing one field. */
-  const withoutField = (key: string) => {
-    const { [key]: _omitted, ...rest } = standard() as Record<string, unknown>;
-    return withStandard(rest);
+  const withoutPacing = (key: string) => {
+    const { [key]: _omitted, ...rest } = pacing() as Record<string, unknown>;
+    return { ...valid(), pacing: rest };
   };
 
   it("reads a profile as the bridge sends it, unchanged", () => {
@@ -151,21 +133,13 @@ describe("parseTransportProfile (SPECIFICATION.md §3.5, TRN-13)", () => {
     expect(parseTransportProfile(JSON.parse(JSON.stringify(valid())))).toEqual(valid());
   });
 
-  it("keeps the profiles in the order the bridge gave them — the order to offer them in", () => {
-    const reversed = { ...valid(), profiles: [local(), standard()] };
-    expect(parseTransportProfile(reversed)?.profiles.map((p) => p.id)).toEqual([
-      "local",
-      "standard",
-    ]);
-  });
-
   it("reads null as no bound and no limit", () => {
     const profile = parseTransportProfile({
-      ...valid(),
       bounds: { minIntervalMs: null, maxBytes: null },
+      pacing: { ...pacing(), maxIntervalMs: null },
     });
     expect(profile?.bounds).toEqual({ minIntervalMs: null, maxBytes: null });
-    expect(transportPolicyProfile(profile, "local")?.values.maxIntervalMs).toBeNull();
+    expect(profile?.pacing.maxIntervalMs).toBeNull();
   });
 
   it.each([
@@ -173,14 +147,11 @@ describe("parseTransportProfile (SPECIFICATION.md §3.5, TRN-13)", () => {
     ["null", null],
     ["an array", []],
     ["no bounds", { ...valid(), bounds: undefined }],
-    ["no profiles", { ...valid(), profiles: undefined }],
-    ["an empty list of profiles", { ...valid(), profiles: [] }],
-    ["profiles as an object", { ...valid(), profiles: { standard: standard() } }],
-    ["two profiles with one id", { ...valid(), profiles: [standard(), standard()] }],
-    ["a profile without an id", withoutField("id")],
-    ["a profile with an empty id", withStandard({ ...standard(), id: "" })],
-    ["a default that names nothing", { ...valid(), defaultProfile: "nonexistent" }],
-    ["no default", { ...valid(), defaultProfile: undefined }],
+    ["no pacing", { ...valid(), pacing: undefined }],
+    [
+      "1.x's named profiles instead of pacing",
+      { bounds: valid().bounds, profiles: [], defaultProfile: "standard" },
+    ],
     ["a bound left out", { ...valid(), bounds: { minIntervalMs: 15_000 } }],
     ["bounds left out entirely", { ...valid(), bounds: {} }],
     ["a negative bound", { ...valid(), bounds: { minIntervalMs: -1, maxBytes: null } }],
@@ -193,16 +164,14 @@ describe("parseTransportProfile (SPECIFICATION.md §3.5, TRN-13)", () => {
       { ...valid(), bounds: { minIntervalMs: Number.POSITIVE_INFINITY, maxBytes: null } },
     ],
     ["a misspelled bound", { ...valid(), bounds: { minIntervalMs: null, maxByte: 32_000 } }],
-    ["a field the specification does not define", { ...valid(), somethingNew: 1 }],
-    ["a profile without a label", withoutField("label")],
-    ["a profile without a description", withoutField("description")],
-    ["a policy value left out", withoutValue("minChars")],
-    ["a policy that states nothing", withStandard({ ...standard(), values: {} })],
-    ["a misspelled policy value", withValues({ maxChar: 5 })],
-    ["null for a floor, which has no 'no limit'", withValues({ minIntervalMs: null })],
-    ["null for the expected latency", withValues({ expectedLatencyMs: null })],
-    ["a negative policy value", withValues({ minIntervalMs: -5 })],
-    ["a policy value that is not a number", withValues({ maxChars: "lots" })],
+    ["a field the draft does not define", { ...valid(), somethingNew: 1 }],
+    ["a pacing value left out", withoutPacing("minChars")],
+    ["a pacing that states nothing", { ...valid(), pacing: {} }],
+    ["a misspelled pacing value", withPacing({ maxChar: 5 })],
+    ["null for a floor, which has no 'no limit'", withPacing({ minIntervalMs: null })],
+    ["null for the expected latency", withPacing({ expectedLatencyMs: null })],
+    ["a negative pacing value", withPacing({ minIntervalMs: -5 })],
+    ["a pacing value that is not a number", withPacing({ maxChars: "lots" })],
   ])("refuses the whole profile for %s, rather than half-applying it", (_name, raw) => {
     expect(parseTransportProfile(raw)).toBeUndefined();
   });
@@ -247,7 +216,7 @@ describe("the nesting limit of TDSP's JSON (SPECIFICATION.md §1.6)", () => {
   });
 
   it("counts objects and arrays together, and the outermost one as the first level", () => {
-    const mixed = (levels: number) => '{"a":'.repeat(levels) + "1" + "}".repeat(levels);
+    const mixed = (levels: number) => `${'{"a":'.repeat(levels)}1${"}".repeat(levels)}`;
     expect(jsonTextTooDeep(`[${mixed(31)}]`)).toBe(false);
     expect(jsonTextTooDeep(`[${mixed(32)}]`)).toBe(true);
     expect(jsonValueTooDeep({ frame: "x", attachment: { file: { hashes: {} } } })).toBe(false);

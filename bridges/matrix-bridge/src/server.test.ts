@@ -298,9 +298,8 @@ describe("matrix-bridge HTTP API", () => {
     const response = await fetch(`${baseUrl}/transport-profile`);
     expect(response.status).toBe(200);
     const profile = parseTransportProfile(await response.json());
-    expect(profile?.defaultProfile).toBe("local");
     // The engine's own defaults: no throttling locally.
-    expect(profile?.profiles.find((p) => p.id === "local")?.values).toEqual({
+    expect(profile?.pacing).toEqual({
       minIntervalMs: 0,
       maxIntervalMs: null,
       minChars: 0,
@@ -324,8 +323,7 @@ describe("matrix-bridge HTTP API", () => {
       const { port } = remote.address() as AddressInfo;
       const response = await fetch(`http://127.0.0.1:${port}/transport-profile`);
       const profile = parseTransportProfile(await response.json());
-      expect(profile?.defaultProfile).toBe("standard");
-      expect(profile?.profiles.find((p) => p.id === "standard")?.values.minIntervalMs).toBe(1000);
+      expect(profile?.pacing.minIntervalMs).toBe(1000);
       expect(profile?.bounds.minIntervalMs).toBe(250);
       expect(profile?.bounds.maxBytes).toBe(4 * 1024 * 1024);
     } finally {

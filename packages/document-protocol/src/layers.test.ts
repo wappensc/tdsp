@@ -60,7 +60,11 @@ describe("layers (SPECIFICATION.md §5.6)", () => {
     const { port, alice, bob } = await aliceAndBob();
     alice.document.transact(() => comments(alice).set("c1", "Too loud?"));
     await bob.sync();
-    const controlState = alice.controlState;
+    const controlState = {
+      control: alice.controlState,
+      device: alice.deviceTag as string,
+      counter: alice.controlVector[alice.deviceTag as string] ?? 0,
+    };
     alice.dispose();
 
     // The creator comes back without its content; only a peer can give it back (RSY-6).

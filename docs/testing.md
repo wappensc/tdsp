@@ -333,11 +333,17 @@ VER-1). The *wire tests*, `*.wire.test.ts`, hold the reference implementation to
 
 | Test | Holds to what is frozen in |
 | --- | --- |
-| `packages/document-protocol/src/frames.wire.test.ts` | `wire/frames-v1.json` (16 frames, every kind, both directions: written byte for byte, read back); the specification's example frames (§4.5, Appendix D); `wire/invitations-v1.json`; the profile `yjs-paragraphs/1` against the bytes of §4.5 |
-| `bridges/signal-bridge/src/envelope.wire.test.ts` | `wire/signal-v1.json`: the group message for a frame — in the body, at the body limit, as an attachment — and Appendix D's envelope |
+| `packages/document-protocol/src/frames.wire.test.ts` | `wire/frames-draft-5.json` (20 frames, every kind, both directions: written byte for byte, read back); `wire/invitations-draft-5.json`; the profile `yjs-paragraphs/1` against the bytes of §4.5 |
+| `packages/document-protocol/src/spec-examples.wire.test.ts` | The specification's example frames (§4.5, Appendix D), written by the encoder byte for byte, and Appendix D's envelope |
+| `bridges/signal-bridge/src/envelope.wire.test.ts` | `wire/signal-v1.json`: the group message for a frame — in the body, at the body limit, as an attachment — and Appendix D's envelope, whose 2.0 frame is an entry added within envelope version 1 |
 | `bridges/matrix-bridge/src/event.wire.test.ts` | `wire/matrix-v1.json`: the room event's type and content — inline, at the limit, as a media file |
 | `bridges/email-bridge/src/message.wire.test.ts` | `wire/email-v1.json`: what the bridge hands its mail library for an invitation and for a frame, through its real routes |
-| `tools/wire-lock.wire.test.ts` | `wire/wire-lock.json`: the hash of every entry above, of the published test vectors, of the constants beside them, and of the specification's normative wire sections (§4, §5, §7, §11, Appendices A and B) and of the binding documents `bindings/bridges.md`, `signal.md`, `matrix.md` and `email.md` as a whole, with the specification's version |
+| `tools/wire-lock.wire.test.ts` | `wire/wire-lock.json`: the hash of every entry above, of the published test vectors, of the constants beside them, and of the specification's normative wire sections (§4, §5, §7, §11, Appendices A and B) and of the binding documents `bindings/bridges.md`, `signal.md`, `matrix.md` and `email.md` as a whole, with the specification's version and, while there is one, the draft marker (VER-3) |
+
+The files of TDSP 1.x — `wire/frames-v1.json`, `wire/invitations-v1.json` and the v1 test
+vectors — stay in the lock as they were, though no test writes them any more: a version's
+files are frozen, not removed ([CONTRIBUTING.md](../CONTRIBUTING.md), "A change to the
+wire"). Until TDSP 2.0 is released, the draft's files carry its marker in their names.
 
 A failing wire test is a decision, not a bug to fix by editing the expectation: the wire
 files and the lock belong to the CI role, and `pnpm run wire:lock` names what kind of

@@ -1,12 +1,13 @@
 # TDSP bindings — The local bridge interface
 
-**Specification · TDSP bindings 1.4.1 · 24 October 2026**
+**Specification · TDSP bindings 2.0 (draft) · 24 October 2026**
 
-Part of TDSP 1.4.1, whose core is [SPECIFICATION.md](../SPECIFICATION.md). This
-document holds what TDSP 1.4 had in §12.6 of its specification, unchanged: its
-requirements keep their IDs, and its sections their numbers, so a reference to either
-stays unambiguous. The requirement language and the conformance classes are the core's
-([§1.3](../SPECIFICATION.md#13-requirement-language),
+Part of TDSP 2.0, whose core is [SPECIFICATION.md](../SPECIFICATION.md). This
+document holds what TDSP 1.4 had in §12.6 of its specification, unchanged in
+substance but for the changes [Appendix G](../SPECIFICATION.md#appendix-g-changes-from-tdsp-1x)
+of the core lists: its requirements keep their IDs, and its sections their numbers, so a
+reference to either stays unambiguous. The requirement language and the
+conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-language),
 [§1.4](../SPECIFICATION.md#14-conformance-classes)).
 
 ### 12.6 The local bridge interface (optional)
@@ -60,7 +61,7 @@ unknown route answers 404.
 | 400 | A malformed field |
 | 403 | Not permitted |
 | 404 | Unknown document, channel or route |
-| 409 | Not provisioned or not linked yet |
+| 409 | Refused until a person acts: not provisioned or not linked yet, an identity to trust, a device to confirm |
 | 413 | Too large |
 | 422 | Refused at message level |
 | 429 | Rate-limited |
@@ -71,7 +72,7 @@ unknown route answers 404.
 
 | Route | Purpose | Request | Response |
 |---|---|---|---|
-| `GET /health` | Liveness, and whether the bridge is provisioned | — | `{status:"ok", configured?: boolean}` |
+| `GET /health` | Liveness, and whether the bridge is provisioned; optionally the bridge instance → `instance` (TRN-19) | — | `{status:"ok", configured?: boolean, instance?: string}` |
 | `GET /whoami` | The account's own MemberId | — | `{id}` |
 | `GET /transport-profile` | The transport profile ([§3.5](../SPECIFICATION.md#35-transport-profile)) | — | the profile; 503 while unprovisioned |
 | `GET /channels` | Channels for the picker → `listChannels` | — | `[{id, name, encrypted?}]` |
@@ -79,16 +80,17 @@ unknown route answers 404.
 | `POST /channels/:documentId/bind` | Bind a document to a channel → `createDocument` | `{channelId, creator, profile}` | the binding |
 | `POST /channels/:documentId/send` | → `send` | `{sender, payload}` — the frame's text; `sender` must be the bridge's own account (BRG-16), else 403 | `{deliveryId}` |
 | `GET /channels/:documentId/deliveries` | → `receive` | — | `[{id, documentId, sender, payload}]` |
+| `GET /channels/:documentId/deliveries-since?after=` | Optional → `receiveSince` (TRN-18, TRN-21); `after` absent for all still held | — | `{deliveries: [{id, documentId, sender, payload}], truncated: boolean}`; 404 where the bridge does not offer it |
 | `POST /channels/:documentId/invite` | Send a human-readable invitation into the bound channel | `{actor, text}` — `actor` must be the bridge's own account and the document's creator, else 403 | `{deliveryId}` |
-| `GET /channels/:documentId/integrity-log` | The integrity violations recorded (BRG-15) | — | a list of `{id, sender, reason, …}` |
+| `GET /channels/:documentId/integrity-log` | The integrity violations recorded (BRG-15) | — | a list of `{id, sender, reason, …}`, `reason` one of BRG-12's |
 
 Email has no pre-existing channel to bind to; starting and joining a thread
 replace binding:
 
 | Route | Purpose | Request | Response |
 |---|---|---|---|
-| `POST /threads/:documentId` | Start the thread: send the invitation, bind the document | `{recipients[], creator, profile, inviteText?, pgpEnabled?, threadRootMessageId?, policy?}` | `{threadRootMessageId}` |
-| `POST /threads/:documentId/join` | Join a thread from its invitation | `{recipients[], creator, profile, pgpEnabled?, threadRootMessageId}` | the binding (for PGP, including the invitation's policy and profile) |
+| `POST /threads/:documentId` | Start the thread: send the invitation, bind the document | `{recipients[], creator, profile, inviteText?, pgpEnabled?, threadRootMessageId?, policy?}` — `policy` is TDSP 1.x's; an application of TDSP 2.0 sends none | `{threadRootMessageId}` |
+| `POST /threads/:documentId/join` | Join a thread from its invitation | `{recipients[], creator, profile, pgpEnabled?, threadRootMessageId}` | the binding (for PGP, including the invitation's profile, and a 1.x invitation's policy, which an application of TDSP 2.0 ignores) |
 
 Provisioning routes are binding-specific: Signal's `GET /auth/status` and
 `POST /auth/link`; email's `GET /mail/status`, `GET /pgp/status` and
@@ -100,11 +102,13 @@ Provisioning routes are binding-specific: Signal's `GET /auth/status` and
   *Rationale:* one interface shape lets any adapter drive any bridge.
 - **LBI-6** · *bridge, adapter* — `POST …/send` MUST answer a failure with the
   status that classifies it: `429` (with `Retry-After` in seconds when the
-  messenger stated a wait) for a rate limit, `413` for a message too large, `400`,
-  `403`, `404`, `409` or `422` for a refusal waiting cannot change, and `5xx` for
-  everything else. An adapter MUST map `429` to `rate-limited`, `413` to
-  `too-large`, `400`, `403`, `404`, `409` and `422` to `rejected`, and every other
-  status to `unavailable`.
+  messenger stated a wait) for a rate limit, `413` for a message too large, `409`
+  for a refusal only a person can lift, `400`, `403`, `404` or `422` for a refusal
+  waiting cannot change, and `5xx` for everything else. An adapter MUST map `429`
+  to `rate-limited`, `413` to `too-large`, `409` to `needs-person`, `400`, `403`,
+  `404` and `422` to `rejected`, and every other status to `unavailable`.
   *Rationale:* the classification of [§3.4](../SPECIFICATION.md#34-send-failures) has to survive the
   HTTP hop; an unclassified status landing on `unavailable` means a change is never
-  dropped on a guess.
+  dropped on a guess. `409` already answered a bridge not provisioned or not
+  linked — a state the person ends, not one waiting ends — so it carries every
+  refusal of that kind.

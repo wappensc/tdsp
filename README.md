@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/wappensc/tdsp/actions/workflows/ci.yml/badge.svg)](https://github.com/wappensc/tdsp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Spec: TDSP 1.4.1](https://img.shields.io/badge/spec-TDSP%201.4.1-informational)](SPECIFICATION.md)
+[![Spec: TDSP 2.0 (draft)](https://img.shields.io/badge/spec-TDSP%202.0%20%28draft%29-informational)](SPECIFICATION.md)
 [![Node.js ≥ 22.6](https://img.shields.io/badge/node-%E2%89%A5%2022.6-brightgreen)](package.json)
 [![TypeScript: strict](https://img.shields.io/badge/TypeScript-strict-3178c6)](tsconfig.base.json)
 [![Messengers: Signal · Matrix · Email](https://img.shields.io/badge/messengers-Signal%20%C2%B7%20Matrix%20%C2%B7%20Email-8a2be2)](bindings/bridges.md#13-messenger-bindings)
@@ -19,19 +19,18 @@ of its own; it inherits the messenger's.
 
 This repository contains
 
-- **[SPECIFICATION.md](SPECIFICATION.md)** — the protocol, TDSP 1.4.1: the transport
-  contract, the payload frame, document profiles, control state, bootstrap and resync,
-  send scheduling, loss detection and invitations, as numbered requirements with their
-  rationale; the bridges and the Signal, Matrix and email bindings are documents of their
-  own in **[bindings/](bindings/)**;
+- **[SPECIFICATION.md](SPECIFICATION.md)** — the protocol, TDSP 2.0, a draft until it is
+  released (VER-3): the transport contract, the payload frame, document profiles, control
+  state, bootstrap and resync, send scheduling, loss detection and invitations, as numbered
+  requirements with their rationale;
+- **[bindings/](bindings/)** — the bridges and their common envelope, the Signal, Matrix
+  and email bindings, and the local bridge interface, each a document of its own;
 - **a reference implementation** in TypeScript of every conformance class the
   specification defines;
 - **[CONFORMANCE.md](CONFORMANCE.md)** — what of the specification that implementation
   has verified, and against what, and what it has not;
 - **[CHANGELOG.md](CHANGELOG.md)** — what changed from one release, and one version of the
   specification, to the next.
-- **[drafts/2.0/](drafts/2.0/)** — the working text of TDSP 2.0, not normative and not yet
-  implemented here.
 
 > [!IMPORTANT]
 > **TDSP adds no security layer of its own.** It does not encrypt, sign or

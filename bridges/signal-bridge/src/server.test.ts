@@ -260,7 +260,7 @@ describe("signal-bridge HTTP API", () => {
     const profile = parseTransportProfile(await response.json());
     expect(profile).toEqual(SIGNAL_PROFILE);
     expect(profile?.bounds.maxBytes).toBe(4 * 1024 * 1024);
-    expect(profile?.profiles.find((p) => p.id === "standard")?.values.minIntervalMs).toBe(2000);
+    expect(profile?.pacing.minIntervalMs).toBe(2000);
   });
 
   it("POST /channels/:id/send says why a send failed, by status", async () => {

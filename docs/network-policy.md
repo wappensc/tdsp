@@ -75,7 +75,7 @@ never a one-line change someone makes in passing.
 
 ## Enforcement
 
-No single check is enough; each covers what the others cannot see.
+No single check is enough; each covers what the others cannot see (SPECIFICATION.md SEC-1).
 
 | Layer | Catches | Blind to |
 | --- | --- | --- |

@@ -4,9 +4,10 @@ import { compareWireLock, readLock, severity, snapshot } from "./wire-lock.ts";
 
 /**
  * The wire is as locked (docs/testing.md, "Wire compatibility"): no frozen entry, published
- * vector, constant or normative wire section of the specification differs from
- * wire/wire-lock.json, and the specification's version is the one recorded. A difference is
- * reported with its kind; only the CI role may accept it (`pnpm run wire:lock -- --accept`).
+ * vector, constant, normative wire section of the specification or binding document differs
+ * from wire/wire-lock.json, and the specification's version and the draft marker (VER-3) are the
+ * ones recorded. A difference is reported with its kind; only the CI role may accept it
+ * (`pnpm run wire:lock -- --accept`).
  */
 const repoRoot = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 
