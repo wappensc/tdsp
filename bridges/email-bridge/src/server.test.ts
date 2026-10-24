@@ -595,6 +595,18 @@ describe("bridges/email-bridge server", () => {
         expect((await sendFailingWith(smtp(552))).status).toBe(413);
       });
 
+      it("answers 409 when the server refused the login, so the engine waits for the person (TRN-11)", async () => {
+        const response = await sendFailingWith(
+          Object.assign(new Error("Invalid login: 535 5.7.8 Authentication credentials invalid"), {
+            code: "EAUTH",
+            responseCode: 535,
+            response: "535 5.7.8 Authentication credentials invalid",
+          }),
+        );
+        expect(response.status).toBe(409);
+        expect(((await readJson(response)) as { error: string }).error).toContain("535");
+      });
+
       it("answers 503 when the mail server cannot be reached", async () => {
         const response = await sendFailingWith(
           Object.assign(new Error("x"), { code: "ETIMEDOUT" }),
