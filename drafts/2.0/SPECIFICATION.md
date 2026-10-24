@@ -3392,8 +3392,12 @@ it is only *worth using* with it.
 
 **Enforcing "no external connection".** The one security property TDSP owns
 rather than inherits is only as good as the checks behind it, and no single check
-sees everything. An implementation SHOULD combine several that fail
-independently:
+sees everything.
+
+- **SEC-1** · *all* — An implementation SHOULD combine several checks of "no
+  external connection" (ARC-2, BRG-4) that fail independently, such as those
+  below.
+  *Rationale:* no single check sees everything.
 
 1. **A source scan** that finds every network primitive in its own code — ambient
    ones included, such as `fetch` or a socket constructor that no import reveals —
@@ -3470,8 +3474,14 @@ The reference implementation uses all five.
   binding says so (BRG-14). Pieces are ordinary updates: an incomplete set occupies
   nothing beyond what the CRDT holds pending anyway.
 - **An email document without PGP** has no sender authentication at all: anyone who
-  can send mail with a forged `From` can issue control frames as the creator. The
-  application MUST tell its user so, persistently.
+  can send mail with a forged `From` can issue control frames as the creator
+  (SEC-2).
+
+- **SEC-2** · *application* — An application that creates or opens an email
+  document without PGP (EML-9) MUST tell its user so, persistently: the document
+  has no sender authentication.
+  *Rationale:* anyone who can send mail with a forged `From` can issue control
+  frames as the creator.
 
 ---
 
@@ -3874,6 +3884,7 @@ The changes have six reasons, which the tables below cite by letter:
 | VER-4 | An application shows whose frames are of another version | VER-1's loud failure reached only the application, and the person saw a silent participant instead. |
 | VER-5 (new, with VER-6) | What a revision that defines a new right must define: capabilities per value, a merge that grants no more than every merged value, commutative, associative and idempotent, decisions in knowledge of others superseding, revocation first, and how older implementations are kept from reading it as `write` or inherit | A third right is not invented now, but the rules any later one must keep are laid down; a total order does not fit every model. |
 | VER-6 | Part of VER-5 as a requirement of its own: keeping older implementations from taking a new value of a permission or a layer right for `write` or for inherit | Readability: it was a part of a longer requirement, and requires what it did there |
+| SEC-1, SEC-2 | The SHOULD of §15.3 to combine independent checks of "no external connection", and the MUST of §15.5 to tell the user of an email document without PGP, as requirements of their own | A SHOULD and a MUST without an ID, which §1.3 left informative although they were meant to apply; the content is unchanged |
 
 **Moved** into [bindings/](bindings/) (F): §12 (BRG-1 to BRG-17), §12.6 (LBI-1 to
 LBI-6, the routes gaining an optional cursor and instance), §13 (BND-1 to BND-3,
