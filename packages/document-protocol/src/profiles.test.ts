@@ -5,6 +5,7 @@ import {
   encodeStateVector,
   encodeUpdate,
   encodeUpdateSince,
+  getFragment,
   getPlainText,
   hasUpdatesSince,
   insertPlainText,
@@ -17,7 +18,13 @@ import {
 } from "@tdsp/reconciliation";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { DocumentEngine, type DocumentProfile, UnsupportedProfileError } from "./index";
+import {
+  DocumentEngine,
+  type DocumentProfile,
+  UnsupportedProfileError,
+  YJS_PARAGRAPHS_1,
+} from "./index";
+import { deletionsWithinOf, profileFor } from "./profile";
 
 /**
  * Document profiles an application supplies (SPECIFICATION.md §5.5, the `profiles` option).
@@ -183,5 +190,36 @@ describe("document profiles an application supplies (SPECIFICATION.md §5.5)", (
       /no valid profile id/,
     );
     await expect(port.receive(DOCUMENT_ID, "x")).rejects.toThrow(); // never even registered
+  });
+});
+
+describe("what a supplied profile deleted within a state vector (PRF-1, item 8; LOS-12)", () => {
+  const base = profileFor(YJS_PARAGRAPHS_1);
+  const doc = createDocument();
+  insertPlainText(getFragment(doc), 0, "abc");
+
+  it("is the profile's own encoding when it brings one, and Appendix A's when it brings neither", () => {
+    const own = () => new Uint8Array([7]);
+    expect(
+      deletionsWithinOf({ ...base, id: "com.example.a/1", encodeDeletionsWithin: own })?.(
+        doc,
+        new Uint8Array([0]),
+      ),
+    ).toEqual(new Uint8Array([7]));
+    const { encodeDeletions: _deletions, encodeDeletionsWithin: _within, ...plain } = base;
+    expect(
+      deletionsWithinOf({ ...plain, id: "com.example.b/1" })?.(doc, new Uint8Array([0])),
+    ).toEqual(new Uint8Array([0, 0]));
+  });
+
+  it("is none for a profile that encodes its deletions its own way but not within a vector: digests compare at equal vectors only", () => {
+    const { encodeDeletionsWithin: _within, ...rest } = base;
+    expect(
+      deletionsWithinOf({
+        ...rest,
+        id: "com.example.c/1",
+        encodeDeletions: () => new Uint8Array([9]),
+      }),
+    ).toBeUndefined();
   });
 });

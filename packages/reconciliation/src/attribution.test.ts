@@ -205,6 +205,21 @@ describe("AttributionTracker", () => {
     expect(tracker.lastEditBySender.get("alice")).toBe(3);
   });
 
+  it("keeps unattributed text (null) as a range of its own, which is nobody's last edit (ATR-2)", () => {
+    const tracker = new AttributionTracker();
+    tracker.recordInsert(0, 5, "alice");
+    tracker.recordInsert(5, 4, null);
+    tracker.recordInsert(9, 2, null);
+    tracker.recordDelete(0, 1, null);
+    expect(tracker.ranges).toEqual([
+      { start: 0, end: 4, authorId: "alice" },
+      { start: 4, end: 10, authorId: null },
+    ]);
+    // Alice's marker moves with the unattributed text around it; nothing is recorded for null.
+    expect(Object.fromEntries(tracker.lastEditBySender)).toEqual({ alice: 10 });
+    expect(tracker.toJSON()).toEqual({ ranges: tracker.ranges, lastEditBySender: { alice: 10 } });
+  });
+
   describe("toJSON()/restore() (the resync-response attribution overlay)", () => {
     it("round-trips ranges and lastEditBySender through a JSON.stringify/parse cycle", () => {
       const original = new AttributionTracker();

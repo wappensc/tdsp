@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   compareWireLock,
+  draftProblem,
   sectionText,
   severity,
   snapshotFile,
@@ -163,5 +164,51 @@ describe("reading the specification", () => {
 
   it("refuses a heading that is not there", () => {
     expect(() => sectionText(spec, "## 9. Missing")).toThrow(/no section/);
+  });
+});
+
+describe("within a draft (VER-3)", () => {
+  const draft = (marker: string | undefined, version = "2.0"): WireSnapshot => ({
+    ...base(),
+    specificationVersion: version,
+    ...(marker === undefined ? {} : { draftMarker: marker }),
+  });
+
+  it("asks an incompatible change for a new marker, not a new major version", () => {
+    expect(draftProblem("incompatible", draft("m-1"), draft("m-2"))).toBeUndefined();
+    expect(draftProblem("incompatible", draft("m-1"), draft("m-1"))).toMatch(/new draft marker/);
+  });
+
+  it("keeps the marker and the version for an addition or a specification change", () => {
+    expect(draftProblem("addition", draft("m-1"), draft("m-1"))).toBeUndefined();
+    expect(draftProblem("specification", draft("m-1"), draft("m-1"))).toBeUndefined();
+    expect(draftProblem("specification", draft("m-1"), draft("m-2"))).toMatch(
+      /incompatible change/,
+    );
+    expect(draftProblem("addition", draft("m-1"), draft("m-1", "2.1"))).toMatch(/keeps version/);
+  });
+
+  it("counts leaving the draft as incompatible, and then applies the version rules", () => {
+    expect(draftProblem("incompatible", draft("m-1"), draft(undefined))).toBeUndefined();
+    expect(draftProblem("addition", draft(undefined), draft(undefined, "2.1"))).toBeUndefined();
+  });
+
+  it("reports a changed marker", () => {
+    expect(compareWireLock(draft("m-1"), draft("m-2")).map((f) => f.kind)).toEqual(["version"]);
+  });
+
+  it("calls entering a draft incompatible, though every locked file stays as it was, and asks for the next major version", () => {
+    const released = draft(undefined, "1.0");
+    const findings = compareWireLock(released, draft("m-1"));
+    expect(findings.map((f) => f.kind)).toEqual(["incompatible", "version"]);
+    expect(severity(findings)).toBe("incompatible");
+    expect(draftProblem("incompatible", released, draft("m-1"))).toBeUndefined();
+    expect(draftProblem("incompatible", released, draft("m-1", "1.1"))).toMatch(/version 2\.0/);
+  });
+
+  it("calls leaving the draft incompatible", () => {
+    const findings = compareWireLock(draft("m-1"), draft(undefined));
+    expect(findings.map((f) => f.kind)).toEqual(["incompatible"]);
+    expect(severity(findings)).toBe("incompatible");
   });
 });

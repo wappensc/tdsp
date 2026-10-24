@@ -348,11 +348,15 @@ export function observePlainTextChanges(
   return () => fragment.unobserveDeep(wrapped);
 }
 
-/** A contiguous, half-open `[start, end)` span of the plain-text projection attributed to one author. */
+/**
+ * A contiguous, half-open `[start, end)` span of the plain-text projection attributed to one author,
+ * or to none: `authorId` is `null` for text whose author is not known (SPECIFICATION.md ATR-2),
+ * which no author id stands for and which has no last edit.
+ */
 export interface AttributionRange {
   readonly start: number;
   readonly end: number;
-  readonly authorId: string;
+  readonly authorId: string | null;
 }
 
 /**
@@ -386,7 +390,10 @@ export class AttributionTracker {
     return this.#ranges;
   }
 
-  /** Each author's most recent edit position — an approximate "where to look for their last change" indicator. */
+  /**
+   * Each author's most recent edit position — an approximate "where to look for their last change"
+   * indicator. Unattributed changes have none (§5.4).
+   */
   get lastEditBySender(): ReadonlyMap<string, number> {
     return this.#lastEditBySender;
   }
@@ -423,9 +430,9 @@ export class AttributionTracker {
    * theirs), and adds a new `authorId` range for the inserted text —
    * merging it into an adjacent same-author range if the two now touch, so
    * one author typing continuously stays one range instead of fragmenting
-   * per keystroke.
+   * per keystroke. `null` records unattributed text, which moves no one's last edit to itself.
    */
-  recordInsert(index: number, length: number, authorId: string): void {
+  recordInsert(index: number, length: number, authorId: string | null): void {
     if (length <= 0) {
       return;
     }
@@ -466,7 +473,9 @@ export class AttributionTracker {
         this.#lastEditBySender.set(otherAuthorId, pos + length);
       }
     }
-    this.#lastEditBySender.set(authorId, index + length);
+    if (authorId !== null) {
+      this.#lastEditBySender.set(authorId, index + length);
+    }
   }
 
   /**
@@ -475,7 +484,8 @@ export class AttributionTracker {
    * and shifts ranges entirely after the deletion left. `authorId` does
    * not affect the range math (a delete never introduces new authorship)
    * but is still recorded as that author's last edit position — a delete
-   * is an edit at a location just as much as an insert is.
+   * is an edit at a location just as much as an insert is; an unattributed
+   * one (`null`) is no one's.
    */
   /**
    * Reattributes exactly the ranges whose *current* `authorId` satisfies
@@ -488,7 +498,7 @@ export class AttributionTracker {
    * (SPECIFICATION.md §5.4): pass a
    * `predicate` that only matches content this specific mechanism could
    * plausibly have produced (`document-protocol` uses `authorId ===
-   * UNATTRIBUTED_AUTHOR_ID`, its own resync-response sentinel — never any
+   * null`, unattributed, what it sets on a resync-response's content — never any
    * range this client typed itself or received via a normal delivery), and
    * whatever it selects is exactly, and only, what gets reattributed.
    *
@@ -506,10 +516,10 @@ export class AttributionTracker {
    * elsewhere.
    */
   reattributeMatching(
-    predicate: (authorId: string) => boolean,
+    predicate: (authorId: string | null) => boolean,
     snapshot: AttributionSnapshot,
   ): void {
-    const newAuthorsFlat: string[] = [];
+    const newAuthorsFlat: (string | null)[] = [];
     for (const range of snapshot.ranges) {
       for (let i = range.start; i < range.end; i++) {
         newAuthorsFlat.push(range.authorId);
@@ -525,7 +535,7 @@ export class AttributionTracker {
         continue;
       }
       let runStart = range.start;
-      let runAuthor: string | undefined;
+      let runAuthor: string | null | undefined;
       for (let pos = range.start; pos < range.end; pos++) {
         cursorToAbsolute[cursor] = pos;
         const author = cursor < newAuthorsFlat.length ? newAuthorsFlat[cursor] : range.authorId;
@@ -557,7 +567,7 @@ export class AttributionTracker {
     }
   }
 
-  recordDelete(index: number, length: number, authorId: string): void {
+  recordDelete(index: number, length: number, authorId: string | null): void {
     if (length <= 0) {
       return;
     }
@@ -583,7 +593,9 @@ export class AttributionTracker {
       }
       this.#lastEditBySender.set(otherAuthorId, mapThroughDeletion(pos, index, deleteEnd, length));
     }
-    this.#lastEditBySender.set(authorId, index);
+    if (authorId !== null) {
+      this.#lastEditBySender.set(authorId, index);
+    }
   }
 }
 

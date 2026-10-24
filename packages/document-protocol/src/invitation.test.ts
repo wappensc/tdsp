@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   encodeInvitation,
+  INVITATION_VERSION,
   type Invitation,
   invitationFromUrl,
   parseInvitation,
 } from "./invitation";
-import { decodeSyncPolicyParam } from "./sync-policy";
 
 const MATRIX: Invitation = {
   messenger: "matrix",
@@ -13,7 +13,6 @@ const MATRIX: Invitation = {
   creatorMemberId: "@alice:example.org",
   channelId: "!room:example.org",
   profile: "yjs-paragraphs/1",
-  policy: "2000,10000,0,inf,3000@0",
 };
 
 const EMAIL: Invitation = {
@@ -32,7 +31,7 @@ describe("invitations as a link (SPECIFICATION.md §11.3)", () => {
     ["email with PGP", EMAIL],
   ])("reads back a %s invitation as itself", (_name, invitation) => {
     const text = encodeInvitation(invitation);
-    expect(text.startsWith("tdsp=1&provider=")).toBe(true);
+    expect(text.startsWith(`tdsp=${encodeURIComponent(INVITATION_VERSION)}&provider=`)).toBe(true);
     expect(parseInvitation(text)).toEqual({ ok: true, invitation });
     expect(parseInvitation(`?${text}`)).toEqual({ ok: true, invitation });
   });
@@ -42,12 +41,9 @@ describe("invitations as a link (SPECIFICATION.md §11.3)", () => {
     expect(parseInvitation(text)).toEqual({ ok: true, invitation: MATRIX });
   });
 
-  it("drops a policy that does not parse, and still opens (INV-4)", () => {
-    const text = encodeInvitation({ ...MATRIX, policy: undefined }).concat("&policy=fast");
-    expect(parseInvitation(text)).toEqual({
-      ok: true,
-      invitation: { ...MATRIX, policy: undefined },
-    });
+  it("ignores 1.x's policy parameter: the draft shares no policy (SND-16)", () => {
+    const text = `${encodeInvitation(MATRIX)}&policy=2000%2C10000%2C0%2Cinf%2C3000%400`;
+    expect(parseInvitation(text)).toEqual({ ok: true, invitation: MATRIX });
   });
 
   it("an ordinary page load is not an invitation", () => {
@@ -80,6 +76,10 @@ describe("invitations as a link (SPECIFICATION.md §11.3)", () => {
     ["a documentId over 255 bytes", swap("documentId", "d".repeat(256)), "invalid-field"],
     ["a profile that is not a profile id", swap("profile", "Yjs Paragraphs"), "invalid-field"],
     ["a provider that is not a binding name", swap("provider", "Matrix!"), "invalid-field"],
+    // §11.3: a binding's name begins with a letter or a digit.
+    ["a provider beginning with a dot", swap("provider", ".matrix"), "invalid-field"],
+    ["a provider beginning with a hyphen", swap("provider", "-matrix"), "invalid-field"],
+    ["a provider of 65 characters", swap("provider", "m".repeat(65)), "invalid-field"],
   ])("refuses %s", (_name, text, problem) => {
     expect(parseInvitation(text)).toMatchObject({ ok: false, problem });
   });
@@ -106,26 +106,36 @@ describe("invitations as a link (SPECIFICATION.md §11.3)", () => {
       "invalid-field",
     ],
     ["pgp spelled otherwise", emailWith("pgp", "true"), "invalid-field"],
+    // The email binding's form: at most 200 characters in all (§11.3, bindings/email.md).
+    [
+      "a thread root of 201 characters",
+      emailWith("threadRoot", `<${"l".repeat(150)}@${"d".repeat(48)}>`),
+      "invalid-field",
+    ],
+    [
+      "a thread root with an empty local part",
+      emailWith("threadRoot", "<@x.org>"),
+      "invalid-field",
+    ],
   ])("refuses an email invitation with %s", (_name, text, problem) => {
     expect(parseInvitation(text)).toMatchObject({ ok: false, problem });
   });
-});
 
-describe("policy text has one spelling per value (SPECIFICATION.md §11.2)", () => {
-  it("reads the canonical form", () => {
-    expect(decodeSyncPolicyParam("30000,120000,0,inf,60000@7")?.sequence).toBe(7);
+  it("reads a thread root as long as the email binding allows, however its parts share the 200 characters", () => {
+    for (const threadRoot of [`<${"l".repeat(150)}@${"d".repeat(47)}>`, `<l@${"d".repeat(196)}>`]) {
+      expect(threadRoot).toHaveLength(200);
+      expect(parseInvitation(emailWith("threadRoot", threadRoot))).toEqual({
+        ok: true,
+        invitation: { ...EMAIL, threadRoot },
+      });
+    }
   });
 
-  it.each([
-    ["a leading zero", "030000,120000,0,inf,60000@0"],
-    ["a leading zero in the sequence", "30000,120000,0,inf,60000@07"],
-    ["surrounding space", " 30000,120000,0,inf,60000@0"],
-    ["a sequence above a uint32", "30000,120000,0,inf,60000@4294967296"],
-    ["a value above a uint32", "4294967296,120000,0,inf,60000@0"],
-    ["inf for a value that has no 'no limit'", "inf,120000,0,inf,60000@0"],
-    ["four values", "30000,120000,0,inf@0"],
-  ])("treats %s as no policy", (_name, text) => {
-    expect(decodeSyncPolicyParam(text)).toBeUndefined();
+  it("reads a provider that is another binding's name, with a dot and a hyphen inside", () => {
+    expect(parseInvitation(swap("provider", "com.example-chat"))).toEqual({
+      ok: true,
+      invitation: { ...MATRIX, messenger: "com.example-chat" },
+    });
   });
 });
 

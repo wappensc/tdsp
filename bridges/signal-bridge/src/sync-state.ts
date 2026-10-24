@@ -97,7 +97,8 @@ function parseJson(raw: string): unknown {
 }
 
 export function parseEnvelope(raw: string): Envelope | null {
-  // Deeper than any envelope may nest: not one, and never handed to the parser (§1.6, BND-2).
+  // Deeper than any envelope may nest: not one, and never handed to the parser
+  // (§1.6, JSN-1, BND-2).
   if (jsonTextTooDeep(raw)) {
     return null;
   }

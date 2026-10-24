@@ -75,21 +75,13 @@ function startFakeBridge(): Promise<{ server: Server; url: string; requests: unk
         res.end(
           JSON.stringify({
             bounds: { minIntervalMs: 15_000, maxBytes: null },
-            profiles: [
-              {
-                id: "standard",
-                label: "Standard",
-                description: "One message at most every 30 seconds",
-                values: {
-                  minIntervalMs: 30_000,
-                  maxIntervalMs: 120_000,
-                  minChars: 0,
-                  maxChars: null,
-                  expectedLatencyMs: 60_000,
-                },
-              },
-            ],
-            defaultProfile: "standard",
+            pacing: {
+              minIntervalMs: 30_000,
+              maxIntervalMs: 120_000,
+              minChars: 0,
+              maxChars: null,
+              expectedLatencyMs: 60_000,
+            },
           }),
         );
         return;
@@ -245,9 +237,8 @@ describe("MatrixMessengerPort", () => {
 
   it("transportProfile() reads the bridge's own statement of its limits", async () => {
     const profile = await port.transportProfile();
-    expect(profile?.defaultProfile).toBe("standard");
     expect(profile?.bounds.minIntervalMs).toBe(15_000);
-    expect(profile?.profiles.find((p) => p.id === "standard")?.values.minIntervalMs).toBe(30_000);
+    expect(profile?.pacing.minIntervalMs).toBe(30_000);
     expect(bridge.requests).toContainEqual({
       method: "GET",
       url: "/transport-profile",

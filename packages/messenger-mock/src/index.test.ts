@@ -35,22 +35,16 @@ describe("InMemoryMessengerPort", () => {
   });
 
   describe("transportProfile", () => {
-    it("is unlimited by default", async () => {
+    it("is unlimited: no bound and no pacing of its own (SND-16)", async () => {
       const profile = await new InMemoryMessengerPort().transportProfile();
-      expect(profile.defaultProfile).toBe("instant");
-      expect(profile.profiles.find((p) => p.id === "instant")?.values).toEqual({
+      expect(profile.bounds).toEqual({ minIntervalMs: null, maxBytes: null });
+      expect(profile.pacing).toEqual({
         minIntervalMs: 0,
         maxIntervalMs: null,
         minChars: 0,
         maxChars: null,
         expectedLatencyMs: 0,
       });
-      expect(profile.bounds).toEqual({ minIntervalMs: null, maxBytes: null });
-    });
-
-    it("also offers a slow profile, so the policy path can be seen and tested locally", async () => {
-      const profile = await new InMemoryMessengerPort().transportProfile();
-      expect(profile.profiles.find((p) => p.id === "slow")?.values.minIntervalMs).toBe(2_000);
     });
 
     it("is a valid profile", async () => {
@@ -248,5 +242,29 @@ describe("mockMessengerProvider", () => {
 
     mockMessengerProvider.faultInjection?.reconnect("bob");
     await expect(port.send(documentId, "bob", enc("hello"))).resolves.toBeDefined();
+  });
+});
+
+describe("a cursor and the bridge instance (TRN-18, TRN-19)", () => {
+  it("gives what came after the cursor, and everything with truncated once the cursor has left the window", async () => {
+    const port = new InMemoryMessengerPort();
+    await port.createDocument("doc-1", "alice");
+    const first = await port.send("doc-1", "alice", "one");
+    const second = await port.send("doc-1", "alice", "two");
+    await port.send("doc-1", "alice", "three");
+    expect((await port.receiveSince("doc-1", "bob", undefined)).deliveries).toHaveLength(3);
+    expect(await port.receiveSince("doc-1", "bob", second)).toMatchObject({
+      deliveries: [expect.objectContaining({ payload: "three" })],
+      truncated: false,
+    });
+    port.forgetOldest("doc-1", 1);
+    expect(await port.receiveSince("doc-1", "bob", first)).toMatchObject({ truncated: true });
+  });
+
+  it("changes its instance id on a restart", async () => {
+    const port = new InMemoryMessengerPort();
+    const before = await port.instance();
+    port.restartBridge();
+    expect(await port.instance()).not.toBe(before);
   });
 });

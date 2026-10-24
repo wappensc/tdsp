@@ -2,6 +2,7 @@ import {
   type Delivery,
   type DeliveryId,
   type DocumentId,
+  jsonTextTooDeep,
   type MemberId,
   type MessengerPort,
   type Permission,
@@ -12,21 +13,41 @@ import {
 import {
   type AttributionSnapshot,
   AttributionTracker,
+  changedRoots,
   getFragment,
   observeUpdates,
   type ReconciledDocument,
   type ReconciledFragment,
   transact,
+  UnsplittableUpdateError,
 } from "@tdsp/reconciliation";
-import { fragmentFrame, type IncompleteMessage, Reassembler } from "./fragments";
+import {
+  type ControlAnomaly,
+  type ControlOperation,
+  ControlState,
+  type ControlStateSnapshot,
+  type ControlTarget,
+  type ControlValue,
+  type ControlVector,
+  issuingVector,
+  MAX_ISSUE_BYTES,
+  MAX_TARGETS,
+  memberOf,
+  newDeviceTag,
+  rightIn,
+  valueFitsTarget,
+  valueOfHeads,
+} from "./control-state";
+import { controlDigestOf, digestOf } from "./digest";
 import {
   type AttributionOverlay,
+  bytesToBase64,
   type ControlFrame,
-  type ControlPermission,
   type DeclineFrame,
   type DeclineReason,
   type DecodedSnapshot,
   decodeFrame,
+  type ExtensionCheck,
   encodeControlFrame,
   encodeDeclineFrame,
   encodeEditFrame,
@@ -36,27 +57,39 @@ import {
   type Frame,
   FrameDecodeError,
   frameByteLength,
+  isExtensionName,
   isLayerId,
+  MAX_CRIT,
   newRandomId,
-  utf8ToText,
+  type OutgoingExtensions,
 } from "./framing";
-import { LossDetector, lossGraceMs, type SyncSuspicion } from "./loss-detector";
-import { type DocumentProfile, profileFor, projectionOf, YJS_PARAGRAPHS_1 } from "./profile";
+import {
+  type IncompleteAnswer,
+  LossDetector,
+  lossGraceMs,
+  type StateReport,
+  type SyncSuspicion,
+} from "./loss-detector";
+import {
+  checkProfileReads,
+  type DocumentProfile,
+  deletionsOf,
+  deletionsWithinOf,
+  holderOf,
+  profileFor,
+  projectionOf,
+  splitterOf,
+  YJS_PARAGRAPHS_1,
+} from "./profile";
 import { ResyncGate, type ResyncOutcome, type ResyncStatus } from "./resync-gate";
 import { type SendFailureClass, SendScheduler, type SendStatus } from "./send-scheduler";
-import {
-  definedOnly,
-  effectiveSyncPolicy,
-  resolveSyncPolicy,
-  type SyncPolicy,
-  type SyncPolicyJson,
-  syncPolicyFromJson,
-  syncPolicyToJson,
-} from "./sync-policy";
+import { strictJsonProblem } from "./strict-json";
+import { effectiveSyncPolicy, resolveSyncPolicy, type SyncPolicy } from "./sync-policy";
 
-export type { IncompleteMessage } from "./fragments";
+export type { ControlTarget, ControlValue } from "./control-state";
 export {
   DEFAULT_LOSS_GRACE_MS,
+  type IncompleteAnswer,
   type SyncSuspicion,
   type SyncSuspicionKind,
 } from "./loss-detector";
@@ -65,9 +98,7 @@ export type { SendStatus } from "./send-scheduler";
 export {
   clampSyncPolicy,
   DEFAULT_SYNC_POLICY,
-  decodeSyncPolicyParam,
   effectiveSyncPolicy,
-  encodeSyncPolicyParam,
   resolveSyncPolicy,
   type SyncPolicy,
   type SyncPolicyJson,
@@ -77,27 +108,20 @@ export {
 
 export type { DocumentId };
 
-/**
- * A synthetic author id marking content whose true author could not be
- * determined during a partial resync gap-heal (SPECIFICATION.md RSY-13) — the
- * overlay of a partial diff's responder describes *their own* view, not
- * necessarily this client's post-merge state, so it is not trustworthy to adopt.
- * A plain, distinctive string rather than a control character, which editors and
- * review tools tend to hide. Collision with a
- * real, user-chosen `MemberId` is made unlikely, not impossible — an
- * accepted trade-off, since this only ever affects *display*, never
- * document content or correctness.
- */
-const UNATTRIBUTED_AUTHOR_ID: MemberId = "__tdsp:unattributed__";
-
 /** How long an own send's echo may lag behind before its id is forgotten anyway. */
 const OWN_ECHO_WAIT_MS = 3_600_000;
+
+/** How many delivery ids an engine reading with a cursor remembers (TRN-18). */
+const MAX_REMEMBERED_DELIVERIES = 10_000;
 
 /** How many resync request ids of others an engine remembers, so a copy is not answered twice. */
 const MAX_REMEMBERED_REQUESTS = 1024;
 
-/** How many requests still to be answered a responder keeps: one per requester, the oldest dropped first (RSY-9). */
+/** How many requests still to be answered a responder keeps in all, the oldest dropped first (RSY-19). */
 const MAX_PENDING_REQUESTS = 64;
+
+/** How many of them one requester may have: several devices of one member may ask at once (RSY-19). */
+const MAX_REQUESTS_PER_REQUESTER = 4;
 
 /** How long a request still to be answered is kept; its requester asks again long before (RSY-4, RSY-5). */
 const PENDING_REQUEST_TTL_MS = 5 * 60_000;
@@ -121,7 +145,7 @@ const REMOTE_ORIGIN = Symbol("remote");
 /**
  * Thrown when this client refuses to send because it already knows it must not
  * (SPECIFICATION.md CTL-13): the document is closed, this member's permission is
- * explicitly `read`, or — for anyone but the creator — the creator has not yet
+ * explicitly `read` or revoked, or — for anyone but the creator — the creator has not yet
  * bootstrapped it. **Permanent** — a retry cannot succeed, unlike a rate limit or a
  * disconnection. After the bootstrap an *unknown* permission does not refuse.
  */
@@ -130,8 +154,18 @@ export class SendRefusedError extends Error {
    * `awaiting-bootstrap`: a participant other than the creator has not yet received the
    * creator's answer to its join — it has neither the document's content nor its control state,
    * so an edit of its own would compete with content it cannot see (SPECIFICATION.md CTL-13).
+   * `revoked`: the creator revoked this member's permission; refused as `read` is, on the
+   * document and on every layer (CTL-13, LAY-5). `capacity-conflict`: this client could not hold
+   * an operation of the creator for the bytes of control state and may lack a decision about
+   * itself (CTL-32); refused as `read` is, for everyone, the creator's devices included.
    */
-  readonly reason: "closed" | "read-only" | "awaiting-bootstrap";
+  readonly reason:
+    | "closed"
+    | "read-only"
+    | "revoked"
+    | "capacity-conflict"
+    | "awaiting-bootstrap"
+    | "too-large";
 
   constructor(reason: SendRefusedError["reason"], message: string) {
     super(message);
@@ -142,7 +176,7 @@ export class SendRefusedError extends Error {
 
 /**
  * Reported when the transport refuses a message as too large although it is within the
- * `maxBytes` the transport's own profile declared (SPECIFICATION.md SND-8): the change is
+ * `maxBytes` the transport's own profile declared (SPECIFICATION.md SND-22): the change is
  * dropped as for any `too-large`, and the profile, or the binding behind it, is wrong — no
  * setting of this client can avoid the refusal. `cause` is the transport's own error.
  */
@@ -154,16 +188,57 @@ export class TransportProfileError extends Error {
 }
 
 /**
+ * Whether a right refuses this client's own edits (CTL-13): `read`, and a revoked permission —
+ * an explicitly revoked member is not one the creator has not named yet. Unknown refuses nothing.
+ */
+function refuses(right: Permission | "revoked" | undefined): boolean {
+  return right === "read" || right === "revoked";
+}
+
+/** The smallest piece worth sending: below it a transport's limit leaves no room for content. */
+const MIN_PIECE_BYTES = 16;
+
+/**
+ * The transport's limit leaves no useful room for a piece beside a frame's other fields, or for an
+ * answer's control state: the change is dropped and reported (SND-8), permanently.
+ */
+export class PieceTooSmallError extends Error {
+  constructor(maxBytes: number, overhead: number) {
+    super(
+      `a message of at most ${maxBytes} bytes leaves no room for a piece: ${overhead} bytes are taken by the frame's other fields`,
+    );
+    this.name = "PieceTooSmallError";
+  }
+}
+
+export { UnsplittableUpdateError };
+
+/**
+ * What a client running `policy` promises with each edit and control frame (SND-14): it sends
+ * again within its longest wait at the latest — the heartbeat, if nothing else — or promises
+ * nothing.
+ */
+function dueOf(policy: SyncPolicy): number {
+  const wait = policy.maxIntervalMs;
+  return Number.isFinite(wait) ? Math.min(Math.round(wait), 0xffffffff) : 0;
+}
+
+/**
  * How the scheduler treats a failed send. Refusals this client makes
  * itself (closed, read-only) and a `TransportSendError` that is not retryable are
  * permanent — retrying cannot help, and retrying a demoted member's edits forever
  * would be wrong. A rate-limit refusal is retryable and also tells the scheduler the
- * pace is too fast. **Anything else is retryable**: dropping a change on a failure
- * nobody classified is exactly the fault this exists to remove.
+ * pace is too fast. A refusal only the person can lift (`needs-person`) is kept, but waits
+ * for the person or the longest back-off (TRN-20). **Anything else is retryable**: dropping a
+ * change on a failure nobody classified is exactly the fault this exists to remove.
  */
 function classifySendFailure(error: unknown): SendFailureClass {
   // A control frame whose number another device of the creator took is never worth sending.
   if (error instanceof SendRefusedError || error instanceof ControlFrameRejectedError) {
+    return { retryable: false };
+  }
+  // Too large to send in pieces at this transport's limit: no retry can change that (SND-19).
+  if (error instanceof UnsplittableUpdateError || error instanceof PieceTooSmallError) {
     return { retryable: false };
   }
   if (error instanceof TransportSendError) {
@@ -171,6 +246,7 @@ function classifySendFailure(error: unknown): SendFailureClass {
       retryable: error.retryable,
       rateLimited: error.reason === "rate-limited",
       retryAfterMs: error.retryAfterMs,
+      needsPerson: error.reason === "needs-person",
     };
   }
   return { retryable: true };
@@ -183,18 +259,17 @@ function classifySendFailure(error: unknown): SendFailureClass {
  */
 export class ControlFrameRejectedError extends Error {
   /**
-   * `sequence-conflict`: a control frame from the creator carries a sequence number the
-   * receiver already holds a *different* frame for (SPECIFICATION.md CTL-17) — the
-   * creator's application reused a number, which must not be decided silently.
-   * `control-state-unknown`: a device of the creator was asked to issue a control frame before
-   * it knows which numbers are taken (CTL-19); see `controlStateKnown`.
+   * `refused`: an operation from the creator this client does not hold, or parts of a snapshot,
+   * because they would exceed a bound on creator devices, holes or targets (CTL-30). `anomaly`: two
+   * different operations under one device and counter (CTL-24) — merged into one, and this is the
+   * report.
    */
   readonly reason:
     | "not-from-creator"
     | "creator-unknown"
     | "names-the-creator"
-    | "sequence-conflict"
-    | "control-state-unknown";
+    | "refused"
+    | "anomaly";
 
   constructor(reason: ControlFrameRejectedError["reason"], message: string) {
     super(message);
@@ -204,69 +279,68 @@ export class ControlFrameRejectedError extends Error {
 }
 
 /**
- * The creator's authoritative control state as of `sequence`, carried in its
- * resync response so a joiner, or a client that found a gap, needs nothing else
- * (SPECIFICATION.md §7.4).
+ * The creator's control state as a snapshot carries it (CTL-25): the document's
+ * profile (CTL-10), the control vector and, per target, what its operations had seen and the
+ * operations nothing supersedes. A joiner, or a client that found a hole, needs nothing else.
  */
-export interface ControlSnapshot {
-  /**
-   * The document's profile (SPECIFICATION.md §5, CTL-10): where the creator confirms
-   * what an invitation claimed. Always present in a snapshot a creator sends; may be absent
-   * from a control state an application persisted before profiles existed.
-   */
+export interface ControlSnapshot extends ControlStateSnapshot {
+  readonly profile: string;
+}
+
+/**
+ * A target on which a member's latest report holds an operation that this device of the creator
+ * neither holds unsuperseded nor supersedes (CTL-33): what only members hold — a decision of a
+ * device of the creator that vanished, say, or another operation under one device and counter. For
+ * display only (CTL-29): nothing of it holds here until the person confirms (`confirmRights`).
+ */
+export interface ControlDivergence {
+  /** The member whose latest report shows it. */
+  readonly reporter: MemberId;
+  readonly target: ControlTarget;
+  /** The value the report gives the target (CTL-23), as the member holds it; `true` for a close. */
+  readonly reported: ControlValue | undefined;
+  /** The value this device gives the target; `undefined` where it holds no operation on it. */
+  readonly held: ControlValue | undefined;
+}
+
+/** What a member's report holds beyond this device, per target (CTL-33): its value and the operations. */
+interface ReportedDivergence {
+  readonly reported: ControlValue | undefined;
+  readonly heads: readonly Omit<ControlOperation, "target">[];
+}
+
+/**
+ * What a device of the creator persists and restores (CTL-26): its control state, its device tag
+ * and counter, and its own operations not yet known to be sent, which a restarted engine sends
+ * again. Never sent to anyone: the snapshot in an answer is the plain `ControlSnapshot`.
+ */
+export interface PersistedControlState {
   readonly profile?: string;
-  readonly sequence: number;
-  readonly closed: boolean;
-  readonly members: Readonly<Record<MemberId, "read" | "write">>;
+  readonly control: ControlStateSnapshot;
+  /** This device's tag (CTL-20). */
+  readonly device?: string;
+  /** The last counter this device issued under its tag. */
+  readonly counter?: number;
+  /** The complete texts of this device's control frames not yet known to be sent. */
+  readonly unsent?: readonly string[];
   /**
-   * The send policy in force and the control sequence at which the
-   * creator set it (`0`: the policy the document was created with). Absent while a
-   * client has none — a joiner that has neither an invitation's policy nor a
-   * snapshot yet. A snapshot carrying a policy that is not newer than the reader's
-   * own does not replace it.
+   * For a device of the creator, always written: whether it had a basis for its control state
+   * (CTL-28) when the state was taken. Restored, the state is a basis only if it had one, so a new
+   * device that restarts is still a new device. A state persisted without the field counts as one
+   * with a basis.
    */
-  readonly policy?: SyncPolicyJson;
-  readonly policySequence?: number;
-}
-
-/**
- * What a creator's application persists and restores (SPECIFICATION.md CTL-12): the
- * control state, and the one control frame issued but not yet known to be sent — the
- * outbox. A restarted creator sends that same frame again before it issues anything new,
- * so a number the messenger may already have delivered is never given to another action.
- * Never sent to anyone: the snapshot in a resync answer is the plain `ControlSnapshot`.
- */
-export interface PersistedControlState extends ControlSnapshot {
-  /** The complete text of a control frame whose send was begun and not known to have ended. */
-  readonly pendingControl?: string;
-}
-
-/** A control action, as a `ControlConflict` names it. */
-export interface ControlConflictAction {
-  readonly action: "membership" | "close" | "policy";
-  /** For `membership`: the member concerned. */
-  readonly member?: MemberId;
-  /** For `membership`: the permission set, `null` for one taken away. */
-  readonly permission?: ControlPermission;
-}
-
-/**
- * Two different control frames from the creator under one number (SPECIFICATION.md CTL-17):
- * two devices of the creator acted before either had seen the other (CTL-18), or the creator's
- * application reused a number. This client kept the frame it saw first and rejected the other;
- * a participant that saw them in the other order kept the other one, so what the two actions
- * decide may differ between participants, and this version reconciles nothing. A resync does
- * not help. A new action of the creator on the same member or setting does: it supersedes both
- * wherever it arrives.
- */
-export interface ControlConflict {
-  readonly sequence: number;
-  /** The action this client kept: the frame it saw first under `sequence`. */
-  readonly kept: ControlConflictAction;
-  /** The action it rejected; the latest, when more than one came. */
-  readonly rejected: ControlConflictAction;
-  /** When this client first saw a conflict under `sequence` (epoch ms). */
-  readonly since: number;
+  readonly basis?: boolean;
+  /**
+   * For anyone but the creator: that this client had been bootstrapped (CTL-13, CTL-39) when the
+   * state was taken. Restored without it, a non-creator's state is not used at all.
+   */
+  readonly bootstrapped?: boolean;
+  /**
+   * That this client was in a capacity conflict when the state was taken (CTL-32): it could not
+   * hold an operation or a snapshot for the bytes of control state. Restored, the conflict holds on,
+   * since what it could not hold is not read again. Written only when true.
+   */
+  readonly capacityConflict?: boolean;
 }
 
 /**
@@ -274,8 +348,8 @@ export interface ControlConflict {
  * claim that something *is*: every suspicion is evidence that has lasted long enough to be
  * worth a person's attention, and each can have an innocent cause (a late message, a sender
  * who closed the application). What to do about one is a Resync. Nor is `"ok"` a claim that
- * nothing is (SPECIFICATION.md §10): it means no current evidence, never "synchronised" —
- * a creator whose request went `unanswered` may still lack an offline member's change (LOS-8).
+ * nothing is (SPECIFICATION.md LOS-15): it means no current evidence, never "synchronised" —
+ * a creator whose request went `unanswered` may still lack an offline member's change (LOS-20).
  */
 export interface SyncHealth {
   readonly state: "ok" | "suspected";
@@ -283,11 +357,12 @@ export interface SyncHealth {
   /** This client's own resync request, if any: outstanding, answered, or expired unanswered. */
   readonly resync: ResyncStatus;
   /**
-   * Large changes being received in parts, not yet complete: who from and how far along.
-   * Progress, not suspicion — a change spread over a rate-limited provider legitimately
-   * takes a long time; one that stops arriving is caught by the silence rule like any other.
+   * Answers to this client's own requests of which a piece is still missing, at once (LOS-14): a
+   * transfer under way. Once one has lacked a piece for longer than one more would take, it is also
+   * the suspicion `answer-incomplete`, and the engine asks again. A bootstrap completes with the
+   * answer's last piece (RSY-14), which may come first: the trust is there, not yet all the content.
    */
-  readonly incoming: readonly IncompleteMessage[];
+  readonly incompleteAnswers: readonly IncompleteAnswer[];
 }
 
 /**
@@ -304,8 +379,9 @@ const MAX_AUTOMATIC_LOSS_ATTEMPTS = 3;
 const MAX_AUTOMATIC_BOOTSTRAP_ATTEMPTS = 5;
 
 /**
- * "broadcast": a broadcast triggered by `edit()` failed — e.g. the channel
- * was removed, or a real messenger refused the send for good.
+ * "broadcast": something this client sends failed for good — a broadcast triggered by `edit()`
+ * (e.g. the channel was removed, or a real messenger refused the send for good), a resync answer,
+ * or an answer the document's profile could not compute for a request, which is let go (RSY-9).
  * `edit()` itself cannot report this: applying a local mutation always
  * succeeds, and the resulting broadcast happens asynchronously afterward.
  *
@@ -343,6 +419,109 @@ export interface ReceivedDecline {
 }
 
 export type { DeclineReason };
+
+/**
+ * The kinds of frame this engine writes an extension into. Not a control frame: its operation
+ * lives on in snapshots, which carry no extension (FRM-17), so what one added would reach only
+ * those who received the frame itself.
+ */
+export type ExtensionKind = "edit" | "heartbeat" | "resync-request" | "resync-response";
+
+/**
+ * An extension this client implements (SPECIFICATION.md FRM-9 to FRM-12, FRM-15 to FRM-17), as its
+ * public definition says: what this client writes of it, how a received value is checked, and who
+ * is told of one. The engine keeps nothing an extension carries and passes nothing on (FRM-17).
+ */
+export interface FrameExtension {
+  /**
+   * Its name: contains `.`, begins with a reverse domain name its definer controls and ends with
+   * `/` and its major version, such as `com.example.mood/1` (FRM-9, FRM-15). `com.example.mood/2`
+   * is another extension.
+   */
+  readonly name: string;
+  /** Whether a frame this client writes it into names it in `crit` (FRM-10), so a receiver that does not implement it rejects the frame. */
+  readonly critical?: boolean;
+  /**
+   * What this client writes under `name`, by kind; a kind left out carries none. Fixed for the
+   * engine's life, so that every size the engine works out before it sends holds (FRM-11): JSON
+   * values, at most 31 levels deep.
+   */
+  readonly values?: { readonly [K in ExtensionKind]?: unknown };
+  /**
+   * Whether a received value is one its definition allows. One it does not is ignored, or, when
+   * the frame names the extension in `crit`, rejects the frame (FRM-16). Without it, every value is.
+   */
+  readonly accepts?: (value: unknown, kind: Frame["kind"]) => boolean;
+  /**
+   * Called with the value a frame carried, once the engine has accepted and handled that frame —
+   * never for one it rejects (FRM-6), nor for this client's own. The value is the sender's,
+   * untrusted.
+   */
+  readonly receive?: (
+    value: unknown,
+    frame: { readonly kind: Frame["kind"]; readonly sender: MemberId },
+  ) => void;
+}
+
+const EXTENSION_KINDS: readonly ExtensionKind[] = [
+  "edit",
+  "heartbeat",
+  "resync-request",
+  "resync-response",
+];
+
+/**
+ * The checks of the extensions an application implements and what this client writes of them, by
+ * kind — or an error for a set no frame could carry (FRM-9 to FRM-11).
+ */
+function extensionsOf(extensions: readonly FrameExtension[]): {
+  checks: ReadonlyMap<string, ExtensionCheck>;
+  outgoing: ReadonlyMap<ExtensionKind, OutgoingExtensions>;
+} {
+  const checks = new Map<string, ExtensionCheck>();
+  for (const extension of extensions) {
+    if (!isExtensionName(extension.name)) {
+      throw new Error(`an extension name must contain a dot (FRM-9): ${extension.name}`);
+    }
+    if (checks.has(extension.name)) {
+      throw new Error(`the extension ${extension.name} is supplied twice`);
+    }
+    checks.set(extension.name, extension.accepts ?? (() => true));
+  }
+  if (extensions.filter((extension) => extension.critical === true).length > MAX_CRIT) {
+    throw new Error(`a frame's crit names at most ${MAX_CRIT} extensions (FRM-10)`);
+  }
+  const outgoing = new Map<ExtensionKind, OutgoingExtensions>();
+  for (const kind of EXTENSION_KINDS) {
+    const fields: Record<string, unknown> = {};
+    const crit: string[] = [];
+    for (const extension of extensions) {
+      const value = extension.values?.[kind];
+      if (value === undefined) {
+        continue;
+      }
+      const text = JSON.stringify(value) as string | undefined;
+      // Where the frame nests it: one level below the frame's own object (§1.6).
+      if (
+        text === undefined ||
+        jsonTextTooDeep(`{"v":${text}}`) ||
+        strictJsonProblem(text) !== undefined
+      ) {
+        throw new Error(
+          `the extension ${extension.name} writes a value that is not I-JSON within the nesting limit (FRM-11)`,
+        );
+      }
+      fields[extension.name] = JSON.parse(text);
+      if (extension.critical === true) {
+        crit.push(extension.name);
+      }
+    }
+    if (crit.length > 0 || Object.keys(fields).length > 0) {
+      outgoing.set(kind, { fields, crit });
+    }
+  }
+  return { checks, outgoing };
+}
 
 export interface DocumentEngineOptions {
   /**
@@ -387,8 +566,8 @@ export interface DocumentEngineOptions {
   batchWindowMs?: number;
 
   /**
-   * How often and how much this client sends, as *chosen*: the
-   * creator's values, or an invitation's. A floor between two messages
+   * How often and how much this client sends, as *it* chooses (SND-16): nothing of
+   * it is sent, and nobody else can change it. A floor between two messages
    * (`minIntervalMs`), the longest a change may wait (`maxIntervalMs`), size bounds
    * in changed characters (`minChars`, `maxChars`) and how long a message normally
    * takes to arrive (`expectedLatencyMs`). What is left out comes from the
@@ -396,18 +575,10 @@ export interface DocumentEngineOptions {
    * transport has none from the library's defaults: a message after a typing
    * pause, with no floor and no cap. The result is made consistent (`resolveSyncPolicy`), so no
    * combination can starve a pending change, and clamped to the transport's hard
-   * bounds — a value below its floor is raised to it, whoever chose it
-   * (`effectiveSyncPolicy`). Read the outcome from `DocumentEngine.syncPolicy`.
+   * bounds — a value below its floor is raised to it — and to the pace the creator set, which is a
+   * floor for everyone (SND-15). Read the outcome from `DocumentEngine.syncPolicy`.
    */
   syncPolicy?: Partial<SyncPolicy>;
-
-  /**
-   * The control sequence at which `syncPolicy` was set, when it comes from an
-   * invitation rather than being the creator's own initial choice (`0`, the
-   * default): a later policy change from the creator applies only if it is newer.
-   * Ignored for a creator re-attaching with `controlState`, which carries its own.
-   */
-  syncPolicySequence?: number;
 
   /**
    * Whether this client asks for a resync by itself: a joiner that got no
@@ -453,15 +624,14 @@ export interface DocumentEngineOptions {
   creatorMemberId?: MemberId;
 
   /**
-   * The creator's own control state, as the application last persisted it
-   * (SPECIFICATION.md CTL-12): given back when the creator re-attaches to
-   * its own document with `join()` — `create()` refuses it (LIF-5) — so its sequence counter continues instead of restarting at
-   * 1 — a restarted counter would have every control frame rejected as stale —
-   * and so its control snapshot, sent to joiners, still lists everyone it had
-   * granted. **Honoured only when `creatorMemberId` equals this client's own
-   * `memberId`**: a non-creator's persisted sequence could sit above a gap it had
-   * not noticed and mark a lost frame stale forever, so a non-creator always
-   * re-bootstraps its control state from the creator instead.
+   * This client's control state, as the application last persisted it (CTL-26), given back when
+   * it re-attaches to the document with `join()` — `create()` refuses it (LIF-5). For a device of
+   * the creator, its device tag and counter continue, what it had not yet sent goes out, and —
+   * when the state had a basis (`basis`, CTL-28) — its snapshot to joiners still lists everyone;
+   * without it, it is a new device with a new tag (CTL-27). For anyone else it is used only when it was taken once bootstrapped
+   * (`bootstrapped`): its rights show at once, and it bootstraps this client after its first
+   * read on from `restore.cursor` shows no gap (CTL-39, CTL-41); otherwise the creator's answer
+   * does.
    */
   controlState?: PersistedControlState;
 
@@ -481,20 +651,28 @@ export interface DocumentEngineOptions {
    * anyone else (CTL-13), never while this client may not edit. One message per restart, the
    * price of never losing such a change. Restoring changes what is shown, not what is
    * permitted, and the engine still asks for a resync when it joins (RSY-1).
+   *
+   * `cursor` is `DocumentEngine.cursor` as it stood when `state` was taken, with a transport that
+   * offers `receiveSince` (LIF-8): the engine reads on from there, and learns whether its transport
+   * still holds everything since — what a restored member's control state needs to bootstrap it.
+   * `instance` is `DocumentEngine.instance` as it stood with that cursor, with a transport that names
+   * its window's epoch (TRN-19): the first read compares the transport's with it, so a bridge that
+   * may have lost something while this client was gone shows it, and one that kept everything does
+   * not (LOS-9).
    */
   restore?: {
     readonly state: Uint8Array;
     readonly attribution?: AttributionSnapshot;
+    readonly cursor?: DeliveryId;
+    readonly instance?: string;
   };
 
   /**
-   * Called after every change to this client's control state — a control frame
-   * applied, one about to be sent, a snapshot adopted — so the application can persist
-   * it (see `controlState`). Only a creator's is worth persisting, and it must be
-   * persisted before this returns: the call that announces a pending control frame
-   * comes *before* the frame is sent (CTL-12). Not called while a device of the creator
-   * does not know its control state (`controlStateKnown`, CTL-19): what it holds then is
-   * not the creator's state, and restored it would pass for it.
+   * Called after every change to this client's control state — an operation applied, one about
+   * to be sent, a snapshot merged — so the application can persist it (see `controlState`). Only
+   * a device of the creator's is worth persisting, and it must be persisted before this returns:
+   * the call that announces a new operation comes *before* it is sent (CTL-26). A throw there
+   * leaves everything as it was, and nothing is sent.
    */
   onControlStateChange?: (state: PersistedControlState) => void;
   /**
@@ -502,11 +680,14 @@ export interface DocumentEngineOptions {
    * §6.5), at most once per sender. Information only: nothing in the document changes.
    */
   onDecline?: (decline: ReceivedDecline) => void;
-}
-
-/** Per-request state for `#considerBootstrapOverlay` — see `#bootstrapOverlaySelection`'s own comment. */
-interface BootstrapOverlaySelection {
-  hasAdopted: boolean;
+  /**
+   * Extensions this client implements (SPECIFICATION.md FRM-9 to FRM-12, FRM-15 to FRM-17). Each
+   * needs a public definition and ships with the application, like a profile. A frame whose `crit`
+   * names one that is not here is rejected (`unsupported-extension`); one it carries without `crit`
+   * is ignored. Two with one name, a name without `.`, more than 16 critical ones, or a value that
+   * is not JSON within the nesting limit are refused.
+   */
+  extensions?: readonly FrameExtension[];
 }
 
 /**
@@ -519,10 +700,14 @@ interface BootstrapOverlaySelection {
 interface IncomingResyncRequest {
   readonly id: string;
   readonly requester: MemberId;
-  /** The requester has no answer from the creator yet: the creator answers it even with nothing new (RSY-7). */
-  readonly bootstrap: boolean;
-  /** The requester's contiguous control sequence (CTL-9). */
-  readonly controlSequence: number;
+  /** The requester's control vector; `null` while it holds no snapshot from the creator (RSY-16). */
+  readonly control: ControlVector | null;
+  /** The digest of the requester's control state; `null` with `control` (LOS-12). */
+  readonly controlDigest: string | null;
+  /** The digest of the requester's content (LOS-12). */
+  readonly stateDigest: string;
+  /** The requester cannot tell what it lacks and asks for an answer regardless (LOS-9). */
+  readonly force: boolean;
   readonly stateVector: Uint8Array;
 }
 
@@ -551,21 +736,45 @@ export class DocumentEngine {
   readonly #ownUnechoed = new Map<DeliveryId, number>();
   /** The ids the previous non-empty `receive` answer held, to notice the window moving past them all (LOS-8). */
   #previouslyOffered = new Set<DeliveryId>();
-  /** When a truncated window was noticed; cleared once an answer to this engine's own request applies (LOS-8). */
+  /** When a truncated window was noticed; cleared once an answer to this engine's own request applies (LOS-19). */
   #historyTruncatedSince: number | undefined;
   // Whether the last `receive` failed (LOS-8).
   #receiveFailed = false;
+  // With a transport that takes a cursor (TRN-18): the last delivery id seen.
+  #cursor: DeliveryId | undefined;
+  // A non-creator restored with control state of an earlier bootstrap and a cursor: its first
+  // read decides whether that state bootstraps it (CTL-41).
+  #restoredBootstrapPending = false;
+  // This client's digests (LOS-12), kept until the content or the control state changes; and the
+  // digests of what it deleted within others' state vectors, by vector, kept as long.
+  #stateDigestCache: string | undefined;
+  #stateDigestWithinCache = new Map<string, string>();
+  // This engine's stream, as it runs now, and the number of its latest report in it (LOS-13): every
+  // heartbeat, request and answer says where it stands, so a receiver keeps only a stream's newest
+  // (LOS-17).
+  #stream = newRandomId();
+  #sequence = 0;
+  // What this engine's latest report stated: its heartbeat's, its request's or its answer's last
+  // piece's state, as it wrote it (LOS-13).
+  #lastReport: { readonly stateVector: Uint8Array; readonly stateDigest: string } | undefined;
+  #controlDigestCache:
+    | { readonly control: ControlState; readonly revision: number; readonly digest: string }
+    | undefined;
+  // With a transport that names its window's epoch, cursor or not: the one that answered the last
+  // read, or restored with the cursor (TRN-19, LOS-9).
+  #instance: string | undefined;
   // "Fully resolved" — answered, suppressed, or this client's own request.
   // Never reconsidered again once added (same "never retried" contract
   // #seenDeliveryIds already has).
   #seenResyncRequestIds = new Set<ResyncRequestId>();
   /**
    * Requests this engine may have to answer and has not yet — throttled, or nothing to offer
-   * yet (SPECIFICATION.md RSY-9): kept and reconsidered on every later `sync()`, one per
-   * requester (a newer request replaces an older one), bounded, and dropped after a while.
-   * Without this a request skipped once was never looked at again: its delivery had been seen.
+   * yet (SPECIFICATION.md RSY-9, RSY-19): kept and reconsidered on every later `sync()`, by request
+   * id, at most four per requester, in the order requesters are served (the one answered last at
+   * the end), bounded, and dropped after a while. Without this a request skipped once was never
+   * looked at again: its delivery had been seen.
    */
-  readonly #pendingResyncRequests = new Map<MemberId, PendingResyncRequest>();
+  readonly #pendingResyncRequests = new Map<MemberId, PendingResyncRequest[]>();
   // Resync request ids *this* client itself originated via
   // requestResync() — a subset of #seenResyncRequestIds, tracked
   // separately so sync() can recognize "a resync-response just answered
@@ -573,66 +782,60 @@ export class DocumentEngine {
   // (hasCompletedBootstrap).
   #ownResyncRequestIds = new Set<ResyncRequestId>();
   #lastResyncResponseAt: number | null = null;
-  // One entry per *true bootstrap* request this client itself made — never populated for a partial gap-heal
-  // request, which has no overlay-selection question to track (its
-  // response's overlay is never adopted at all). Read/written by
-  // #considerBootstrapOverlay(); never pruned, same as the other
-  // per-request maps above.
-  #bootstrapOverlaySelection = new Map<ResyncRequestId, BootstrapOverlaySelection>();
+  // The *true bootstrap* requests this client itself made — never a partial gap-heal request,
+  // whose response's overlay is never adopted at all. Read by #considerBootstrapOverlay(); never
+  // pruned, same as the other per-request sets above.
+  #bootstrapRequestIds = new Set<ResyncRequestId>();
+  // Whether an overlay was adopted for the bootstrap: the first one stands for the engine's life,
+  // however many of its bootstrap requests are answered (RSY-15).
+  #overlayAdopted = false;
   #unobserve: () => void;
   #unobserveAttribution: () => void;
   #onError: DocumentEngineErrorHandler;
   #syncPolicy: SyncPolicy;
   #transport: TransportProfile | undefined;
-  // The policy the creator set, or the invitation's until a newer one arrives:
-  // what `#syncPolicy` is derived from. `undefined` for a joiner that has been
-  // told none yet. `sequence` is the control sequence it was set at.
-  #policy: { values: Partial<SyncPolicy>; sequence: number } | undefined;
+  // What this client chose for its own pacing (SND-16): what `#syncPolicy` is derived from,
+  // with the transport's suggestion and bounds and the creator's pace (SND-15).
+  readonly #chosen: Partial<SyncPolicy> | undefined;
   #resyncResponseThrottleMs: number;
   #creatorMemberId: MemberId | undefined;
   readonly #profile: DocumentProfile;
   #onControlStateChange: ((state: PersistedControlState) => void) | undefined;
-  /** The creator's outbox: a control frame being sent, persisted before the send (CTL-12). */
-  #pendingControl: string | undefined;
-  /** Every control frame received, by sequence: a different one under a known number is a conflict (CTL-17). */
-  readonly #controlFrameTexts = new Map<number, string>();
-  /** The conflicts seen, by sequence: reported once through `onError`, kept for `controlConflicts`. */
-  readonly #controlConflicts = new Map<number, ControlConflict>();
   #onDecline: ((decline: ReceivedDecline) => void) | undefined;
   readonly #declinesReported = new Set<MemberId>();
-  // --- control state ---
-  // Explicit `read`/`write` grants only; the creator is implicit and never
-  // stored here, and an absent member is *unknown*, not denied.
-  #members = new Map<MemberId, "read" | "write">();
-  #closed = false;
-  // The highest sequence applied per target (`member:<id>` or `close`), so a
-  // replay or a superseded message is inert while a late message for a member
-  // nobody has mentioned since still applies.
-  #controlAppliedSeq = new Map<string, number>();
-  // A snapshot's sequence: every control frame at or below it is already
-  // reflected, so it is stale.
-  #controlFloor = 0;
-  // Every sequence seen above the floor, applied or stale, and the highest —
-  // the inputs of `controlGaps`.
-  #controlReceivedSeqs = new Set<number>();
-  #highestControlSeq = 0;
-  // The last sequence this client *issued* (creator only).
-  #issuedControlSeq = 0;
-  // Whether this device of the creator knows which control numbers are taken (CTL-19): false
-  // only from a join() as the creator without persisted control state, until it learns them.
-  #controlStateKnown = true;
-  // An answer to this device's own request arrived while its control state was unknown: the
-  // bootstrap completes once the control state is known (CTL-19).
-  #answeredWithoutControlState = false;
-  // Serialises the creator's control sends, so a failed send never consumes a
-  // number (a skipped number would look like a lost message forever).
-  #controlChain: Promise<unknown> = Promise.resolve();
+  // --- control state (§7) ---
+  // The operations of the creator's devices, merged by union (CTL-23, CTL-25). The creator is
+  // implicit and never a target; a member without a permission is *unknown*, not denied.
+  #control = new ControlState();
+  // A device of the creator's tag and the last counter it issued (CTL-20); none for anyone else.
+  #device: string | undefined;
+  #counter = 0;
+  // This device's operations not yet known to be sent, by "device:counter" (CTL-26).
+  readonly #unsent = new Map<string, string>();
+  // Counters participants reported, which a device of the creator without a basis counts as seen
+  // when it issues (CTL-27): only ever raised, never a source of values, and dropped once it has a
+  // basis (`#gainBasis`).
+  #reported: Record<string, number> = {};
+  // The latest control state a participant other than the creator reported, for display only (CTL-29).
+  #reportedState: ControlSnapshot | undefined;
+  // Per member, what its latest report holds that this device of the creator neither holds nor
+  // supersedes (CTL-33), oldest reporter first; at most MAX_TARGETS targets in all.
+  readonly #divergences = new Map<MemberId, Map<string, ReportedDivergence>>();
+  // Whether this device of the creator has a basis for its control state — it created the
+  // document, restored its state, merged another of its devices' snapshot, or applied an operation
+  // of the creator it did not issue itself, as a channel's history shows them. Reports and its own
+  // new operations are no basis: they say nothing about what the others hold. Without one it
+  // answers a joiner with a snapshot only when it decided about that joiner itself (CTL-27).
+  #controlBasis = false;
   #scheduler: SendScheduler;
   #detector: LossDetector;
-  // The slices of large frames that have not all arrived (bounded: it holds other people's input).
-  #reassembler = new Reassembler();
-  // The transport's largest message, if it says: a frame over it is spread or cut.
+  // The transport's largest message, if it says: a frame over it is sent in pieces (SND-17).
   #maxBytes: number | undefined;
+  // The extensions this client implements (FRM-16): how a received value is checked, what it
+  // writes by kind, and who is told of what a frame carried.
+  readonly #extensions: readonly FrameExtension[];
+  readonly #extensionChecks: ReadonlyMap<string, ExtensionCheck>;
+  readonly #outgoing: ReadonlyMap<ExtensionKind, OutgoingExtensions>;
   // `SendScheduler.droppedCount` as of the last `resync()` the transport accepted.
   #distributedThroughDrop = 0;
   // Content restored on join that may hold changes nobody else has: sent whole once this
@@ -646,6 +849,11 @@ export class DocumentEngine {
   #automaticLossAttempts = 0;
   #automaticBootstrapAttempts = 0;
   #lastAutomaticAttemptAt: number | null = null;
+  // Counts the episodes of suspicion, so that a request that goes out after its episode ended is
+  // not counted against the next one.
+  #lossEpisode = 0;
+  // A request of this client's own has taken the slot and waits in the scheduler to go out.
+  #requestWaiting = false;
   // Characters changed by the local transaction in progress: counted by the
   // plain-text observer, which Yjs fires before the `update` event that queues the
   // update, and taken by that event. Never counted while a remote update is applied.
@@ -668,7 +876,9 @@ export class DocumentEngine {
   // transact()/applyUpdate() returns, one call at a time (verified
   // empirically — see observePlainTextChanges's doc comment in
   // @tdsp/reconciliation).
-  #attributionAuthor: MemberId;
+  // `null` while applying content whose author this client cannot know: unattributed (ATR-2,
+  // RSY-13), never a MemberId of its own invention, which another engine would show as a person.
+  #attributionAuthor: MemberId | null;
 
   private constructor(
     documentId: DocumentId,
@@ -688,6 +898,10 @@ export class DocumentEngine {
     this.#attributionAuthor = memberId;
     this.#transport = transport;
     this.#maxBytes = transport?.bounds.maxBytes ?? undefined;
+    this.#extensions = options.extensions ?? [];
+    const extensions = extensionsOf(this.#extensions);
+    this.#extensionChecks = extensions.checks;
+    this.#outgoing = extensions.outgoing;
     const onSendStatusChange = options.onSendStatusChange;
     this.#resyncResponseThrottleMs = options.resyncResponseThrottleMs ?? 1000;
     this.#creatorMemberId = options.creatorMemberId;
@@ -695,39 +909,64 @@ export class DocumentEngine {
     this.#autoResync = options.autoResync ?? true;
     this.#onControlStateChange = options.onControlStateChange;
     this.#onDecline = options.onDecline;
+    if (
+      options.controlState !== undefined &&
+      options.creatorMemberId !== memberId &&
+      options.controlState.bootstrapped === true
+    ) {
+      // The creator's operations as this client last held them: they show at once, and count as a
+      // bootstrap only after a first read on from the persisted cursor without a gap (CTL-39, CTL-41).
+      this.#control = ControlState.from(options.controlState.control);
+      this.#restoredBootstrapPending = options.restore?.cursor !== undefined;
+      if (options.controlState.capacityConflict === true) this.#control.markCapacityConflict();
+    }
+    this.#cursor = options.restore?.cursor;
+    this.#instance = options.restore?.instance;
     if (options.controlState !== undefined && options.creatorMemberId === memberId) {
       const state = options.controlState;
-      this.#members = new Map(
-        Object.entries(state.members).filter(([member]) => member !== memberId),
-      );
-      this.#closed = state.closed;
-      this.#issuedControlSeq = state.sequence;
-      this.#highestControlSeq = state.sequence;
-      this.#controlFloor = state.sequence;
-      const restored = syncPolicyFromJson(state.policy);
-      if (restored !== undefined) {
-        this.#policy = { values: restored, sequence: state.policySequence ?? 0 };
+      this.#control = ControlState.from(state.control);
+      if (state.capacityConflict === true) this.#control.markCapacityConflict();
+      this.#device = state.device;
+      this.#counter = state.counter ?? 0;
+      for (const text of state.unsent ?? []) {
+        const frame = decodeFrame(text);
+        if (frame.kind === "control") {
+          this.#unsent.set(`${frame.device}:${frame.counter}`, text);
+          // Already part of the persisted state when this device issued it; a duplicate is inert.
+          this.#control.add({
+            device: frame.device,
+            counter: frame.counter,
+            target: frame.target,
+            value: frame.value,
+            seen: frame.seen,
+          });
+          this.#counter = Math.max(
+            this.#counter,
+            frame.device === state.device ? frame.counter : 0,
+          );
+        }
       }
-      this.#pendingControl = state.pendingControl;
+      // What it restores is a basis only if it was one (CTL-28): its own new operations and what
+      // participants reported are none, before a restart or after it.
+      if (state.basis !== false) {
+        this.#gainBasis();
+      }
     }
-    if (this.#policy === undefined && options.syncPolicy !== undefined) {
-      this.#policy = {
-        values: options.syncPolicy,
-        sequence: options.syncPolicySequence ?? 0,
-      };
+    if (options.creatorMemberId === memberId && this.#device === undefined) {
+      // A device of the creator without a tag of its own is a new device (CTL-20, CTL-27).
+      this.#device = newDeviceTag();
     }
-    this.#syncPolicy = effectiveSyncPolicy(transport, this.#policy?.values);
-    if (this.#policy === undefined && options.creatorMemberId === memberId) {
-      // A creator always has a policy of its own: the one its snapshot and its
-      // invitations carry, set at creation (sequence 0) until it changes it.
-      this.#policy = { values: this.#syncPolicy, sequence: 0 };
-    }
+    this.#chosen = options.syncPolicy;
+    this.#syncPolicy = this.#effectivePolicy();
 
-    const editFrameOverhead = frameByteLength(encodeEditFrame(documentId, new Uint8Array(3))) - 4;
+    const editFrameOverhead =
+      frameByteLength(
+        encodeEditFrame(documentId, new Uint8Array(3), 0xffffffff, this.#outgoing.get("edit")),
+      ) - 4;
     this.#scheduler = new SendScheduler({
       quietMs: options.batchWindowMs ?? 500,
       policy: this.#syncPolicy,
-      send: (update) => this.#broadcast(update),
+      send: (update, roots) => this.#broadcast(update, roots),
       classify: classifySendFailure,
       onDropped: (error) => this.#onError(this.#blameProfileFor(error), "broadcast"),
       onStatusChange: onSendStatusChange && (() => onSendStatusChange(this.sendStatus)),
@@ -740,32 +979,40 @@ export class DocumentEngine {
               // The edit frame's other fields, then the update as Base64: four characters for
               // every three bytes (SPECIFICATION.md §4).
               frameSize: (update) => editFrameOverhead + 4 * Math.ceil(update.length / 3),
-              fragment: (update) => {
-                // Cutting an edit is where it is refused if this client may not send one:
+              pieces: (update, roots) => {
+                // Splitting an edit is where it is refused if this client may not send one:
                 // the same permanent refusal a whole edit gets (`SendRefusedError`).
-                this.#assertMayEdit();
-                return this.#fragmentsOf(encodeEditFrame(documentId, update));
+                this.#assertMayChange(roots);
+                return this.#editFramesOf(update);
               },
               sendFrame: (frame) => this.#sendFrame(frame),
             },
     });
     this.#detector = new LossDetector({
-      memberId,
       creatorMemberId: () => this.#creatorMemberId,
       policy: () => this.#syncPolicy,
       pendingGapClients: () => this.#profile.pendingGapClients(this.document),
       lacksUpdatesOf: (stateVector) => this.#profile.lacksUpdatesOf(this.document, stateVector),
-      highestControlSequence: () => this.#highestControlSeq,
-      controlGaps: () => this.controlGaps,
+      controlHoles: () => this.#control.hasHoles,
+      lacksControlOf: (vector) => this.#control.lacksAnyOf(vector),
+      stateDigestWithin: (stateVector) => this.#stateDigestWithin(stateVector),
+      sameControlVector: (vector) => this.#control.hasVector(vector),
+      controlDigest: () => this.#controlDigest(),
+      isCreatorDevice: () => this.#creatorMemberId === this.memberId,
+      pace: () => this.#control.pace,
     });
 
-    this.#unobserve = observeUpdates(this.document, (update, origin) => {
+    this.#unobserve = observeUpdates(this.document, (update, origin, transaction) => {
+      this.#stateDigestCache = undefined;
+      this.#stateDigestWithinCache.clear();
       if (origin === REMOTE_ORIGIN) {
         return;
       }
       const chars = this.#localChars;
       this.#localChars = 0;
-      this.#scheduler.enqueue(update, chars);
+      // What the change touches decides whether it may be sent (LAY-7): only here, in the
+      // transaction, can the engine tell; the bytes alone do not say it for a deletion.
+      this.#scheduler.enqueue(update, chars, changedRoots(this.document, transaction));
     });
 
     this.#unobserveAttribution = projectionOf(this.#profile).observe(this.document, (change) => {
@@ -836,10 +1083,26 @@ export class DocumentEngine {
     );
     // A creator always already has its own document — no bootstrap needed.
     client.#hasCompletedBootstrap = true;
+    client.#gainBasis();
+    // Reported before the start frame goes out, though nothing is decided yet: its device tag and
+    // its basis are what a restart of this device restores (CTL-26, CTL-28). Without it, a creator
+    // that never issued an operation restarts as a device without a basis. If it cannot be
+    // persisted, nothing has left the device, and creating it again is no second start (LIF-5).
+    try {
+      client.#notifyControlStateChange();
+    } catch (error) {
+      client.dispose();
+      throw error;
+    }
     // Sent explicitly (not via the observer, which only attaches after
     // this point, and never batched, regardless of batchWindowMs) so the
     // seed is one clean send, not a duplicate.
-    const seedFrame = encodeEditFrame(documentId, profile.encodeState(document));
+    const seedFrame = encodeEditFrame(
+      documentId,
+      profile.encodeState(document),
+      client.#due(),
+      client.#outgoing.get("edit"),
+    );
     // Through the scheduler like every message (SPECIFICATION.md SND-2); an edit, so
     // receivers expect a follow-up and the heartbeat is owed after it.
     const seedId = await client.#scheduler.submit(
@@ -919,11 +1182,11 @@ export class DocumentEngine {
     }
     // Refused before anything is sent (PRF-3): the application can decline instead.
     const profile = profileFor(options.profile ?? YJS_PARAGRAPHS_1, options.profiles);
-    // The creator's persisted state names the document's profile; resuming under another
-    // would read the content wrongly and announce a profile everyone rejects (PRF-6).
+    // Persisted state names the document's profile; resuming under another would read the
+    // content wrongly, and for the creator announce a profile everyone rejects (PRF-6).
     const persistedProfile = options.controlState?.profile;
     if (
-      options.creatorMemberId === memberId &&
+      (options.creatorMemberId === memberId || options.controlState?.bootstrapped === true) &&
       persistedProfile !== undefined &&
       persistedProfile !== profile.id
     ) {
@@ -956,24 +1219,25 @@ export class DocumentEngine {
     );
     if (options.restore !== undefined) {
       client.#startFromRestored(options.restore.attribution);
-    }
-    // A new device of the creator, or one whose persisted state was lost, cannot tell a free
-    // control number from a taken one (CTL-19).
-    if (options.creatorMemberId === memberId && options.controlState === undefined) {
-      client.#controlStateKnown = false;
+      // A device of the creator that restores its content and a basis for its control state holds
+      // what its bootstrap would bring: no answer is owed to it, and a peer holding nothing it lacks
+      // rightly stays silent (RSY-17). Its request still goes out (RSY-1).
+      if (memberId === options.creatorMemberId && client.#controlBasis) {
+        client.#hasCompletedBootstrap = true;
+      }
     }
     try {
       await client.requestResync();
-    } catch (error) {
-      onError(error, "broadcast");
+    } catch {
+      // A request is no change of this client's: its failure is not reported as a dropped one
+      // (SND-10). The joiner asks again by itself (RSY-5), and `syncHealth.resync` shows the slot.
     }
     await client.sync();
-    // A control frame left pending by a restart may have been delivered or not: sent again
-    // now, unchanged, and retried until the transport accepts or refuses it (CTL-12), so it
-    // takes effect without waiting for the creator's next action. Not awaited: offline, it
-    // may take as long as the outage.
-    if (client.#pendingControl !== undefined) {
-      client.#resendPendingControl().catch((error: unknown) => onError(error, "broadcast"));
+    // Operations of this device not known to be sent before a restart go out again now,
+    // unchanged — a duplicate is inert (CTL-26). Not awaited: offline, it may take as long as
+    // the outage.
+    for (const [key, text] of client.#unsent) {
+      client.#sendControlFrame(key, text).catch((error: unknown) => onError(error, "broadcast"));
     }
     return client;
   }
@@ -999,9 +1263,10 @@ export class DocumentEngine {
 
   /**
    * The state of this client's outgoing changes: `idle`, `waiting`
-   * for a send window, or `retrying` after a failed send — with how many times it
-   * has failed, when the next attempt is due, and the failure's message. What a
-   * connection indicator should show for "my edits have not gone out".
+   * for a send window, `retrying` after a failed send, or `needs-person` after a refusal only
+   * the person can lift (TRN-20) — with how many times it has failed, when the next attempt is
+   * due, and the failure's message. What a connection indicator should show for "my edits have
+   * not gone out". Once the person acted, `flush()` sends at once.
    */
   get sendStatus(): SendStatus {
     return this.#scheduler.status;
@@ -1013,8 +1278,8 @@ export class DocumentEngine {
    * started, or it started from restored content (`restore`), and no `resync()` has sent the
    * whole state since — every part of it, when it is too large for one message. Dropping ends the send
    * job only — the change stays in this document, and every later change builds on it, so an
-   * application must not show the document as synchronised while this is true. `resync()` is
-   * the repair: it sends the whole state, once whatever caused the refusal is fixed. Held in
+   * application must not show the document as synchronised while this is true (SND-21). `resync()`
+   * is the repair: it sends the whole state, once whatever caused the refusal is fixed. Held in
    * memory only; conservative — any dropped message that carried content counts.
    */
   get hasUndistributedChanges(): boolean {
@@ -1039,19 +1304,141 @@ export class DocumentEngine {
       state: suspicions.length === 0 ? "ok" : "suspected",
       suspicions,
       resync: this.#resyncGate.status(),
-      incoming: this.#reassembler.incomplete(),
+      incompleteAnswers: this.#detector.incompleteAnswers(),
     };
   }
 
   /**
-   * The control conflicts this client has seen (SPECIFICATION.md CTL-17), by sequence: two
-   * different frames from the creator under one number, whose actions may now differ between
-   * participants. What an application should show as "permissions may differ" — for the members
-   * and settings named — until the creator acts on them again. Kept in memory only: a restarted
-   * engine starts with none. Not part of `syncHealth`, since a resync does not resolve one.
+   * Two different operations under one device and counter that this client holds (CTL-24): both
+   * are merged, so nothing is stuck; what an application may show in a diagnosis. In memory only.
    */
-  get controlConflicts(): readonly ControlConflict[] {
-    return [...this.#controlConflicts.values()].sort((a, b) => a.sequence - b.sequence);
+  get controlAnomalies(): readonly ControlAnomaly[] {
+    return this.#control.anomalies;
+  }
+
+  /**
+   * The control state a participant other than the creator last reported to this device of the
+   * creator (CTL-27, CTL-29): never applied, only something an application may show as
+   * unconfirmed while this device lacks the creator's own operations. `undefined` when none came.
+   */
+  get reportedControlState(): ControlSnapshot | undefined {
+    return this.#reportedState;
+  }
+
+  /**
+   * On a device of the creator, the targets on which a member's latest report holds an operation
+   * this device neither holds unsuperseded nor supersedes (CTL-33), by reporter: what only members
+   * hold, with the value the report gives each target and the value it has here — for display only
+   * (CTL-29). Automatic is only a collision under one device and counter and the union of snapshots
+   * (CTL-24, CTL-25); this stays until the person decides, by `confirmRights()` or by deciding the
+   * target again in knowledge of it. Empty for anyone but the creator. In memory: a restarted
+   * device learns it again from the answers to its request (RSY-1, RSY-17).
+   */
+  get controlDivergences(): readonly ControlDivergence[] {
+    const result: ControlDivergence[] = [];
+    for (const [reporter, targets] of this.#divergences) {
+      for (const [target, divergence] of targets) {
+        if (!divergence.heads.some((head) => !this.#control.knows(target, head))) {
+          targets.delete(target); // decided since: nothing of it is beyond this device any more
+          continue;
+        }
+        result.push({
+          reporter,
+          target: target as ControlTarget,
+          reported: divergence.reported,
+          held: this.#control.valueOf(target),
+        });
+      }
+      if (targets.size === 0) this.#divergences.delete(reporter);
+    }
+    return result;
+  }
+
+  /**
+   * The person's decision on every divergence a member reported (CTL-33): issues each diverging
+   * target again — but the close, which nothing undoes (LIF-7) — and counts as seen the counters of
+   * the operations the reports hold there, so that the new decision supersedes them everywhere. The
+   * value is the one `values` gives the target, the person's choice — the held or the reported value
+   * an application shows, say, or another; without one, the value this device holds, revoked or
+   * inherit (`null`) where it holds none, the pace 0. `values` may name only diverging targets but
+   * the close, each with a value the target can take; otherwise nothing is issued. The one place a
+   * device with a basis counts reported counters as seen (CTL-27, CTL-28), and only on this explicit
+   * call: a report supplies no value that holds unless the person chose it. A device of the creator
+   * only; resolves once every operation went out, as `setMembership` does.
+   */
+  async confirmRights(values?: ReadonlyMap<ControlTarget, ControlValue>): Promise<void> {
+    if (this.#creatorMemberId !== this.memberId) {
+      throw new Error(`${this.memberId} is not the creator of ${this.documentId}`);
+    }
+    const divergences = this.controlDivergences.filter(
+      (divergence) => divergence.target !== "close",
+    );
+    const diverging = new Set<string>(divergences.map((divergence) => divergence.target));
+    // Checked whole before anything is issued: a choice the call cannot take changes nothing.
+    for (const [target, value] of values ?? []) {
+      if (!diverging.has(target)) {
+        throw new Error(`${target} is no divergence this device can confirm (CTL-33)`);
+      }
+      if (!valueFitsTarget(target, value) || target === "close") {
+        throw new Error(`${target} cannot take ${String(value)} (CTL-20)`);
+      }
+    }
+    if (divergences.length === 0) {
+      return;
+    }
+    const covered: Record<string, number> = {};
+    for (const [, targets] of this.#divergences) {
+      for (const [target, divergence] of targets) {
+        if (target === "close") continue;
+        for (const head of divergence.heads) {
+          if (head.counter > (covered[head.device] ?? 0)) covered[head.device] = head.counter;
+        }
+      }
+    }
+    // An operation under this device's own tag beyond its counter is another copy's: under a new tag
+    // this device can count it as seen (CTL-22, CTL-24).
+    if (this.#device !== undefined && (covered[this.#device] ?? 0) > this.#counter) {
+      this.#leaveOwnTag();
+    }
+    const targets = [...new Set(divergences.map((divergence) => divergence.target))].sort();
+    await Promise.all(
+      targets.map((target) => {
+        // A choice of `null` is a choice too: revoked, or inherit on a layer.
+        const value =
+          values?.has(target) === true
+            ? (values.get(target) as ControlValue)
+            : (this.#control.valueOf(target) ?? (target === "pace" ? 0 : null));
+        return this.#issueControl(target, value, covered);
+      }),
+    );
+  }
+
+  /**
+   * Whether this client's control state is confirmed (CTL-28, CTL-29): always for anyone but the
+   * creator, who learns it from the creator; for a device of the creator once it has a basis — it
+   * created the document, restored its state, merged another of its devices' snapshot or read the
+   * creator's operations. A device without one may still decide, but what it shows of the others'
+   * rights is unconfirmed, and an application should not decide anything for the person on it.
+   */
+  get controlConfirmed(): boolean {
+    return this.#creatorMemberId !== this.memberId || this.#controlBasis;
+  }
+
+  /**
+   * Whether this client is in a capacity conflict (CTL-32): it could not hold an operation or a
+   * snapshot of the creator for the bytes of control state (CTL-30), so it may lack a decision —
+   * about itself, too. From then on it takes no new member or layer right, and refuses its own
+   * edits as `read` does (`SendRefusedError` reason `capacity-conflict`), the creator's devices
+   * included. Nothing ends it automatically: it is no convergence, but a state for a person to
+   * resolve, by continuing in a new document. Persisted with the control state (`capacityConflict`).
+   */
+  get capacityConflict(): boolean {
+    return this.#control.capacityConflict;
+  }
+
+  /** This device of the creator's tag (CTL-20); `undefined` for anyone else. */
+  get deviceTag(): string | undefined {
+    return this.#device;
   }
 
   /** The effective sync policy: defaults, the transport's suggestion and what was chosen, made consistent and clamped to the transport's bounds. */
@@ -1069,9 +1456,11 @@ export class DocumentEngine {
    * immediately for `create()` (a creator always already has its own
    * document); initially `false` for `join()`, becoming `true` once a
    * `resync-response` answering one of *this* client's own
-   * `requestResync()` calls has actually been applied (SPECIFICATION.md RSY-14) — for a
-   * device of the creator that joined without persisted control state, only once it also
-   * knows its control state (`controlStateKnown`, CTL-19).
+   * `requestResync()` calls has actually been applied (SPECIFICATION.md RSY-14): for anyone but the
+   * creator one that carries the creator's control state, for a device of the creator any. After a
+   * restart, a non-creator's own restored control state may do so instead (`controlState`, CTL-41),
+   * and a device of the creator is bootstrapped at once when it restores its content and a control
+   * state that had a basis (CTL-28).
    * A joiner whose creator never comes online stays `false` forever — an honest
    * limitation of a broadcast-only, history-less transport, not a bug to be papered
    * over. An application should show it as "waiting for the creator", distinct from
@@ -1082,16 +1471,24 @@ export class DocumentEngine {
   }
 
   /**
-   * Whether this device knows which control numbers are taken (SPECIFICATION.md CTL-19).
-   * `false` only for a device of the creator that joined without persisted control state — a
-   * new device, or one whose state was lost — until it adopts the snapshot of another device of
-   * the creator, reads the creator's control frames from 1 on, or is told to proceed
-   * (`proceedWithUnknownControlState`). Until then it issues no control frame, and its
-   * bootstrap is not complete. An application should show it as "waiting for your other
-   * device". Always `true` for anyone else, who issues no control frames.
+   * The last delivery this client has read, with a transport that offers `receiveSince`
+   * (TRN-18); `undefined` without one. An application that persists the content persists this
+   * with it, as `restore.cursor` (LIF-8).
    */
-  get controlStateKnown(): boolean {
-    return this.#controlStateKnown;
+  get cursor(): DeliveryId | undefined {
+    return this.#cursor;
+  }
+
+  /**
+   * The epoch of the transport's window (TRN-19) this client compares its next read with, with a
+   * transport that names one; `undefined` without. Read together with `cursor`, as they stand
+   * after the same `sync()`: an application persists the two together, as `restore.instance` and
+   * `restore.cursor` (LIF-8), and not while `syncHealth` holds *history truncated* evidence — the
+   * epoch that showed it would read as the one the cursor was read under, and a restart would hide
+   * the loss.
+   */
+  get instance(): string | undefined {
+    return this.#instance;
   }
 
   /** This document's fixed creator, if this client knows it (a joiner learns it from the invitation). */
@@ -1106,37 +1503,60 @@ export class DocumentEngine {
    * document never reopens.
    */
   get closed(): boolean {
-    return this.#closed;
+    return this.#control.closed;
   }
 
   /**
    * Every explicit `read`/`write` grant this client currently knows of. The
-   * creator is implicit and not listed; a member absent from the map is
-   * *unknown* — never granted, revoked, or not yet heard about — not denied.
+   * creator is implicit and not listed; a member absent from the map is revoked
+   * (`revokedMembers`) or *unknown* — never named, or not yet heard about — and an
+   * unknown one is not denied.
    */
   get memberPermissions(): ReadonlyMap<MemberId, "read" | "write"> {
-    return this.#members;
+    return this.#control.members;
   }
 
-  /** `"creator"` for the creator, the explicit grant if there is one, else `undefined` (unknown). */
-  permissionOf(member: MemberId): Permission | undefined {
+  /**
+   * The members whose permission the creator revoked (CTL-13, CTL-23): refused as a reader is, on
+   * the document and on every layer — not unknown, which refuses nothing after the bootstrap.
+   */
+  get revokedMembers(): ReadonlySet<MemberId> {
+    return this.#control.revoked;
+  }
+
+  /**
+   * `"creator"` for the creator, the explicit grant if there is one, else `undefined` — unknown,
+   * or revoked (`rightOf` tells them apart). With `layer`, the member's permission on that layer
+   * (LAY-5): its right there if the creator set one, and otherwise its permission on the document;
+   * a revoked member has none on any layer.
+   */
+  permissionOf(member: MemberId, layer?: string): Permission | undefined {
+    const right = this.rightOf(member, layer);
+    return right === "revoked" ? undefined : right;
+  }
+
+  /**
+   * A member's right as CTL-13 applies it: `"creator"` for the creator; `"read"` or `"write"`; or
+   * `"revoked"` once the creator revoked the member's permission, which refuses its edits as
+   * `read` does, on the document and on every layer, whatever right it holds there (LAY-5);
+   * `undefined` while the creator never named it (unknown). With `layer`, the right there, or
+   * where the member inherits, its permission on the document.
+   */
+  rightOf(member: MemberId, layer?: string): Permission | "revoked" | undefined {
     if (this.#creatorMemberId !== undefined && member === this.#creatorMemberId) {
       return "creator";
     }
-    return this.#members.get(member);
+    return rightIn(this.#control, member, layer);
   }
 
   /**
-   * For the creator, the last control sequence number it issued; for anyone
-   * else, the highest it has applied. Exposed so an application can persist the
-   * creator's counter — a creator that restarted from 1 would have every
-   * message rejected as stale (SPECIFICATION.md CTL-12).
+   * The rights the creator set on layers, by layer and then member (LAY-5): only where they
+   * differ from a member's permission on the document, which applies everywhere else.
    */
-  /**
-   * This client's control state, in the form `controlState` accepts back. For the
-   * creator, current as of the last number it issued; for anyone else, as of the
-   * highest sequence it has seen.
-   */
+  get layerRights(): ReadonlyMap<string, ReadonlyMap<MemberId, "read" | "write">> {
+    return this.#control.layerRights;
+  }
+
   /** The document's profile id (SPECIFICATION.md §5), fixed for its life. */
   get profile(): string {
     return this.#profile.id;
@@ -1151,53 +1571,19 @@ export class DocumentEngine {
     return [...this.document.share.keys()].filter((name) => isLayerId(name)).sort();
   }
 
+  /** This client's control state as a snapshot carries it (CTL-25). */
   get controlState(): ControlSnapshot {
-    return {
-      profile: this.#profile.id,
-      sequence: this.controlSequence,
-      closed: this.#closed,
-      members: Object.fromEntries(this.#members),
-      ...(this.#policy === undefined
-        ? {}
-        : {
-            policy: syncPolicyToJson(resolveSyncPolicy(this.#policy.values)),
-            policySequence: this.#policy.sequence,
-          }),
-    };
+    return { profile: this.#profile.id, ...this.#control.snapshot() };
   }
 
-  /**
-   * The policy an invitation should carry: the one in force, and the
-   * control sequence it was set at, so a joiner knows which later change is newer.
-   * `undefined` while this client has been told none.
-   */
-  get invitationPolicy(): { readonly policy: SyncPolicy; readonly sequence: number } | undefined {
-    return this.#policy === undefined
-      ? undefined
-      : { policy: resolveSyncPolicy(this.#policy.values), sequence: this.#policy.sequence };
+  /** Every creator device's highest counter this client holds without a gap (CTL-25). */
+  get controlVector(): ControlVector {
+    return this.#control.vector;
   }
 
-  get controlSequence(): number {
-    return this.#creatorMemberId === this.memberId
-      ? this.#issuedControlSeq
-      : this.#highestControlSeq;
-  }
-
-  /**
-   * Control sequence numbers at or below the highest seen that never arrived
-   * and are not covered by a snapshot: each is a control message this client
-   * has reason to believe was lost. Empty when nothing is known to be missing.
-   * *Detection* only — acting on it (asking the creator for a snapshot) is loss
-   * detection's job (SPECIFICATION.md LOS-5, LOS-6).
-   */
-  get controlGaps(): readonly number[] {
-    const gaps: number[] = [];
-    for (let n = this.#controlFloor + 1; n <= this.#highestControlSeq; n++) {
-      if (!this.#controlReceivedSeqs.has(n)) {
-        gaps.push(n);
-      }
-    }
-    return gaps;
+  /** The pace the creator set: the shortest interval between two messages of anyone (SND-15); `undefined` for none. */
+  get pace(): number | undefined {
+    return this.#control.pace;
   }
 
   /**
@@ -1221,14 +1607,42 @@ export class DocumentEngine {
    * mechanism.
    */
   async sync(): Promise<readonly Delivery[]> {
+    // A transport that takes a cursor says itself whether anything slid out unseen (TRN-18); for
+    // one that does not, LOS-8 still decides. One that names its bridge instance shows a restart
+    // either way (TRN-19, LOS-9).
+    const receiveSince = this.#messenger.receiveSince?.bind(this.#messenger);
     let deliveries: readonly Delivery[];
+    let truncated = false;
+    let restarted = false;
     try {
-      deliveries = await this.#messenger.receive(this.documentId, this.memberId);
+      if (receiveSince !== undefined) {
+        const answer = await receiveSince(this.documentId, this.memberId, this.#cursor);
+        deliveries = answer.deliveries;
+        truncated = answer.truncated;
+      } else {
+        deliveries = await this.#messenger.receive(this.documentId, this.memberId);
+      }
+      // After the read: a bridge that gives something up while it answers — an event it reads
+      // from its messenger for this very answer, say — has a new epoch by then, and this read
+      // shows it, the first one after a restart included (TRN-19, LOS-9).
+      if (this.#messenger.instance !== undefined) {
+        const instance = await this.#messenger.instance();
+        restarted = this.#instance !== undefined && instance !== this.#instance;
+        this.#instance = instance;
+      }
     } catch (error) {
       this.#receiveFailed = true;
       throw error;
     }
-    if (this.#receiveFailed) {
+    if (restarted) {
+      this.#historyTruncatedSince ??= Date.now();
+    }
+    if (receiveSince !== undefined) {
+      this.#receiveFailed = false;
+      if (truncated) {
+        this.#historyTruncatedSince ??= Date.now();
+      }
+    } else if (this.#receiveFailed) {
       // A bridge that could not answer may have restarted, and a restarted one may offer old
       // deliveries again (BRG-17): an overlap with the previous answer then proves nothing, so
       // the first answer after a failure is treated as a truncated history (LOS-8).
@@ -1251,167 +1665,35 @@ export class DocumentEngine {
         // update: once the bridge's own routing has claimed this delivery
         // belongs to this documentId, any of these is a loud "apply" failure,
         // never a silent skip (SPECIFICATION.md FRM-8).
-        let frameText = delivery.payload;
-        let frame: Frame = decodeFrame(frameText);
+        const frameText = delivery.payload;
+        const frame: Frame = decodeFrame(frameText, this.#extensionChecks);
         this.#checkFrameBelongsHere(frame);
-        if (frame.kind === "fragment") {
-          // One slice of a larger frame: held until every slice has arrived, then handled
-          // exactly as if the whole frame had come from this sender in one message. A sender
-          // mid-way through a large change has not gone quiet, so it counts as heard.
-          this.#detector.heardEdit(delivery.sender);
-          const whole = this.#reassembler.add(delivery.sender, frame);
-          if (whole === undefined) {
-            continue;
-          }
-          frameText = utf8ToText(whole);
-          const inner = decodeFrame(frameText);
-          if (inner.kind === "fragment") {
-            throw new Error("a fragment carried another fragment");
-          }
-          this.#checkFrameBelongsHere(inner);
-          frame = inner;
-        }
-        if (frame.kind === "heartbeat") {
-          // Nothing to apply: it only says what the sender has and that it has nothing more
-          // to say, so the loss detector can compare it with what this client holds.
-          this.#detector.heardHeartbeat(delivery.sender, frame.stateVector, frame.controlSequence);
-          continue;
-        }
-        if (frame.kind === "resync-request") {
-          // Nothing to apply — carries no document content (SPECIFICATION.md
-          // §8.2's own description, unchanged by folding this into a frame kind). Not heard
-          // as an edit either: nothing is due after a request, so counting it as one made
-          // every bystander suspect a joiner of going quiet and ask for a resync itself —
-          // a cascade on every join (SPECIFICATION.md LOS-3).
-          incomingResyncRequests.push({
-            id: frame.requestId,
-            requester: delivery.sender,
-            bootstrap: frame.bootstrap,
-            controlSequence: frame.controlSequence,
-            stateVector: frame.stateVector,
-          });
-          continue;
-        }
-        if (frame.kind === "decline") {
-          // Information, never state (SPECIFICATION.md DCL-3).
-          this.#reportDecline(delivery.sender, frame);
-          continue;
-        }
-        if (frame.kind === "control") {
-          this.#detector.heardEdit(delivery.sender);
-          this.#applyControlFrame(frame, delivery.sender, frameText);
-          this.#notifyControlStateChange();
-          continue;
-        }
-        if (frame.kind === "edit") {
-          this.#detector.heardEdit(delivery.sender);
-          // An edit frame is one member's batch, so its updates come from one Yjs client:
-          // that is how a gap the CRDT names by client id gets a member to blame.
-          const clients = this.#profile.updateClientIds(frame.update);
-          if (clients.length === 1) {
-            this.#detector.learnClient(clients[0] as number, delivery.sender);
-          }
-        }
-        // A close stops new edits at their sender, not in delivery (SPECIFICATION.md
-        // LIF-6): an edit sent before the close may arrive after it and is applied like
-        // any other, so every receiver ends with the same content whichever came first.
-        // Only the creator answers a resync request, with one
-        // exception: a restarted creator may lack content, and only a peer can
-        // give it back. So a response counts if it comes from the creator,
-        // or — for the creator alone — answers one of its own requests.
-        if (
-          frame.kind === "resync-response" &&
-          !this.#mayAcceptResyncResponse(delivery.sender, frame.respondsTo)
-        ) {
-          continue;
-        }
-        // The creator confirms the document's profile in its snapshot, and content of another
-        // profile must never be applied — none of this response is (SPECIFICATION.md CTL-10).
-        // The snapshot counts from the creator, and — relayed — from another device of this
-        // member answering this engine's own request (CTL-11); from nobody else.
-        const snapshotCounts =
-          frame.kind === "resync-response" &&
-          frame.control !== null &&
-          (delivery.sender === this.#creatorMemberId ||
-            (delivery.sender === this.memberId && this.#ownResyncRequestIds.has(frame.respondsTo)));
-        if (frame.kind === "resync-response" && frame.control !== null && snapshotCounts) {
-          if (frame.control.profile !== this.#profile.id) {
-            throw new FrameDecodeError(
-              "profile-mismatch",
-              `the creator's snapshot names the profile ${JSON.stringify(frame.control.profile)}, this document is ${this.#profile.id}`,
-            );
-          }
-          // The one snapshot rule the decoder cannot check, since only the engine knows who
-          // the creator is — checked here, before anything of the frame is applied (FRM-6).
-          if (
-            this.#creatorMemberId !== undefined &&
-            Object.hasOwn(frame.control.members, this.#creatorMemberId)
-          ) {
-            throw new FrameDecodeError(
-              "invalid-field",
-              "the creator's snapshot lists the creator as a member; its role is fixed (CTL-4)",
-            );
-          }
-        }
-        // A resync-response answering one of THIS client's own requests
-        // defaults to the unattributed sentinel, not delivery.sender
-        // (SPECIFICATION.md RSY-13).
-        // For a true bootstrap, #considerBootstrapOverlay below replaces
-        // this wholesale via attribution.restore() when it adopts an
-        // overlay; if it never does (malformed overlay, one already adopted),
-        // the honest fallback is "unattributed", never a
-        // confident misattribution to whoever happened to answer. For a
-        // partial gap-heal, the sentinel IS the final answer — no overlay
-        // is ever adopted for that case at all.
-        // The same holds for an answer to someone else's request: its sender sent it but did
-        // not necessarily write it (SPECIFICATION.md RSY-13), so whatever it adds here is
-        // unattributed too — only an answer to our own request can bring an overlay.
-        const isOwnResyncResponse =
-          frame.kind === "resync-response" && this.#ownResyncRequestIds.has(frame.respondsTo);
-        this.#attributionAuthor =
-          frame.kind === "resync-response" ? UNATTRIBUTED_AUTHOR_ID : delivery.sender;
-        this.#applyingRemote = true;
-        try {
-          this.#profile.applyUpdate(this.document, frame.update, REMOTE_ORIGIN);
-          applied.push(delivery);
-          if (frame.kind === "resync-response") {
-            if (frame.control !== null && snapshotCounts) {
-              this.#applyControlSnapshot(frame.control);
-            }
-            // A device of the creator holds the control state already, or learns it apart
-            // from content: any answer to its own request brings content (RSY-6), and its
-            // bootstrap completes once its control state is known (CTL-19). Anyone else is
-            // bootstrapped by an answer from the creator, or from another device of its own
-            // member, that carries control state (CTL-13); content alone does not.
-            const ownsControl = this.#creatorMemberId === this.memberId;
-            if (
-              isOwnResyncResponse &&
-              (ownsControl || (frame.control !== null && snapshotCounts))
-            ) {
-              if (!ownsControl || this.#controlStateKnown) {
-                this.#completeBootstrap();
-              } else {
-                this.#answeredWithoutControlState = true;
-              }
-              const selection = this.#bootstrapOverlaySelection.get(frame.respondsTo);
-              if (selection) {
-                this.#considerBootstrapOverlay(selection, frame.attribution);
-              }
-            }
-          }
-        } finally {
-          this.#applyingRemote = false;
-          this.#attributionAuthor = this.memberId;
+        checkProfileReads(frame, this.#profile);
+        if (this.#handleFrame(frame, delivery, applied, incomingResyncRequests)) {
+          this.#tellExtensions(frame, delivery.sender);
         }
       } catch (error) {
         // a corrupted/modified/misrouted/version-mismatched delivery must
         // not abort the rest of this batch — see DocumentEngineErrorHandler's
-        // doc comment above for what happens instead.
-        this.#onError(error, "apply");
+        // doc comment above for what happens instead. A rejection names its sender (FRM-7), so
+        // the application can show whose frames it cannot read (VER-4).
+        this.#onError(
+          error instanceof FrameDecodeError ? error.from(delivery.sender) : error,
+          "apply",
+        );
       }
     }
-    this.#noticeTruncatedWindow(deliveries);
-    this.#forgetWhatReceiveNoLongerOffers(deliveries);
+    if (receiveSince !== undefined) {
+      const last = deliveries[deliveries.length - 1];
+      if (last !== undefined) {
+        this.#cursor = last.id;
+      }
+      this.#forgetOldestSeen();
+    } else {
+      this.#noticeTruncatedWindow(deliveries);
+      this.#forgetWhatReceiveNoLongerOffers(deliveries);
+    }
+    this.#considerRestoredBootstrap(receiveSince !== undefined && !truncated);
     this.#detector.observe();
     this.#endTruncationNobodyAnswersTheCreator();
     await this.#considerAutomaticResync().catch((error: unknown) =>
@@ -1422,6 +1704,427 @@ export class DocumentEngine {
     return applied;
   }
 
+  /**
+   * Handles one frame `receive()` delivered and decoded: applies it, or collects it to answer
+   * later. `false` for an answer this client does not accept (RSY-6), which changes nothing; a
+   * frame it rejects throws.
+   */
+  #handleFrame(
+    frame: Frame,
+    delivery: Delivery,
+    applied: Delivery[],
+    incomingResyncRequests: IncomingResyncRequest[],
+  ): boolean {
+    if (frame.kind === "heartbeat") {
+      // Nothing to apply: it only says what the sender has and that it has nothing more
+      // to say, so the loss detector can compare it with what this client holds.
+      this.#detector.heardHeartbeat(delivery.sender, frame.stateVector, frame.control);
+      if (!this.#isOwnStream(delivery.sender, frame.stream)) {
+        this.#detector.heardReport(delivery.sender, frame);
+      }
+      return true;
+    }
+    if (frame.kind === "resync-request") {
+      // Nothing to apply — carries no document content (SPECIFICATION.md
+      // §8.2's own description, unchanged by folding this into a frame kind). Not heard
+      // as an edit either: nothing is due after a request, so counting it as one made
+      // every bystander suspect a joiner of going quiet and ask for a resync itself —
+      // a cascade on every join (SPECIFICATION.md LOS-11).
+      incomingResyncRequests.push({
+        id: frame.requestId,
+        requester: delivery.sender,
+        control: frame.control,
+        controlDigest: frame.controlDigest,
+        force: frame.force,
+        stateVector: frame.stateVector,
+        stateDigest: frame.stateDigest,
+      });
+      // What it holds, a report like a heartbeat's (LOS-13) — but not this engine's own request.
+      if (
+        !this.#ownResyncRequestIds.has(frame.requestId) &&
+        !this.#isOwnStream(delivery.sender, frame.stream)
+      ) {
+        this.#detector.heardReport(delivery.sender, frame);
+        this.#reportAgainIfMisleading(frame.stateVector, frame.stateDigest);
+      }
+      // What a participant holds of the creator's operations is a report for a device of the
+      // creator: counters only, which it may count as seen (CTL-27).
+      if (frame.control !== null) {
+        this.#takeReport(frame.control);
+      }
+      return true;
+    }
+    if (frame.kind === "decline") {
+      // Information, never state (SPECIFICATION.md DCL-3).
+      this.#reportDecline(delivery.sender, frame);
+      return true;
+    }
+    if (frame.kind === "control") {
+      // Not this device's own operation coming back: another device of this member, or anyone
+      // else, promised a follow-up (LOS-11).
+      if (delivery.sender !== this.memberId || frame.device !== this.#device) {
+        // Its source is its device; a heartbeat holds it once its control vector reaches it.
+        const { device, counter } = frame;
+        this.#detector.heardEdit(
+          delivery.sender,
+          frame.due,
+          `control:${device}`,
+          (_stateVector, control) => control !== null && (control[device] ?? 0) >= counter,
+        );
+      }
+      this.#applyControlFrame(frame, delivery.sender);
+      this.#followPace();
+      this.#notifyControlStateChange();
+      return true;
+    }
+    if (frame.kind === "edit") {
+      // An edit frame is one member's batch, so its updates come from one Yjs client:
+      // that is how a gap the CRDT names by client id gets a member to blame. One of this
+      // engine's own client is its own edit coming back, which promises it nothing; one of
+      // another device of its member counts like anyone's (LOS-11).
+      const clients = this.#profile.updateClientIds(frame.update);
+      const ownEcho =
+        delivery.sender === this.memberId &&
+        clients.length > 0 &&
+        clients.every((client) => client === this.document.clientID);
+      if (!ownEcho) {
+        // Its source is its CRDT clients; a heartbeat holds it once its state vector holds the update.
+        const update = frame.update;
+        const holds = holderOf(this.#profile);
+        this.#detector.heardEdit(
+          delivery.sender,
+          frame.due,
+          `edit:${[...clients].sort((a, b) => a - b).join(",")}`,
+          (stateVector) => holds(stateVector, update),
+        );
+        if (clients.length === 1) {
+          this.#detector.learnClient(clients[0] as number, delivery.sender);
+        }
+      }
+    }
+    // A close stops new edits at their sender, not in delivery (SPECIFICATION.md
+    // LIF-6): an edit sent before the close may arrive after it and is applied like
+    // any other, so every receiver ends with the same content whichever came first.
+    // Only the creator answers a resync request, with one
+    // exception: a restarted creator may lack content, and only a peer can
+    // give it back. So a response counts if it comes from the creator,
+    // or — for the creator alone — answers one of its own requests.
+    if (
+      frame.kind === "resync-response" &&
+      !this.#mayAcceptResyncResponse(delivery.sender, frame.respondsTo)
+    ) {
+      // Nothing of it is applied; its last piece still states what its sender holds, a report like
+      // a heartbeat, which any member may send (LOS-13).
+      if (
+        frame.stateVector !== null &&
+        frame.stateDigest !== null &&
+        !this.#isOwnStream(delivery.sender, frame.stream)
+      ) {
+        this.#detector.heardReport(
+          delivery.sender,
+          this.#answerReport(frame, frame.stateVector, frame.stateDigest),
+        );
+      }
+      return false;
+    }
+    // The creator confirms the document's profile in its snapshot, and content of another
+    // profile must never be applied — none of this response is (SPECIFICATION.md CTL-10).
+    // The snapshot counts from the creator, and — relayed — from another device of this
+    // member answering this engine's own request (CTL-25); from anyone else, answering a
+    // device of the creator, it is a report of counters and nothing more (CTL-27).
+    const snapshotCounts =
+      frame.kind === "resync-response" &&
+      frame.control !== null &&
+      (delivery.sender === this.#creatorMemberId ||
+        (delivery.sender === this.memberId && this.#ownResyncRequestIds.has(frame.respondsTo)));
+    if (frame.kind === "resync-response" && frame.control !== null && snapshotCounts) {
+      if (frame.control.profile !== this.#profile.id) {
+        throw new FrameDecodeError(
+          "profile-mismatch",
+          `the creator's snapshot names the profile ${JSON.stringify(frame.control.profile)}, this document is ${this.#profile.id}`,
+        );
+      }
+      // The one snapshot rule the decoder cannot check, since only the engine knows who
+      // the creator is — checked here, before anything of the frame is applied (FRM-6).
+      if (
+        this.#creatorMemberId !== undefined &&
+        Object.keys(frame.control.targets).some(
+          (target) => memberOf(target as ControlTarget) === this.#creatorMemberId,
+        )
+      ) {
+        throw new FrameDecodeError(
+          "invalid-field",
+          "the creator's snapshot lists the creator as a member; its role is fixed (CTL-4)",
+        );
+      }
+    }
+    // A resync-response answering one of THIS client's own requests
+    // is unattributed (`null`), not delivery.sender's
+    // (SPECIFICATION.md RSY-13, ATR-2).
+    // For a true bootstrap, #considerBootstrapOverlay below replaces
+    // this wholesale via attribution.restore() when it adopts an
+    // overlay; if it never does (malformed overlay, one already adopted),
+    // the honest fallback is "unattributed", never a
+    // confident misattribution to whoever happened to answer. For a
+    // partial gap-heal, unattributed IS the final answer — no overlay
+    // is ever adopted for that case at all.
+    // The same holds for an answer to someone else's request: its sender sent it but did
+    // not necessarily write it (SPECIFICATION.md RSY-13), so whatever it adds here is
+    // unattributed too — only an answer to our own request can bring an overlay.
+    const isOwnResyncResponse =
+      frame.kind === "resync-response" && this.#ownResyncRequestIds.has(frame.respondsTo);
+    this.#attributionAuthor = frame.kind === "resync-response" ? null : delivery.sender;
+    this.#applyingRemote = true;
+    // What this client held before an answer — to its own request or another's —, so that one which
+    // changed it is followed by a heartbeat (SND-11): others then see the new state, a healed
+    // deletion included, and the evidence they had of it ends (LOS-12, LOS-18).
+    const heldBefore = frame.kind === "resync-response" ? this.#heldNow() : undefined;
+    try {
+      this.#profile.applyUpdate(this.document, frame.update, REMOTE_ORIGIN);
+      if (heldBefore !== undefined && heldBefore !== this.#heldNow()) {
+        this.#scheduler.oweHeartbeat();
+      }
+      applied.push(delivery);
+      // A snapshot refused as a whole for the bytes of control state is not held, and bootstraps
+      // no one (CTL-13, CTL-32): the receiver does not hold the creator's control state.
+      let snapshotHeld = false;
+      if (frame.kind === "resync-response") {
+        if (frame.control !== null && snapshotCounts) {
+          snapshotHeld = this.#applyControlSnapshot(frame.control);
+        } else if (
+          frame.control !== null &&
+          isOwnResyncResponse &&
+          this.#creatorMemberId === this.memberId
+        ) {
+          this.#takeReport(frame.control.vector);
+          this.#reportedState = frame.control;
+          this.#noteCollisionsIn(frame.control, delivery.sender);
+          this.#keepDivergences(delivery.sender, frame.control);
+        }
+        // A piece applied, counted when it answers this client's own request; the last one states
+        // what the responder held as it answered, which this client holds once every piece is here
+        // (LOS-4, LOS-12, LOS-14).
+        if (!this.#isOwnStream(delivery.sender, frame.stream)) {
+          const report =
+            frame.stateVector === null || frame.stateDigest === null
+              ? null
+              : this.#answerReport(frame, frame.stateVector, frame.stateDigest);
+          this.#detector.heardAnswerPiece(delivery.sender, {
+            stream: frame.stream,
+            sequence: frame.sequence,
+            piece: frame.piece,
+            pieces: frame.pieces,
+            report,
+            own: isOwnResyncResponse,
+            request: frame.respondsTo,
+          });
+        }
+        // A device of the creator decides its control state itself: any answer to its own
+        // request brings content (RSY-6) and completes its bootstrap. Anyone else is
+        // bootstrapped by an answer from the creator, or from another device of its own
+        // member, that carries control state (CTL-13); content alone does not.
+        const ownsControl = this.#creatorMemberId === this.memberId;
+        if (isOwnResyncResponse) {
+          // Answered, whether or not it bootstraps: the request no longer holds the slot (RSY-4),
+          // and what this client holds now is what the responder sent since its state vector, so
+          // the follow-ups it expected are not owed any longer (LOS-16).
+          this.#resyncGate.answered();
+          this.#detector.answered();
+        }
+        if (isOwnResyncResponse && (ownsControl || snapshotHeld)) {
+          this.#completeBootstrap();
+          if (this.#bootstrapRequestIds.has(frame.respondsTo)) {
+            this.#considerBootstrapOverlay(frame.attribution);
+          }
+        }
+      }
+    } finally {
+      this.#applyingRemote = false;
+      this.#attributionAuthor = this.memberId;
+    }
+    return true;
+  }
+
+  /** This client's state digest (LOS-12): of what it deleted, which its state vector does not show. */
+  #stateDigest(): string {
+    this.#stateDigestCache ??= digestOf(deletionsOf(this.#profile)(this.document));
+    return this.#stateDigestCache;
+  }
+
+  /**
+   * The digest of what this client deleted of the items `stateVector` counts (LOS-12): of all it
+   * deleted when the vector is its own, of the part within it when this client holds more, and
+   * `undefined` when it lacks an insertion the vector counts — the vectors show that first — or its
+   * profile cannot restrict its deletions to a vector. Throws on bytes that are not a state vector.
+   */
+  #stateDigestWithin(stateVector: Uint8Array): string | undefined {
+    if (this.#profile.lacksUpdatesOf(this.document, stateVector)) {
+      return undefined;
+    }
+    if (!this.#profile.hasUpdatesSince(this.document, stateVector)) {
+      return this.#stateDigest();
+    }
+    const within = deletionsWithinOf(this.#profile);
+    if (within === undefined) {
+      return undefined;
+    }
+    const key = bytesToBase64(stateVector);
+    let digest = this.#stateDigestWithinCache.get(key);
+    if (digest === undefined) {
+      digest = digestOf(within(this.document, stateVector));
+      if (this.#stateDigestWithinCache.size >= 64) {
+        this.#stateDigestWithinCache.clear();
+      }
+      this.#stateDigestWithinCache.set(key, digest);
+    }
+    return digest;
+  }
+
+  /** What an answer's last piece states of its responder: a report (LOS-13); answers carry no control vector. */
+  #answerReport(
+    frame: { readonly stream: string; readonly sequence: number },
+    stateVector: Uint8Array,
+    stateDigest: string,
+  ): StateReport {
+    return {
+      stream: frame.stream,
+      sequence: frame.sequence,
+      stateVector,
+      stateDigest,
+      control: null,
+      controlDigest: null,
+    };
+  }
+
+  /**
+   * A request stated exactly what this client holds, and this client's latest report states
+   * deletions within its vector other than it holds now — ones it received since by ordinary
+   * edits: to the requester, which holds the same, that report shows a difference in digests no
+   * answer can end, since nobody has anything to give it. A heartbeat at once, a newer report of
+   * this stream, ends it (SND-24, LOS-18).
+   */
+  #reportAgainIfMisleading(stateVector: Uint8Array, stateDigest: string): void {
+    const last = this.#lastReport;
+    if (
+      last === undefined ||
+      stateDigest !== this.#stateDigest() ||
+      this.#profile.hasUpdatesSince(this.document, stateVector) ||
+      this.#profile.lacksUpdatesOf(this.document, stateVector)
+    ) {
+      return;
+    }
+    const within = this.#stateDigestWithin(last.stateVector);
+    if (within !== undefined && within !== last.stateDigest) {
+      this.#scheduler.oweHeartbeat({ now: true });
+    }
+  }
+
+  /** Whether a report comes from this engine's own stream: its own frame offered again (LOS-17). */
+  #isOwnStream(sender: MemberId, stream: string): boolean {
+    return sender === this.memberId && stream === this.#stream;
+  }
+
+  /**
+   * The number of this engine's next report in its stream (LOS-13). One that would run past a
+   * uint32 begins a new stream instead, as a restart does.
+   */
+  #nextSequence(): number {
+    if (this.#sequence >= 0xffffffff) {
+      this.#stream = newRandomId();
+      this.#sequence = 0;
+    }
+    this.#sequence += 1;
+    return this.#sequence;
+  }
+
+  /** This client's control digest (LOS-12): of the control state it holds. */
+  #controlDigest(): string {
+    const cached = this.#controlDigestCache;
+    if (
+      cached !== undefined &&
+      cached.control === this.#control &&
+      cached.revision === this.#control.revision
+    ) {
+      return cached.digest;
+    }
+    const digest = controlDigestOf(this.#control.snapshot());
+    this.#controlDigestCache = { control: this.#control, revision: this.#control.revision, digest };
+    return digest;
+  }
+
+  /** What this client holds, in one string: its state vector and its state digest. */
+  #heldNow(): string {
+    return `${bytesToBase64(this.#profile.encodeStateVector(this.document))}:${this.#stateDigest()}`;
+  }
+
+  /** `state`, as this engine's latest report states it (LOS-13): what a later request is held against. */
+  #reporting<T extends { readonly stateVector: Uint8Array; readonly stateDigest: string }>(
+    state: T,
+  ): T {
+    this.#lastReport = state;
+    return state;
+  }
+
+  /** What this client holds, as an answer's last piece states it (RSY-18). */
+  #ownState(): { readonly stateVector: Uint8Array; readonly stateDigest: string } {
+    return {
+      stateVector: this.#profile.encodeStateVector(this.document),
+      stateDigest: this.#stateDigest(),
+    };
+  }
+
+  /**
+   * A device of the creator learns from a member's report where its operations and the member's
+   * differ under one device and counter (CTL-31): it notes the place and reports it, so a person
+   * can decide that target again; it takes no value from the report (CTL-27).
+   */
+  #noteCollisionsIn(report: ControlStateSnapshot, reporter: MemberId): void {
+    for (const anomaly of this.#control.noteCollisionsIn(report)) {
+      this.#onError(
+        new ControlFrameRejectedError(
+          "anomaly",
+          `${reporter} holds another control operation under ${anomaly.device}:${anomaly.counter}; decide it again`,
+        ),
+        "apply",
+      );
+    }
+  }
+
+  /** Tells each extension this client implements what a frame it accepted carried of it (FRM-16). */
+  #tellExtensions(frame: Frame, sender: MemberId): void {
+    if (frame.extensions === undefined) {
+      return;
+    }
+    for (const extension of this.#extensions) {
+      if (Object.hasOwn(frame.extensions, extension.name)) {
+        extension.receive?.(frame.extensions[extension.name], { kind: frame.kind, sender });
+      }
+    }
+  }
+
+  /**
+   * After the first read of a non-creator restored with control state of an earlier bootstrap:
+   * that state bootstraps it when the read went on from the persisted cursor through
+   * `receiveSince`, was not truncated, showed no other evidence of a truncated history, and left no
+   * hole in a creator device's counters (CTL-41). Otherwise it waits for an answer, as on a
+   * first join. Its own request (RSY-1) stays outstanding either way.
+   */
+  #considerRestoredBootstrap(readOnWithoutTruncation: boolean): void {
+    if (!this.#restoredBootstrapPending) {
+      return;
+    }
+    this.#restoredBootstrapPending = false;
+    if (
+      readOnWithoutTruncation &&
+      this.#historyTruncatedSince === undefined &&
+      !this.#control.hasHoles &&
+      !this.#hasCompletedBootstrap
+    ) {
+      this.#hasCompletedBootstrap = true;
+      this.#notifyControlStateChange();
+    }
+  }
+
   /** Attributes restored content and marks it undistributed until it has been sent whole (`restore`). */
   #startFromRestored(attribution: AttributionSnapshot | undefined): void {
     if (attribution !== undefined) {
@@ -1429,7 +2132,7 @@ export class DocumentEngine {
     } else {
       const length = projectionOf(this.#profile).text(this.document).length;
       if (length > 0) {
-        this.attribution.recordInsert(0, length, UNATTRIBUTED_AUTHOR_ID);
+        this.attribution.recordInsert(0, length, null);
       }
     }
     this.#distributedThroughDrop = -1;
@@ -1438,8 +2141,10 @@ export class DocumentEngine {
 
   /**
    * Sends restored content whole, once, as soon as this client may edit (SND-8, CTL-13). Not
-   * awaited: a large document goes out over several permitted slots. A failure is reported,
-   * and the mark stays until a `resync()` succeeds.
+   * awaited: a large document goes out over several permitted slots, and an attempt the transport
+   * refuses for now is retried (`resync()`, SND-7). One refused for good — whole, or one of its
+   * pieces — is reported here, once, since `resync()` tells only its caller, and the mark stays
+   * until a `resync()` succeeds.
    */
   #sendRestoredOnce(): void {
     if (!this.#restoredUnsent) {
@@ -1451,31 +2156,78 @@ export class DocumentEngine {
       return; // not yet, or not at all: the content stays marked undistributed
     }
     this.#restoredUnsent = false;
-    this.resync().catch((error: unknown) => this.#onError(error, "broadcast"));
+    this.resync().catch((error: unknown) =>
+      this.#onError(this.#blameProfileFor(error), "broadcast"),
+    );
   }
 
   /**
    * Adds the requests heard in this `sync()` to those still to be answered and returns all of
-   * them, oldest first (RSY-9): one per requester — a newer request replaces an older one in its
-   * place, since a requester has one outstanding at a time (RSY-3) — at most
-   * `MAX_PENDING_REQUESTS`, none heard longer ago than `PENDING_REQUEST_TTL_MS`.
+   * them in the order they are served (RSY-19): requesters in turn — the one answered last at the
+   * end —, each requester's oldest first. A requester keeps at most four, by request id: several
+   * devices of one member may each have one outstanding (RSY-3, RSY-6); a fifth replaces its
+   * oldest, keeping the requester's place, so one that repeats itself pushes nobody back. At most
+   * `MAX_PENDING_REQUESTS` in all, the oldest dropped first, none heard longer ago than
+   * `PENDING_REQUEST_TTL_MS`.
    */
   #queueResyncRequests(heard: readonly IncomingResyncRequest[]): PendingResyncRequest[] {
     const now = Date.now();
     for (const request of heard) {
-      // Replacing keeps the requester's place: a requester that asks again because its
-      // request expired (RSY-5) must not go back to the end of the line behind a flood.
-      this.#pendingResyncRequests.set(request.requester, { ...request, heardAt: now });
+      const kept = this.#pendingResyncRequests.get(request.requester) ?? [];
+      if (kept.some((other) => other.id === request.id)) {
+        continue; // a copy of one already kept (RSY-16)
+      }
+      const next = [...kept, { ...request, heardAt: now }].slice(-MAX_REQUESTS_PER_REQUESTER);
+      this.#pendingResyncRequests.set(request.requester, next);
     }
-    for (const [requester, request] of this.#pendingResyncRequests) {
-      if (
-        now - request.heardAt > PENDING_REQUEST_TTL_MS ||
-        this.#pendingResyncRequests.size > MAX_PENDING_REQUESTS
-      ) {
+    for (const [requester, kept] of this.#pendingResyncRequests) {
+      const fresh = kept.filter((request) => now - request.heardAt <= PENDING_REQUEST_TTL_MS);
+      if (fresh.length === 0) {
         this.#pendingResyncRequests.delete(requester);
+      } else {
+        this.#pendingResyncRequests.set(requester, fresh);
       }
     }
-    return [...this.#pendingResyncRequests.values()];
+    let total = [...this.#pendingResyncRequests.values()].reduce(
+      (sum, kept) => sum + kept.length,
+      0,
+    );
+    while (total > MAX_PENDING_REQUESTS) {
+      let oldest: PendingResyncRequest | undefined;
+      for (const kept of this.#pendingResyncRequests.values()) {
+        const first = kept[0];
+        if (first !== undefined && (oldest === undefined || first.heardAt < oldest.heardAt))
+          oldest = first;
+      }
+      if (oldest === undefined) break;
+      this.#forgetPendingRequest(oldest, false);
+      total -= 1;
+    }
+    return [...this.#pendingResyncRequests.values()].flat();
+  }
+
+  /**
+   * Lets a kept request go (RSY-9, RSY-19). `served`: it was answered, so its requester moves to
+   * the end of the order, and the next answer goes to the requester heard longest ago.
+   */
+  #forgetPendingRequest(request: PendingResyncRequest, served: boolean): void {
+    const kept = this.#pendingResyncRequests.get(request.requester);
+    if (kept === undefined) {
+      return;
+    }
+    const rest = kept.filter((other) => other.id !== request.id);
+    this.#pendingResyncRequests.delete(request.requester);
+    if (rest.length > 0) {
+      if (served) {
+        this.#pendingResyncRequests.set(request.requester, rest);
+      } else {
+        // Not served: the requester keeps its place.
+        const order = [...this.#pendingResyncRequests];
+        this.#pendingResyncRequests.clear();
+        this.#pendingResyncRequests.set(request.requester, rest);
+        for (const [requester, others] of order) this.#pendingResyncRequests.set(requester, others);
+      }
+    }
   }
 
   /**
@@ -1501,8 +2253,8 @@ export class DocumentEngine {
 
   /**
    * The creator's *history truncated* evidence ends when a request it made after the evidence
-   * expired unanswered (SPECIFICATION.md LOS-8). A peer answers the creator only when it
-   * holds content the creator lacks (RSY-6, RSY-7), so silence means either nothing to recover or
+   * expired unanswered (SPECIFICATION.md LOS-20). A peer answers the creator only when it
+   * holds content the creator lacks (RSY-6, RSY-17), so silence means either nothing to recover or
    * nobody online to recover it from — and without this the creator would warn for ever after
    * every bridge hiccup. Everyone else waits for the creator's answer, which it must give.
    */
@@ -1560,6 +2312,30 @@ export class DocumentEngine {
   }
 
   /**
+   * With a cursor, `receive` offers nothing twice but after a restart (TRN-18), so the memory of
+   * processed deliveries only needs a bound: the oldest go first, this engine's own unechoed sends
+   * last, and the request ids as without a cursor.
+   */
+  #forgetOldestSeen(): void {
+    for (const id of this.#seenDeliveryIds) {
+      if (this.#seenDeliveryIds.size <= MAX_REMEMBERED_DELIVERIES) {
+        break;
+      }
+      if (!this.#ownUnechoed.has(id)) {
+        this.#seenDeliveryIds.delete(id);
+      }
+    }
+    for (const id of this.#seenResyncRequestIds) {
+      if (this.#seenResyncRequestIds.size <= MAX_REMEMBERED_REQUESTS) {
+        break;
+      }
+      if (!this.#ownResyncRequestIds.has(id)) {
+        this.#seenResyncRequestIds.delete(id);
+      }
+    }
+  }
+
+  /**
    * Grants, changes or revokes (`null`) `member`'s `read` or `write` permission.
    * **Creator only**: it broadcasts a sequence-numbered control
    * frame that every cooperating client honours, and applies it locally once the
@@ -1570,11 +2346,12 @@ export class DocumentEngine {
    * `"creator"` cannot be granted, and the creator's own record cannot be
    * changed: a creator is fixed at creation.
    *
-   * Like every control action, it resolves once the transport has accepted the frame. A send
-   * that fails for now is retried (`sendStatus` shows it), so while offline this waits. It
-   * rejects when the transport refuses the frame for good — then nothing changed — or when
-   * the engine is disposed first: then the frame stays pending in the persisted control state,
-   * and the restarted creator sends it (SPECIFICATION.md CTL-12).
+   * Like every control action it holds here at once and resolves once the transport has accepted
+   * the operation; a send that fails for now is retried (`sendStatus` shows it), so offline this
+   * waits while the decision already shows. It rejects when the transport refuses for good — the
+   * decision still holds and travels in every snapshot — or when the engine is disposed first:
+   * then the operation stays unsent in the persisted control state, and the restarted engine
+   * sends it (CTL-26).
    */
   async setMembership(member: MemberId, permission: "read" | "write" | null): Promise<void> {
     if ((permission as Permission | null) === "creator") {
@@ -1582,13 +2359,30 @@ export class DocumentEngine {
         "creator status cannot be granted — it is fixed at document creation and permanent",
       );
     }
-    await this.#issueControl({ action: "membership", member, permission }, () => {
-      if (member === this.memberId) {
-        throw new Error(
-          `${member}'s own creator status is permanent and cannot be changed via setMembership`,
-        );
-      }
-    });
+    if (member === this.memberId) {
+      throw new Error(
+        `${member}'s own creator status is permanent and cannot be changed via setMembership`,
+      );
+    }
+    await this.#issueControl(`member:${member}`, permission);
+  }
+
+  /**
+   * Sets `member`'s right on `layer` (LAY-5), as `setMembership` sets its permission. **Creator
+   * only.** `null` revokes it: the member's permission on the document applies there again.
+   */
+  async setLayerRight(
+    layer: string,
+    member: MemberId,
+    right: "read" | "write" | null,
+  ): Promise<void> {
+    if (!isLayerId(layer)) {
+      throw new Error(`${layer} is not a layer id (SPECIFICATION.md §5.6)`);
+    }
+    if (member === this.memberId) {
+      throw new Error(`${member}'s own creator status covers every layer and cannot be changed`);
+    }
+    await this.#issueControl(`layer:${layer}:member:${member}`, right);
   }
 
   /**
@@ -1598,48 +2392,23 @@ export class DocumentEngine {
    * terminal, and idempotent — closing an already-closed document does nothing.
    */
   async closeDocument(): Promise<void> {
-    if (this.#closed && this.#creatorMemberId === this.memberId) {
+    if (this.#control.closed && this.#creatorMemberId === this.memberId) {
       return;
     }
-    await this.#issueControl({ action: "close" });
+    await this.#issueControl("close", true);
   }
 
   /**
-   * Changes the send policy for everyone. **Creator only**, and a
-   * control action like a membership change: sequence-numbered, so a replay is inert
-   * and a lost one detectable, and applied by every cooperating client from the
-   * creator alone. `changes` is merged over the policy in force and the result made
-   * consistent and clamped to *this* transport's bounds, so the creator never
-   * broadcasts a policy it could not run itself; each receiver clamps to its own.
-   * Applied locally once the send has succeeded, like every control action.
+   * Sets the pace for everyone (SND-15): the shortest interval, in milliseconds,
+   * between two messages any participant sends for this document; `0` for none. **Creator only**.
+   * Every participant keeps to the larger of it and its own transport's floor, and may send slower;
+   * everything else about pacing stays each participant's own (SND-16).
    */
-  async setSyncPolicy(changes: Partial<SyncPolicy>): Promise<void> {
-    await this.#issueControl(() => ({
-      action: "policy",
-      policy: effectiveSyncPolicy(this.#transport, {
-        ...definedOnly(this.#policy?.values),
-        ...definedOnly(changes),
-      }),
-    }));
-  }
-
-  /**
-   * Lets this device of the creator issue control frames although it does not know which
-   * numbers are taken (SPECIFICATION.md CTL-19): from now on its control state is what it
-   * holds, and it is handed to `onControlStateChange` to persist. Call it only after telling
-   * the person that a change made now may conflict with one made on another device of theirs
-   * (CTL-17) — for a document whose other devices are gone for good, it is the only way its
-   * membership can change again. Does nothing when the control state is known already.
-   */
-  proceedWithUnknownControlState(): void {
-    if (this.#creatorMemberId !== this.memberId) {
-      throw new Error(`${this.memberId} is not the creator of ${this.documentId}`);
+  async setPace(intervalMs: number): Promise<void> {
+    if (!Number.isInteger(intervalMs) || intervalMs < 0 || intervalMs > 0xffffffff) {
+      throw new Error(`a pace is a whole number of milliseconds, got ${intervalMs}`);
     }
-    if (this.#controlStateKnown) {
-      return;
-    }
-    this.#learnControlState();
-    this.#notifyControlStateChange();
+    await this.#issueControl("pace", intervalMs);
   }
 
   /**
@@ -1650,6 +2419,10 @@ export class DocumentEngine {
    * full-state update does not depend on any specific prior delivery
    * having arrived, so applying it heals the gap regardless of what was
    * missed — at the cost of resending the whole document every time.
+   *
+   * Resolves once the transport has accepted all of it: a send refused for now is kept and
+   * retried after the back-off, as an edit is (SND-6, SND-7); one refused for good — whole, or one
+   * of its pieces — rejects, and that rejection is its only report (SND-8): `onError` is not told.
    *
    * A caller can only heal a peer if it itself has the content that peer
    * is missing; a channel with no currently-online member holding that
@@ -1666,14 +2439,18 @@ export class DocumentEngine {
     // The whole state as an edit of this client's own: refused where an edit would be (CTL-13).
     this.#assertMayEdit();
     // Every change dropped so far is in the state sent here, and counts as distributed once all
-    // of it has gone out — every part, when it is cut into fragments (SND-8). One dropped
-    // meanwhile, a part of this very message included, keeps the mark.
+    // of it has gone out — every piece, when it is too large for one message (SND-8). One dropped
+    // meanwhile, a piece of this very message included, keeps the mark.
     const droppedSoFar = this.#scheduler.droppedCount;
-    await this.#sendLarge(
-      encodeEditFrame(this.documentId, this.#profile.encodeState(this.document)),
-      {
-        armsHeartbeat: true,
-      },
+    const state = this.#profile.encodeState(this.document);
+    const whole = encodeEditFrame(this.documentId, state, this.#due(), this.#outgoing.get("edit"));
+    await this.#sendFrames(
+      this.#maxBytes === undefined || frameByteLength(whole) <= this.#maxBytes
+        ? [whole]
+        : this.#editFramesOf(state),
+      // An edit, possibly the only copy of a change nobody else has: kept and retried after a
+      // failure worth retrying, whole or in pieces alike (SND-6, SND-7), and shown as retrying.
+      { armsHeartbeat: true, retry: true, own: true },
     );
     this.#distributedThroughDrop = Math.max(this.#distributedThroughDrop, droppedSoFar);
   }
@@ -1697,14 +2474,14 @@ export class DocumentEngine {
    * and, if so, how much of a diff to send. When that state vector is
    * empty (`isEmptyStateVector` — this client has nothing at all, e.g.
    * `join()`'s own call), this is a *true bootstrap* request: it is marked
-   * in `#bootstrapOverlaySelection` below so `sync()` knows to consider
+   * in `#bootstrapRequestIds` below so `sync()` knows to consider
    * adopting the answer's attribution overlay when it arrives
    * (SPECIFICATION.md §5.4) — never marked for a
    * request made with existing content, which has no such question to
    * answer (a partial gap-heal response never adopts an overlay). No
-   * window or timer guards this: since only the creator answers a resync,
-   * there is exactly one possible response, and `#considerBootstrapOverlay`
-   * adopts it the moment it arrives.
+   * window or timer guards this: `#considerBootstrapOverlay` adopts the
+   * first answer's overlay the moment it arrives, and no later one, also
+   * when a repeated bootstrap request is answered too (RSY-15).
    */
   async requestResync(): Promise<ResyncOutcome> {
     return this.#requestResync(false);
@@ -1713,20 +2490,26 @@ export class DocumentEngine {
   /**
    * The one place a resync request is made, whoever is asking. It takes
    * the single slot first, before anything is sent, so two callers in the same tick cannot
-   * both send; a request made while one of ours is outstanding is coalesced into it, and one
-   * made inside the rate floor is refused, and neither sends anything.
+   * both send; a request made while one of ours is outstanding — or still waiting in the
+   * scheduler to go out — is coalesced into it and sends nothing. A person's request made inside
+   * the rate floor is refused; an automatic one is not: it waits in the scheduler for the floor
+   * (RSY-3, SND-2), so a client that keeps writing still gets to ask (LOS-6).
    */
   async #requestResync(automatic: boolean): Promise<ResyncOutcome> {
+    if (this.#requestWaiting) {
+      return { sent: false, reason: "in-flight" };
+    }
     const previousRequestAt = this.#resyncGate.lastRequestAt;
     const outcome = this.#resyncGate.begin({
       expiryMs: this.#resyncExpiryMs(),
-      floorMs: this.#scheduler.effectiveMinIntervalMs,
+      floorMs: automatic ? 0 : this.#scheduler.effectiveMinIntervalMs,
       automatic,
       lastMessageAt: this.#scheduler.lastSendAt,
     });
     if (!outcome.sent) {
       return outcome;
     }
+    this.#requestWaiting = true;
     let requestIdToForget: string | undefined;
     try {
       const stateVector = this.#profile.encodeStateVector(this.document);
@@ -1739,34 +2522,46 @@ export class DocumentEngine {
       this.#seenResyncRequestIds.add(requestId);
       this.#ownResyncRequestIds.add(requestId);
       if (this.#profile.isEmptyStateVector(stateVector)) {
-        this.#bootstrapOverlaySelection.set(requestId, { hasAdopted: false });
+        this.#bootstrapRequestIds.add(requestId);
       }
-      const frame = encodeResyncRequestFrame({
-        documentId: this.documentId,
-        requestId,
-        // Until the creator has answered, the answer itself is what this engine lacks — the
-        // creator's confirmation of the profile and its control state — even when the content
-        // has already arrived by ordinary edits (RSY-7, CTL-10). Likewise after a truncated
-        // history (LOS-8): only an answer can say nothing was lost, and an engine that lacks
-        // nothing would otherwise get none and keep suspecting a loss for ever.
-        bootstrap: !this.#hasCompletedBootstrap || this.#historyTruncatedSince !== undefined,
-        controlSequence: this.#contiguousControlSeq(),
-        stateVector,
-      });
+      const ownsControl = this.#creatorMemberId === this.memberId;
+      // Written when it goes out, not when it was asked for: it may wait for the floor, and what
+      // it says this client holds must be what it holds then (RSY-16, LOS-12).
+      const frame = () =>
+        encodeResyncRequestFrame({
+          documentId: this.documentId,
+          requestId,
+          // Until the creator has answered, the answer itself is what this engine lacks — the
+          // creator's confirmation of the profile and its control state — even when the content
+          // has already arrived by ordinary edits (RSY-16, CTL-10): `null` says so.
+          control: ownsControl || this.#hasCompletedBootstrap ? this.#control.vector : null,
+          controlDigest: ownsControl || this.#hasCompletedBootstrap ? this.#controlDigest() : null,
+          // After a truncated history only an answer can say nothing was lost (LOS-19).
+          force: this.#historyTruncatedSince !== undefined,
+          ...this.#reporting(this.#ownState()),
+          // Numbered as it is written, so a later report of this stream states a later state (LOS-13).
+          stream: this.#stream,
+          sequence: this.#nextSequence(),
+          extensions: this.#outgoing.get("resync-request"),
+        });
       // Through the scheduler, on the floor like any message; nobody expects a follow-up to a
-      // request, so it owes no heartbeat (SPECIFICATION.md SND-2, SND-11, LOS-3).
+      // request, so it owes no heartbeat (SPECIFICATION.md SND-2, SND-11, LOS-11).
       const id = await this.#scheduler.submit(
-        () => this.#messenger.send(this.documentId, this.memberId, frame),
+        () => this.#messenger.send(this.documentId, this.memberId, frame()),
         { armsHeartbeat: false },
       );
       this.#markOwnSend(id);
+      // Its expiry, and the floor for the next one, count from when it went out (RSY-4).
+      this.#resyncGate.sent(this.#resyncExpiryMs());
     } catch (error) {
       if (requestIdToForget !== undefined) {
         this.#ownResyncRequestIds.delete(requestIdToForget);
-        this.#bootstrapOverlaySelection.delete(requestIdToForget);
+        this.#bootstrapRequestIds.delete(requestIdToForget);
       }
       this.#resyncGate.abort(previousRequestAt);
       throw error;
+    } finally {
+      this.#requestWaiting = false;
     }
     return outcome;
   }
@@ -1802,30 +2597,37 @@ export class DocumentEngine {
     const now = Date.now();
     const expiry = this.#resyncExpiryMs();
     // A truncated window is evidence like any other, and the most urgent: nothing else may
-    // ever show what slid out unread (LOS-8).
+    // ever show what slid out unread (LOS-19).
     const suspicions = this.syncHealth.suspicions;
-    if (suspicions.length === 0) {
+    if (suspicions.length === 0 && this.#automaticLossAttempts > 0) {
       this.#automaticLossAttempts = 0;
+      this.#lossEpisode += 1;
     }
-    if (!this.#resyncGate.isFree) {
+    if (!this.#resyncGate.isFree || this.#requestWaiting) {
       return;
     }
 
     if (!this.#hasCompletedBootstrap) {
-      if (this.#automaticBootstrapAttempts >= MAX_AUTOMATIC_BOOTSTRAP_ATTEMPTS) {
-        return;
-      }
       const reference = Math.max(
         this.#resyncGate.lastRequestAt ?? 0,
         this.#lastAutomaticAttemptAt ?? 0,
       );
       const wait = Math.min(RESYNC_BACKOFF_CAP_MS, expiry * 2 ** this.#automaticBootstrapAttempts);
-      if (reference === 0 || now - reference >= wait) {
-        this.#automaticBootstrapAttempts += 1;
-        this.#lastAutomaticAttemptAt = now;
-        await this.#requestResync(true);
+      if (
+        this.#automaticBootstrapAttempts < MAX_AUTOMATIC_BOOTSTRAP_ATTEMPTS &&
+        (reference === 0 || now - reference >= wait)
+      ) {
+        this.#askAutomatically(() => {
+          this.#automaticBootstrapAttempts += 1;
+        });
+        return;
       }
-      return;
+      // A joiner has nothing to heal before its bootstrap. A device of the creator does: it edits
+      // and answers at once, and its evidence is answered as anyone's is (LOS-6), however its own
+      // bootstrap requests went.
+      if (this.#creatorMemberId !== this.memberId) {
+        return;
+      }
     }
 
     if (suspicions.length === 0 || this.#automaticLossAttempts >= MAX_AUTOMATIC_LOSS_ATTEMPTS) {
@@ -1838,7 +2640,7 @@ export class DocumentEngine {
         suspicion.kind === "history-truncated"
           ? 0
           : suspicion.kind === "sender-overdue"
-            ? policy.maxIntervalMs + 3 * grace
+            ? (suspicion.due ?? 0) + 3 * grace
             : 2 * grace;
       return now - suspicion.since >= after;
     });
@@ -1846,21 +2648,50 @@ export class DocumentEngine {
     const spaced =
       this.#lastAutomaticAttemptAt === null || now - this.#lastAutomaticAttemptAt >= spacing;
     if (due && spaced) {
-      this.#automaticLossAttempts += 1;
-      this.#lastAutomaticAttemptAt = now;
-      await this.#requestResync(true);
+      const episode = this.#lossEpisode;
+      this.#askAutomatically(() => {
+        if (this.#lossEpisode === episode) {
+          this.#automaticLossAttempts += 1;
+        }
+      });
     }
   }
 
   /**
-   * Immediately sends any local edits currently waiting to go out, without
-   * waiting for the quiet time, the floor between messages, or a retry's
-   * back-off. A no-op if nothing is queued — including whenever `batchWindowMs` is
-   * 0 (the default), since nothing is ever queued in that case. Rejects with the
-   * send's error if it fails; a failure worth retrying leaves the change queued for
-   * the scheduler's own retry, a permanent one drops it. Called
-   * automatically by `dispose()`, so a pending batch is never silently dropped when
-   * a client is torn down.
+   * Makes an automatic request, without waiting for it: it may wait in the scheduler for the
+   * floor (RSY-3), and a poll must not wait with it. Only a request that went out counts against
+   * the bound and the spacing (LOS-6, RSY-5); one the floor holds back holds the slot meanwhile.
+   * One the transport refused for good counts too, since asking again soon cannot help; one that
+   * could not go out for now counts for nothing and is asked again on a later poll, once the
+   * back-off allows (SND-7). Its failure is not a dropped change and is not reported (SND-10).
+   */
+  #askAutomatically(count: () => void): void {
+    const spent = (): void => {
+      count();
+      this.#lastAutomaticAttemptAt = Date.now();
+    };
+    this.#requestResync(true).then(
+      (outcome) => {
+        if (outcome.sent) {
+          spent();
+        }
+      },
+      (error: unknown) => {
+        if (!classifySendFailure(error).retryable) {
+          spent();
+        }
+      },
+    );
+  }
+
+  /**
+   * Sends any local edits currently waiting to go out without waiting for the quiet time or
+   * `minChars`, as soon as the floor between messages and any back-off permit: those are the
+   * provider's limit, which an explicit request does not lift (SND-2, SND-7). A no-op if nothing is
+   * queued — including whenever `batchWindowMs` is 0, since nothing is ever queued in that case.
+   * Rejects with the send's error if it fails; a failure worth retrying leaves the change queued
+   * for the scheduler's own retry, a permanent one drops it. Called automatically by `dispose()`,
+   * so a pending batch is never silently dropped when a client is torn down.
    */
   async flush(): Promise<void> {
     await this.#scheduler.flush();
@@ -1868,9 +2699,10 @@ export class DocumentEngine {
 
   /**
    * Stops broadcasting local edits. Does not affect other clients on the channel.
-   * Sends what is pending one last time; there is no retry after this, so a failure
-   * is reported through `onError` and the change is lost. A control frame still being
-   * retried is not lost: it stays pending in the persisted control state (CTL-12).
+   * Sends what is pending one last time, once the floor and any back-off permit (SND-2); there is
+   * no retry after this, so a failure is reported through `onError` and the change is lost. A
+   * control operation still being retried is not lost: it stays unsent in the persisted control
+   * state (CTL-26).
    */
   dispose(): void {
     this.#unobserve();
@@ -1907,16 +2739,31 @@ export class DocumentEngine {
   /**
    * Whether this client may send an edit of its own now (SPECIFICATION.md CTL-13): the
    * document is open, and it is the creator, or it has been bootstrapped by the creator and its
-   * permission is not `read`. What an application shows as an editable document.
+   * permission is neither `read` nor revoked. What an application shows as an editable document.
    */
   get mayEdit(): boolean {
-    if (this.#closed) {
+    if (this.#control.closed || this.#control.capacityConflict) {
       return false;
     }
     if (this.#creatorMemberId === this.memberId) {
       return true;
     }
-    return this.#hasCompletedBootstrap && this.#members.get(this.memberId) !== "read";
+    return this.#hasCompletedBootstrap && !refuses(this.rightOf(this.memberId));
+  }
+
+  /**
+   * Whether this client may send a change of `layer` now (LAY-5, LAY-6): as `mayEdit`, by its
+   * permission on that layer — its right there, or else its permission on the document; never
+   * once its permission is revoked.
+   */
+  mayEditLayer(layer: string): boolean {
+    if (this.#control.closed || this.#control.capacityConflict) {
+      return false;
+    }
+    if (this.#creatorMemberId === this.memberId) {
+      return true;
+    }
+    return this.#hasCompletedBootstrap && !refuses(this.rightOf(this.memberId, layer));
   }
 
   /**
@@ -1934,12 +2781,64 @@ export class DocumentEngine {
     }
   }
 
-  /** Refuses, permanently, when this client already knows it must not send. Never refuses on an *unknown* permission. */
-  #assertMaySend(): void {
-    if (this.#closed) {
+  /**
+   * Refuses, permanently, a change of its own that touches a part of the document this client may
+   * not write (LAY-6, LAY-7): the content by its permission, a layer by its permission there. A
+   * change that touches several is refused whole when one of them is not permitted.
+   */
+  #assertMayChange(roots: ReadonlySet<string>): void {
+    if (this.#control.closed) {
       throw new SendRefusedError("closed", `document is closed, no new writes: ${this.documentId}`);
     }
-    if (this.#creatorMemberId !== this.memberId && this.#members.get(this.memberId) === "read") {
+    this.#assertNoCapacityConflict();
+    if (this.#creatorMemberId === this.memberId) {
+      return;
+    }
+    // In the order `#assertMayEdit` refuses in: a known `read` or revocation before a bootstrap
+    // still awaited.
+    for (const root of roots.size === 0 ? ["content"] : roots) {
+      const layer = isLayerId(root) ? root : undefined;
+      const right = this.rightOf(this.memberId, layer);
+      if (right === "revoked") {
+        throw new SendRefusedError(
+          "revoked",
+          `${this.memberId}'s permission on ${this.documentId} is revoked`,
+        );
+      }
+      if (right === "read") {
+        throw new SendRefusedError(
+          "read-only",
+          layer === undefined
+            ? `${this.memberId} has read-only access to ${this.documentId}`
+            : `${this.memberId} has read-only access to the layer ${layer} of ${this.documentId}`,
+        );
+      }
+    }
+    if (!this.#hasCompletedBootstrap) {
+      throw new SendRefusedError(
+        "awaiting-bootstrap",
+        `${this.memberId} has not received ${this.documentId} from its creator yet`,
+      );
+    }
+  }
+
+  /**
+   * Refuses, permanently, when this client already knows it must not send: closed, `read`, or
+   * revoked (CTL-13). Never refuses on an *unknown* permission.
+   */
+  #assertMaySend(): void {
+    if (this.#control.closed) {
+      throw new SendRefusedError("closed", `document is closed, no new writes: ${this.documentId}`);
+    }
+    this.#assertNoCapacityConflict();
+    const right = this.rightOf(this.memberId);
+    if (right === "revoked") {
+      throw new SendRefusedError(
+        "revoked",
+        `${this.memberId}'s permission on ${this.documentId} is revoked`,
+      );
+    }
+    if (right === "read") {
       throw new SendRefusedError(
         "read-only",
         `${this.memberId} has read-only access to ${this.documentId}`,
@@ -1948,33 +2847,66 @@ export class DocumentEngine {
   }
 
   /**
-   * Sends a frame that is already complete — a fragment, or a whole frame no larger than a
-   * message. Deliberately not checked against permission or a closed document: whether an
-   * *edit* may be sent is decided where it is cut (`fragment`), and a resync answer must go
-   * out from a closed document, which still bootstraps a joiner.
+   * Refuses an edit of this client's own in a capacity conflict (CTL-32): it may lack a decision
+   * of the creator about itself, so it refuses as `read` refuses — whoever it is.
+   */
+  #assertNoCapacityConflict(): void {
+    if (this.#control.capacityConflict) {
+      throw new SendRefusedError(
+        "capacity-conflict",
+        `${this.memberId} could not hold the control state of ${this.documentId} within its bounds`,
+      );
+    }
+  }
+
+  /**
+   * Sends a frame that is already complete — one piece of a larger change, or a whole frame no
+   * larger than a message. Deliberately not checked against permission or a closed document:
+   * whether an *edit* may be sent is decided where it is split (`pieces`), and a resync answer
+   * must go out from a closed document, which still bootstraps a joiner.
    */
   async #sendFrame(frame: string): Promise<void> {
     const id = await this.#messenger.send(this.documentId, this.memberId, frame);
     this.#markOwnSend(id);
   }
 
-  /** `frame` cut into fragment frames a message can carry. Only ever called when the transport states a limit. */
-  #fragmentsOf(frame: string): string[] {
-    return fragmentFrame(frame, {
-      documentId: this.documentId,
-      maxBytes: this.#maxBytes as number,
-    });
+  /**
+   * The largest update a frame of `overhead` bytes besides its update can carry within the
+   * transport's limit: four characters of Base64 for every three bytes. Throws when the limit
+   * leaves no useful room — the change is then dropped and reported (SND-8).
+   */
+  #pieceBudget(overhead: number): number {
+    const budget = Math.floor(((this.#maxBytes as number) - overhead) / 4) * 3;
+    if (budget < MIN_PIECE_BYTES) {
+      throw new PieceTooSmallError(this.#maxBytes as number, overhead);
+    }
+    return budget;
+  }
+
+  /**
+   * `update` as edit frames of one piece each (SND-17): the profile splits it into updates
+   * that apply in any order (PRF-1). Throws `UnsplittableUpdateError` for an indivisible unit
+   * too large for a message (SND-19). Only ever called when the transport states a limit.
+   */
+  #editFramesOf(update: Uint8Array): string[] {
+    const due = this.#due();
+    const extensions = this.#outgoing.get("edit");
+    const overhead =
+      frameByteLength(encodeEditFrame(this.documentId, new Uint8Array(3), due, extensions)) - 4;
+    return splitterOf(this.#profile)(update, this.#pieceBudget(overhead)).map((piece) =>
+      encodeEditFrame(this.documentId, piece, due, extensions),
+    );
   }
 
   /**
    * Sends a frame that may be larger than one message — a resync answer, or `resync()`'s own
    * full state. Whole, it is submitted to the scheduler and goes out once the floor permits,
-   * ahead of any edit (SPECIFICATION.md SND-2, RSY-11); too large, it is cut and its
+   * ahead of any edit (SPECIFICATION.md SND-2, SND-20, RSY-11); too large, it is cut and its
    * fragments go out at the permitted rate, in order, and are retried like any send.
    * `armsHeartbeat`: an edit frame owes a heartbeat after it, an answer does not (SND-11).
    * Resolves once sent or queued.
    */
-  /** A `too-large` refusal of a message the transport's own `maxBytes` allowed is the profile's fault (SND-8). */
+  /** A `too-large` refusal of a message the transport's own `maxBytes` allowed is the profile's fault (SND-22). */
   #blameProfileFor(error: unknown): unknown {
     if (
       !(error instanceof TransportSendError) ||
@@ -1989,18 +2921,27 @@ export class DocumentEngine {
     );
   }
 
-  async #sendLarge(frame: string, options: { armsHeartbeat: boolean }): Promise<void> {
-    if (this.#maxBytes === undefined || frameByteLength(frame) <= this.#maxBytes) {
-      await this.#scheduler.submit(() => this.#sendFrame(frame), options);
+  /**
+   * Sends frames that together carry one change — `resync()`'s full state, or an answer: one
+   * frame through the scheduler like any message, several in order at the permitted rate, each
+   * piece retried like any send (SND-2, SND-20, RSY-11). A single frame is retried as well with
+   * `retry`, as `resync()`'s is: it is an edit, kept until the transport has accepted it (SND-6,
+   * SND-7). Waits for every piece, so a caller learns, as for one message, whether it all went out.
+   */
+  async #sendFrames(
+    frames: readonly string[],
+    options: { armsHeartbeat: boolean; retry?: boolean; own: boolean },
+  ): Promise<void> {
+    if (frames.length === 1) {
+      await this.#scheduler.submit(() => this.#sendFrame(frames[0] as string), options);
       return;
     }
-    // Waits for every part, so a caller learns, as for one message, whether it all went out.
-    await this.#scheduler.enqueueFrames(this.#fragmentsOf(frame));
+    await this.#scheduler.enqueueFrames(frames, { own: options.own });
   }
 
-  async #broadcast(update: Uint8Array): Promise<void> {
-    this.#assertMayEdit();
-    const frame = encodeEditFrame(this.documentId, update);
+  async #broadcast(update: Uint8Array, roots: ReadonlySet<string>): Promise<void> {
+    this.#assertMayChange(roots);
+    const frame = encodeEditFrame(this.documentId, update, this.#due(), this.#outgoing.get("edit"));
     const id = await this.#messenger.send(this.documentId, this.memberId, frame);
     this.#markOwnSend(id);
   }
@@ -2012,10 +2953,17 @@ export class DocumentEngine {
    * of an edit sent just before it, only a heartbeat can reveal.
    */
   async #broadcastHeartbeat(): Promise<void> {
+    const ownsControl = this.#creatorMemberId === this.memberId;
     const frame = encodeHeartbeatFrame({
       documentId: this.documentId,
-      controlSequence: this.#creatorMemberId === this.memberId ? this.#issuedControlSeq : 0,
-      stateVector: this.#profile.encodeStateVector(this.document),
+      // A device of the creator's control vector, so a lost operation shows (SND-11, LOS-10).
+      control: ownsControl ? this.#control.vector : null,
+      controlDigest: ownsControl ? this.#controlDigest() : null,
+      // What the state vector does not show, beside it (LOS-12).
+      ...this.#reporting(this.#ownState()),
+      stream: this.#stream,
+      sequence: this.#nextSequence(),
+      extensions: this.#outgoing.get("heartbeat"),
     });
     const id = await this.#messenger.send(this.documentId, this.memberId, frame);
     this.#markOwnSend(id);
@@ -2027,18 +2975,100 @@ export class DocumentEngine {
     attribution: object,
     control: ControlSnapshot | null,
   ): Promise<void> {
-    const frame = encodeResyncResponseFrame({
+    // One number in this engine's stream for the whole answer, in every piece; the state it states
+    // is the one the update was taken from (RSY-18, LOS-13).
+    const sequence = this.#nextSequence();
+    const state = this.#reporting(this.#ownState());
+    const frame = (piece: Uint8Array, number: number, last: boolean) =>
+      encodeResyncResponseFrame({
+        documentId: this.documentId,
+        respondsTo,
+        update: piece,
+        attribution: last ? attribution : null,
+        // The creator's control state; or, to another device of this member, the one this device
+        // holds; otherwise none, which nobody else would accept anyway.
+        control: last ? control : null,
+        // What this responder holds, in the last piece, which also says how many pieces there are:
+        // the requester holds it once every piece is there, and knows whether one is missing (RSY-18,
+        // LOS-12, LOS-14).
+        state: last ? state : null,
+        stream: this.#stream,
+        sequence,
+        piece: number,
+        extensions: this.#outgoing.get("resync-response"),
+      });
+    const whole = frame(update, 1, true);
+    if (this.#maxBytes === undefined || frameByteLength(whole) <= this.#maxBytes) {
+      await this.#sendFrames([whole], { armsHeartbeat: false, own: false });
+      return;
+    }
+    // A full-state answer scales with the document, so it is the frame most likely to exceed a
+    // transport's message size: the content goes in pieces, each a resync-response to the same
+    // request (SND-17), and the control state and the attribution overlay ride in the last one,
+    // or in one of their own with an empty update when they do not fit beside it.
+    const overhead = frameByteLength(frame(new Uint8Array(3), 0xffffffff, false)) - 4;
+    const pieces = splitterOf(this.#profile)(update, this.#pieceBudget(overhead));
+    const last = frame(pieces[pieces.length - 1] as Uint8Array, pieces.length, true);
+    const frames =
+      frameByteLength(last) <= (this.#maxBytes as number)
+        ? [...pieces.slice(0, -1).map((piece, index) => frame(piece, index + 1, false)), last]
+        : [
+            ...pieces.map((piece, index) => frame(piece, index + 1, false)),
+            this.#stateOnlyAnswer(
+              respondsTo,
+              attribution,
+              control,
+              sequence,
+              pieces.length + 1,
+              state,
+            ),
+          ];
+    await this.#sendFrames(frames, { armsHeartbeat: false, own: false });
+  }
+
+  /**
+   * The control state and the overlay of an answer, with an empty update: its last piece, `piece`
+   * (RSY-18). Attribution is display only (§5.4): when both do not fit, the overlay is left out; the
+   * control state must fit.
+   */
+  #stateOnlyAnswer(
+    respondsTo: ResyncRequestId,
+    attribution: object,
+    control: ControlSnapshot | null,
+    sequence: number,
+    piece: number,
+    state: { readonly stateVector: Uint8Array; readonly stateDigest: string },
+  ): string {
+    const empty = this.#profile.encodeState(this.#profile.createEmpty());
+    const extensions = this.#outgoing.get("resync-response");
+    const position = { stream: this.#stream, sequence, piece };
+    const withOverlay = encodeResyncResponseFrame({
       documentId: this.documentId,
       respondsTo,
-      update,
+      update: empty,
       attribution,
-      // The creator's control state; or, to another device of this member, the one this device
-      // holds without a gap (RSY-8); otherwise none, which nobody else would accept anyway.
       control,
+      state,
+      ...position,
+      extensions,
     });
-    // A full-state answer scales with the document, not the send window, so it is the
-    // frame most likely to exceed a transport's message size (analysis section 6.4).
-    await this.#sendLarge(frame, { armsHeartbeat: false });
+    if (frameByteLength(withOverlay) <= (this.#maxBytes as number)) {
+      return withOverlay;
+    }
+    const withoutOverlay = encodeResyncResponseFrame({
+      documentId: this.documentId,
+      respondsTo,
+      update: empty,
+      attribution: null,
+      control,
+      state,
+      ...position,
+      extensions,
+    });
+    if (frameByteLength(withoutOverlay) > (this.#maxBytes as number)) {
+      throw new PieceTooSmallError(this.#maxBytes as number, frameByteLength(withoutOverlay));
+    }
+    return withoutOverlay;
   }
 
   /**
@@ -2086,12 +3116,10 @@ export class DocumentEngine {
    * to *be* a full snapshot (verified: byte-identical), so no special-casing is
    * needed for that case.
    *
-   * A send failure here (disconnected, a size or rate limit — anything) is
-   * deliberately **not** routed to `onError`, unlike the manual `resync()` button:
-   * this automatic, background response is best-effort, and surfacing its failure
-   * would paint a confusing, self-inflicted-looking warning on a pane whose member
-   * did nothing to cause it. It is not forgotten either: a failure worth retrying puts the
-   * request back to be answered later (RSY-9).
+   * A send failure here that is worth retrying (disconnected, a rate limit) is not routed to
+   * `onError`: the request goes back to be answered later (RSY-9), and the next send waits out
+   * the back-off. An answer refused for good is reported once, as SND-8 requires of every
+   * dropped send, and the request is let go.
    */
   async #respondToResyncRequests(requests: readonly PendingResyncRequest[]): Promise<void> {
     const now = Date.now();
@@ -2099,76 +3127,99 @@ export class DocumentEngine {
       this.#creatorMemberId !== undefined && this.memberId === this.#creatorMemberId;
 
     for (const request of requests) {
-      // This engine's own request is recognised by its id, not by its requester: another
-      // device of this member asks under the same MemberId (RSY-6).
-      if (this.#ownResyncRequestIds.has(request.id) || this.#seenResyncRequestIds.has(request.id)) {
-        this.#seenResyncRequestIds.add(request.id);
-        this.#pendingResyncRequests.delete(request.requester);
-        continue;
-      }
-      const requesterIsCreator =
-        this.#creatorMemberId !== undefined && request.requester === this.#creatorMemberId;
-      // Another device of this member: answered as the creator answers everyone (RSY-6), with
-      // this device's control state if it holds every control frame up to its highest.
-      const requesterIsOwnDevice =
-        this.#creatorMemberId !== undefined && request.requester === this.memberId;
-      if (!isCreator && !requesterIsCreator && !requesterIsOwnDevice) {
-        this.#seenResyncRequestIds.add(request.id); // not ours to answer: only the creator answers
-        this.#pendingResyncRequests.delete(request.requester);
-        continue;
-      }
-      const requested = {
-        controlSequence: request.controlSequence,
-        stateVector: request.stateVector,
-      };
-      const relayedControl = isCreator ? undefined : this.#relayableControlState(request);
-      // Something to offer is either content the requester lacks, or control state it is
-      // behind on — the creator's, or the one this device relays to another device of its own
-      // member: a lost membership change leaves the content diff empty and still needs healing.
-      const hasContent = this.#profile.hasUpdatesSince(this.document, requested.stateVector);
-      const hasControl =
-        (isCreator &&
-          this.#controlStateKnown &&
-          this.#issuedControlSeq > requested.controlSequence) ||
-        (relayedControl !== undefined && relayedControl.sequence > requested.controlSequence);
-      const mustAnswerBootstrap = request.bootstrap && (isCreator || relayedControl !== undefined);
-      if (!hasContent && !hasControl && !mustAnswerBootstrap) {
-        continue; // nothing to offer yet — may change by a later tick
-      }
-      if (
-        this.#lastResyncResponseAt !== null &&
-        now - this.#lastResyncResponseAt < this.#resyncResponseThrottleMs
-      ) {
-        continue; // still reconsidered on a later tick
-      }
-
-      this.#seenResyncRequestIds.add(request.id);
-      this.#pendingResyncRequests.delete(request.requester);
-      this.#lastResyncResponseAt = now;
       try {
-        const update = this.#profile.encodeStateSince(this.document, requested.stateVector);
-        // Always this responder's own current attribution state, sent
-        // unconditionally — whether to adopt it wholesale (true bootstrap)
-        // or ignore it entirely (partial gap-heal) is the *requester's*
-        // decision to make on receipt, not this responder's to pre-judge
-        // (SPECIFICATION.md §5.4).
-        const attributionOverlay = this.attribution.toJSON();
-        // Not awaited: the answer waits for the floor in the scheduler (RSY-11), and a poll
-        // must not wait with it. Best-effort, like the rest of this method.
-        this.#broadcastResyncResponse(
-          request.id,
-          update,
-          attributionOverlay,
-          // A device of the creator that does not know its control state has none to give: an
-          // empty snapshot would bootstrap a joiner with no members at all (CTL-19, RSY-8).
-          isCreator
-            ? this.#controlStateKnown
+        // This engine's own request is recognised by its id, not by its requester: another
+        // device of this member asks under the same MemberId (RSY-6).
+        if (
+          this.#ownResyncRequestIds.has(request.id) ||
+          this.#seenResyncRequestIds.has(request.id)
+        ) {
+          this.#seenResyncRequestIds.add(request.id);
+          this.#forgetPendingRequest(request, false);
+          continue;
+        }
+        const requesterIsCreator =
+          this.#creatorMemberId !== undefined && request.requester === this.#creatorMemberId;
+        // Another device of this member: answered as the creator answers everyone (RSY-6), with
+        // this device's control state if it holds every control frame up to its highest.
+        const requesterIsOwnDevice =
+          this.#creatorMemberId !== undefined && request.requester === this.memberId;
+        if (!isCreator && !requesterIsCreator && !requesterIsOwnDevice) {
+          this.#seenResyncRequestIds.add(request.id); // not ours to answer: only the creator answers
+          this.#forgetPendingRequest(request, false);
+          continue;
+        }
+        const requested = { stateVector: request.stateVector };
+        // What this device sends as control state: the creator's, once it has a basis for it; to
+        // another device of its own member, what it holds once bootstrapped (a union cannot undo
+        // anything, CTL-25); to a device of the creator, what it holds as a report (CTL-27).
+        const control: ControlSnapshot | null = isCreator
+          ? this.#controlBasis || this.#control.holds(`member:${request.requester}`)
+            ? this.controlState
+            : null
+          : requesterIsOwnDevice
+            ? this.#hasCompletedBootstrap
               ? this.controlState
               : null
-            : (relayedControl ?? null),
-        ).catch((error: unknown) => this.#keepRequestAfterFailedAnswer(request, error));
-      } catch {
-        // best-effort — see this method's own doc comment.
+            : this.#control.isEmpty
+              ? null
+              : this.controlState;
+        // Something to offer is content the requester lacks, or operations it lacks: a lost
+        // membership change leaves the content diff empty and still needs healing (RSY-16).
+        const hasContent = this.#profile.hasUpdatesSince(this.document, requested.stateVector);
+        const hasControl = control !== null && this.#control.hasAnyBeyond(request.control);
+        // Where the requester holds every insertion this responder holds, another digest is something
+        // to offer too: a deletion the requester lacks travels in the state since its state vector —
+        // the requester may hold more and not that (LOS-12, RSY-17). Operations it holds otherwise
+        // travel in the control state, to a device of the creator as a report, where it shows a
+        // collision (CTL-31).
+        const contentDiffers = !hasContent && request.stateDigest !== this.#stateDigest();
+        const controlDiffers =
+          control !== null &&
+          request.control !== null &&
+          request.controlDigest !== null &&
+          this.#control.hasVector(request.control) &&
+          request.controlDigest !== this.#controlDigest();
+        // The creator, or another device of the requester's member, answers a requester without a
+        // snapshot or one that asks regardless, even with nothing new.
+        const mustAnswer =
+          (isCreator || (requesterIsOwnDevice && control !== null)) &&
+          (request.control === null || request.force);
+        if (!hasContent && !hasControl && !mustAnswer && !contentDiffers && !controlDiffers) {
+          continue; // nothing to offer yet — may change by a later tick
+        }
+        if (
+          this.#lastResyncResponseAt !== null &&
+          now - this.#lastResyncResponseAt < this.#resyncResponseThrottleMs
+        ) {
+          continue; // still reconsidered on a later tick
+        }
+
+        this.#seenResyncRequestIds.add(request.id);
+        this.#forgetPendingRequest(request, true);
+        this.#lastResyncResponseAt = now;
+        try {
+          const update = this.#profile.encodeStateSince(this.document, requested.stateVector);
+          // Always this responder's own current attribution state, sent
+          // unconditionally — whether to adopt it wholesale (true bootstrap)
+          // or ignore it entirely (partial gap-heal) is the *requester's*
+          // decision to make on receipt, not this responder's to pre-judge
+          // (SPECIFICATION.md §5.4).
+          const attributionOverlay = this.attribution.toJSON();
+          // Not awaited: the answer waits for the floor in the scheduler (RSY-11), and a poll
+          // must not wait with it. Best-effort, like the rest of this method.
+          this.#broadcastResyncResponse(request.id, update, attributionOverlay, control).catch(
+            (error: unknown) => this.#keepRequestAfterFailedAnswer(request, error),
+          );
+        } catch {
+          // best-effort — see this method's own doc comment.
+        }
+      } catch (error) {
+        // A request the profile fails on while answering must not keep the others from their
+        // answers (RSY-9; §1.7 item 11): reported, and not kept to fail again on every tick.
+        this.#seenResyncRequestIds.add(request.id);
+        this.#forgetPendingRequest(request, false);
+        this.#onError(error, "broadcast");
       }
     }
   }
@@ -2181,14 +3232,26 @@ export class DocumentEngine {
    * succeed. A newer request from the same requester, heard meanwhile, supersedes it.
    */
   #keepRequestAfterFailedAnswer(request: PendingResyncRequest, error: unknown): void {
-    if (
-      !classifySendFailure(error).retryable ||
-      this.#pendingResyncRequests.has(request.requester)
-    ) {
+    if (!classifySendFailure(error).retryable) {
+      // Dropped for good, whole or in pieces: reported once, here, and as the transport
+      // profile's fault when its own limit allowed the message (SND-8, SND-22). Nothing of this
+      // client's own is missing anywhere, so it does not count as undistributed.
+      this.#onError(this.#blameProfileFor(error), "broadcast");
+      return;
+    }
+    const kept = this.#pendingResyncRequests.get(request.requester) ?? [];
+    if (kept.length >= MAX_REQUESTS_PER_REQUESTER) {
       return;
     }
     this.#seenResyncRequestIds.delete(request.id);
-    this.#pendingResyncRequests.set(request.requester, request);
+    // Kept as before (RSY-9, RSY-19): it had the turn, so its requester goes back to the front of
+    // the order, where serving it took it from, and is answered next.
+    const others = [...this.#pendingResyncRequests].filter(
+      ([requester]) => requester !== request.requester,
+    );
+    this.#pendingResyncRequests.clear();
+    this.#pendingResyncRequests.set(request.requester, [request, ...kept]);
+    for (const [requester, waiting] of others) this.#pendingResyncRequests.set(requester, waiting);
   }
 
   /**
@@ -2208,9 +3271,9 @@ export class DocumentEngine {
    * about (its own local edit made before this response arrived, or an
    * earlier-adopted overlay whose length has since diverged),
    * `AttributionTracker.reattributeMatching` is used instead, scoped to
-   * `authorId === UNATTRIBUTED_AUTHOR_ID` — the sentinel `sync()` sets on
+   * `authorId === null` — unattributed, what `sync()` sets on
    * every resync-response's content by default, before this method ever
-   * runs, and nowhere else — so it can only ever touch content this exact
+   * runs, and on restored content without attribution — so it can only ever touch content this exact
    * mechanism introduced, never a range this client typed itself or
    * received via a normal delivery. Skipping *all* adoption once this
    * client has made any local edit would protect that edit, but would also
@@ -2219,15 +3282,12 @@ export class DocumentEngine {
    * two authors type within moments of each other, one of them
    * mid-bootstrap.
    */
-  #considerBootstrapOverlay(
-    selection: BootstrapOverlaySelection,
-    attributionOverlay: AttributionOverlay | null,
-  ): void {
-    if (selection.hasAdopted) {
+  #considerBootstrapOverlay(attributionOverlay: AttributionOverlay | null): void {
+    if (this.#overlayAdopted) {
       return;
     }
-    // No overlay offered: the content stays attributed to the unattributed sentinel `sync()`
-    // set before calling this. A malformed overlay never gets here — the decoder rejected the
+    // No overlay offered: the content stays unattributed, as `sync()` left it before calling
+    // this. A malformed overlay never gets here — the decoder rejected the
     // whole response (FRM-6).
     if (attributionOverlay === null) {
       return;
@@ -2244,227 +3304,232 @@ export class DocumentEngine {
     if (overlayLength === currentLength) {
       this.attribution.restore(snapshot);
     } else {
-      this.attribution.reattributeMatching(
-        (authorId) => authorId === UNATTRIBUTED_AUTHOR_ID,
-        snapshot,
-      );
+      this.attribution.reattributeMatching((authorId) => authorId === null, snapshot);
     }
-    selection.hasAdopted = true;
-  }
-
-  /** Sends a control frame left pending by a restart, in turn with every other control action (CTL-12). */
-  #resendPendingControl(): Promise<void> {
-    return this.#onControlChain(async () => {
-      if (this.#pendingControl !== undefined) {
-        await this.#sendControl(this.#pendingControl);
-      }
-    });
+    this.#overlayAdopted = true;
   }
 
   /**
-   * Control frames from the creator that this device did not issue come from another device of
-   * the creator (#31), or from this device before it lost its state: their numbers are taken.
-   * This device continues after them, but only after an unbroken run of them, so that what it
-   * knows of the control state, and what its snapshots say, holds every action up to there. A
-   * frame of this device still pending under a number another frame took can never go out
-   * (CTL-12, CTL-17): it is given up and reported, and a retry in progress stops. Two devices
-   * acting before either has seen the other still collide; that is a limit of this version.
+   * The policy this client runs: its own choice under the transport's suggestion and bounds
+   * (SND-16), with the creator's pace as a floor (SND-15).
    */
-  #adoptNumbersOfOtherDevices(): void {
-    let advanced = false;
-    let givenUp = false;
-    for (;;) {
-      const text = this.#controlFrameTexts.get(this.#issuedControlSeq + 1);
-      if (text === undefined) {
-        break;
-      }
-      if (this.#pendingControl !== undefined) {
-        if (text === this.#pendingControl) {
-          break; // this device's own pending frame, seen delivered: the outbox resends it as is
-        }
-        this.#pendingControl = undefined;
-        givenUp = true;
-      }
-      this.#issuedControlSeq += 1;
-      advanced = true;
-    }
-    // This device started at 0, so it now holds an unbroken run from 1 (CTL-19).
-    if (advanced && !this.#controlStateKnown) {
-      this.#learnControlState();
-    }
-    if (givenUp) {
-      this.#onError(
-        new ControlFrameRejectedError(
-          "sequence-conflict",
-          `this device's pending control frame ${this.#issuedControlSeq} was given up: another device of the creator used its number first`,
-        ),
-        "apply",
-      );
-    }
-    if (advanced || givenUp) {
-      this.#notifyControlStateChange();
+  #effectivePolicy(): SyncPolicy {
+    return this.#policyUnder(this.#control.pace);
+  }
+
+  /** The policy this client runs under `pace`: the one it holds now, or one it is about to issue. */
+  #policyUnder(pace: number | undefined): SyncPolicy {
+    const own = effectiveSyncPolicy(this.#transport, this.#chosen);
+    const floor = pace ?? 0;
+    return floor > own.minIntervalMs ? resolveSyncPolicy({ ...own, minIntervalMs: floor }) : own;
+  }
+
+  /** Runs a pace the creator changed from now on, in the scheduler and in `syncPolicy`. */
+  #followPace(): void {
+    const next = this.#effectivePolicy();
+    if (
+      next.minIntervalMs !== this.#syncPolicy.minIntervalMs ||
+      next.maxIntervalMs !== this.#syncPolicy.maxIntervalMs
+    ) {
+      this.#syncPolicy = next;
+      this.#scheduler.setPolicy(next);
     }
   }
 
-  /** The bootstrap is complete (RSY-14): the request slot is free and the evidence it answered is gone. */
+  /**
+   * What this client promises with each edit and control frame (SND-14): it sends again within
+   * its longest wait at the latest — the heartbeat, if nothing else — or promises nothing.
+   */
+  #due(): number {
+    return dueOf(this.#syncPolicy);
+  }
+
+  /**
+   * The bootstrap is complete (RSY-14), by an answer to this client's own request — which already
+   * freed the request slot and ended the silence it expected: the truncated history it answered is
+   * gone too (LOS-19).
+   */
   #completeBootstrap(): void {
+    const first = !this.#hasCompletedBootstrap;
     this.#historyTruncatedSince = undefined;
-    this.#resyncGate.answered();
-    this.#detector.answered();
     this.#hasCompletedBootstrap = true;
-  }
-
-  /**
-   * This device of the creator now knows its control state (CTL-19): it may issue, answer with
-   * its snapshot and persist it, and an answer to its own request that came while it did not
-   * completes its bootstrap now.
-   */
-  #learnControlState(): void {
-    this.#controlStateKnown = true;
-    if (this.#answeredWithoutControlState && !this.#hasCompletedBootstrap) {
-      this.#completeBootstrap();
-    }
-    this.#answeredWithoutControlState = false;
-  }
-
-  /** Runs `run` after every control action before it has settled, so no two take a number at once. */
-  #onControlChain(run: () => Promise<void>): Promise<void> {
-    const next = this.#controlChain.then(run, run);
-    this.#controlChain = next.catch(() => {});
-    return next;
-  }
-
-  /**
-   * The creator's issue path. Serialised, so two concurrent calls cannot take the
-   * same number; the number is taken only after the send succeeded, so a send refused
-   * for good never leaves a gap. A send that fails for now is retried until it is
-   * accepted or refused for good (CTL-12, SND-7): the action resolves only then, and the
-   * actions after it wait.
-   */
-  #issueControl(
-    fields: ControlFields | (() => ControlFields),
-    validate?: () => void,
-  ): Promise<void> {
-    const run = async (): Promise<void> => {
-      if (this.#creatorMemberId !== this.memberId) {
-        throw new Error(`${this.memberId} is not the creator of ${this.documentId}`);
-      }
-      // Any number may be taken already by another device of the creator, or by this one before
-      // it lost its state; issuing now would reuse one (CTL-19).
-      if (!this.#controlStateKnown) {
-        throw new ControlFrameRejectedError(
-          "control-state-unknown",
-          `this device of the creator does not know the control state of ${this.documentId} yet: ` +
-            "it waits for another device of the creator, or for proceedWithUnknownControlState()",
-        );
-      }
-      // A frame left pending by a restart goes first, and alone: its number may already
-      // have been delivered, so no other action may take it (CTL-12). If it still cannot
-      // be sent, nothing new is issued either.
-      if (this.#pendingControl !== undefined) {
-        await this.#sendControl(this.#pendingControl);
-      }
-      validate?.();
-      if (this.#closed) {
-        throw new SendRefusedError("closed", `document is closed: ${this.documentId}`);
-      }
-      // Another device of the creator used a number this device has not seen the frame for:
-      // issuing now would take a number already taken, or act on control state that misses an
-      // action. It waits until the frames before it have arrived.
-      if (this.#highestControlSeq > this.#issuedControlSeq) {
-        throw new ControlFrameRejectedError(
-          "sequence-conflict",
-          `control sequence ${this.#highestControlSeq} is taken, but this device lacks a frame before it; resync first`,
-        );
-      }
-      const frameText = encodeControlFrame({
-        documentId: this.documentId,
-        sequence: this.#issuedControlSeq + 1,
-        ...(typeof fields === "function" ? fields() : fields),
-      });
-      await this.#sendControl(frameText);
-    };
-    return this.#onControlChain(run);
-  }
-
-  /**
-   * Sends one control frame of the creator's through the outbox (CTL-12): persisted as
-   * pending before the send, applied and cleared once the messenger accepted it, cleared
-   * without being applied if the messenger refused it for good — then its number was not
-   * used. A failure that is not for good is retried until one of the two happens. A crash
-   * or a `dispose()` in between leaves it pending, and the restarted engine sends the very
-   * same text again.
-   */
-  async #sendControl(frameText: string): Promise<void> {
-    const frame = decodeFrame(frameText);
-    if (frame.kind !== "control" || frame.sequence !== this.#issuedControlSeq + 1) {
-      throw new Error(
-        `internal error: the pending control frame is not the next one (${this.#issuedControlSeq + 1})`,
-      );
-    }
-    // A number this engine has already seen a different frame under — its own, sent before a
-    // restart that lost the persisted state — is not reused (CTL-17): refused before sending.
-    const known = this.#controlFrameTexts.get(frame.sequence);
-    if (known !== undefined && known !== frameText) {
-      throw new ControlFrameRejectedError(
-        "sequence-conflict",
-        `control sequence ${frame.sequence} was already sent with another frame; this creator's persisted control state is older than what it sent`,
-      );
-    }
-    // Persisted before the messenger sees it (CTL-12). If the application cannot persist it,
-    // nothing is sent and the number stays free — a frame restored as pending stays pending.
-    const pendingBefore = this.#pendingControl;
-    this.#pendingControl = frameText;
-    try {
+    if (first && this.#creatorMemberId !== this.memberId) {
+      // Persisted from now on as taken once bootstrapped, so a restart may use it (CTL-39).
       this.#notifyControlStateChange();
-    } catch (error) {
-      this.#pendingControl = pendingBefore;
-      throw error;
     }
+  }
+
+  /**
+   * A device of the creator's issue path (CTL-20, CTL-26): the operation takes the next
+   * counter of this device, names what it has seen of the other creator devices — raised by what
+   * participants reported (CTL-27) — and is persisted before anything changes or is sent; a
+   * failure to persist changes nothing. It then holds here at once, as a pending change, and is
+   * sent until the transport accepts it; the action resolves only then. Offline it waits, and
+   * holds meanwhile — what the person decided shows at once, as typed text does.
+   */
+  async #issueControl(
+    target: ControlTarget,
+    value: ControlValue,
+    alsoSeen: ControlVector = {},
+  ): Promise<void> {
+    if (this.#creatorMemberId !== this.memberId) {
+      throw new Error(`${this.memberId} is not the creator of ${this.documentId}`);
+    }
+    if (this.#control.closed) {
+      throw new SendRefusedError("closed", `document is closed: ${this.documentId}`);
+    }
+    this.#device ??= newDeviceTag();
+    const device = this.#device;
+    const op: ControlOperation = {
+      device,
+      counter: this.#counter + 1,
+      target,
+      value,
+      seen: issuingVector(
+        device,
+        issuingVector(device, this.#control.vector, this.#reported),
+        alsoSeen,
+      ),
+    };
+    const key = `${device}:${op.counter}`;
+    // Persisted first, as it will be: if the application cannot persist it, nothing changed. Over
+    // the bounds of control state the operation would not hold anywhere, a new target goes only up
+    // to the bytes a device issues to, and in a capacity conflict there is none (CTL-37, CTL-32).
+    const issued = this.#control.issue(op);
+    if ("refused" in issued) {
+      throw new SendRefusedError(
+        issued.refused,
+        issued.refused === "capacity-conflict"
+          ? `${this.documentId} is in a capacity conflict: no new member or layer right can be held`
+          : `the control state of ${this.documentId} would exceed its bounds (a new member or layer right: ${MAX_ISSUE_BYTES} bytes)`,
+      );
+    }
+    const next = issued.next;
+    // What this device promises is what it keeps once the operation holds: a pace above its own
+    // longest wait raises that wait to the pace (SND-15), and the heartbeat comes only then. A
+    // promise made under the old pace would be broken by the very frame that carries it (SND-14).
+    const text = encodeControlFrame({
+      documentId: this.documentId,
+      ...op,
+      due: dueOf(this.#policyUnder(next.pace)),
+    });
+    if (this.#maxBytes !== undefined && target !== "close") {
+      // Nor would a joiner get it: an answer carries the snapshot whole, beside an empty update
+      // at the least (SND-18). The close goes whatever: a document no joiner can bootstrap from
+      // is still closed for everyone who holds it (CTL-37, LIF-7).
+      const answer = encodeResyncResponseFrame({
+        documentId: this.documentId,
+        respondsTo: "0".repeat(16),
+        update: this.#profile.encodeState(this.#profile.createEmpty()),
+        control: { profile: this.#profile.id, ...next.snapshot() },
+        state: this.#ownState(),
+        // As long as a stream's numbers can be (LOS-13, LOS-14).
+        stream: this.#stream,
+        sequence: 0xffffffff,
+        piece: 0xffffffff,
+        extensions: this.#outgoing.get("resync-response"),
+      });
+      if (frameByteLength(answer) > this.#maxBytes) {
+        throw new SendRefusedError(
+          "too-large",
+          `the control state of ${this.documentId} would no longer fit in one answer of at most ${this.#maxBytes} bytes`,
+        );
+      }
+    }
+    this.#onControlStateChange?.(
+      this.#persisted(next, op.counter, [...this.#unsent.values(), text]),
+    );
+    this.#counter = op.counter;
+    this.#control.add(op);
+    this.#unsent.set(key, text);
+    try {
+      await this.#sendControlFrame(key, text);
+    } finally {
+      // A new pace governs this device's sending once the operation announcing it is out, so the
+      // operation does not wait for the very floor it sets (SND-15).
+      this.#followPace();
+    }
+  }
+
+  /**
+   * Sends one operation of this device until the transport accepts it (SND-6, SND-7): then it is no
+   * longer unsent. Refused for good, it is given up — it still holds here and travels in every
+   * snapshot this device sends. A `dispose()` meanwhile leaves it unsent, and persisted, for the
+   * restarted engine.
+   */
+  async #sendControlFrame(key: string, text: string): Promise<void> {
     let id: DeliveryId;
     try {
-      // Through the scheduler, on the floor like any message (SPECIFICATION.md SND-2);
-      // receivers expect a follow-up to a control message, so the heartbeat is owed after it.
-      // A failure worth retrying is retried there (SND-7): such a send may have been delivered
-      // all the same, so the frame must go out again, unchanged, until it is accepted.
+      // Through the scheduler, on the floor like any message (SND-2); receivers expect a
+      // follow-up to a control message, so the heartbeat is owed after it.
       id = await this.#scheduler.submit(
-        () => {
-          // Each attempt, retries included: another device of the creator may have taken the
-          // number meanwhile (`#takeNumberOfAnotherDevice`).
-          if (this.#pendingControl !== frameText) {
-            throw new ControlFrameRejectedError(
-              "sequence-conflict",
-              `control frame ${frame.sequence} not sent: another device of the creator used its number first`,
-            );
-          }
-          return this.#messenger.send(this.documentId, this.memberId, frameText);
-        },
-        { armsHeartbeat: true, retry: true },
+        () => this.#messenger.send(this.documentId, this.memberId, text),
+        // A source of its own at receivers: an edit sent later does not keep its promise (LOS-16).
+        { armsHeartbeat: true, retry: true, promise: "control" },
       );
     } catch (error) {
-      // Refused for good: the messenger took nothing, so the number is free again. Any other
-      // failure reaches here only once the scheduler stopped retrying — this engine was
-      // disposed — and the frame stays pending, persisted, for the restarted engine (CTL-12).
       if (!classifySendFailure(error).retryable) {
-        this.#pendingControl = undefined;
+        this.#unsent.delete(key);
         this.#notifyControlStateChange();
       }
       throw error;
     }
     this.#markOwnSend(id);
-    this.#issuedControlSeq = frame.sequence;
-    this.#pendingControl = undefined;
-    this.#applyControlFrame(frame, this.memberId, frameText);
+    this.#unsent.delete(key);
     this.#notifyControlStateChange();
   }
 
   /**
-   * Applies one control frame if, and only if, its sender is the creator and its
-   * sequence is newer than the last applied for the same target. A stale frame
-   * (a replay, or one already superseded) is inert and silent. Throws
-   * `ControlFrameRejectedError` for a frame that must not count at all.
+   * Keeps what a member's report holds beyond this device of the creator (CTL-33): per target, the
+   * value the report gives it and the operations there this device neither holds nor supersedes. It
+   * replaces the member's earlier report; what no longer diverges is never kept. Bounded: at most
+   * MAX_TARGETS targets in all, the oldest reporter's given up first (CTL-30).
    */
-  #applyControlFrame(frame: ControlFrame, sender: MemberId, text: string): void {
+  #keepDivergences(reporter: MemberId, report: ControlStateSnapshot): void {
+    const targets = new Map<string, ReportedDivergence>();
+    for (const [target, state] of Object.entries(report.targets)) {
+      const beyond = state.heads.filter((head) => !this.#control.knows(target, head));
+      if (beyond.length > 0) {
+        targets.set(target, { reported: valueOfHeads(target, state.heads), heads: beyond });
+      }
+    }
+    this.#divergences.delete(reporter);
+    if (targets.size > 0) {
+      this.#divergences.set(reporter, targets);
+    }
+    let total = [...this.#divergences.values()].reduce((sum, kept) => sum + kept.size, 0);
+    for (const [oldest, kept] of this.#divergences) {
+      if (total <= MAX_TARGETS || oldest === reporter) break;
+      total -= kept.size;
+      this.#divergences.delete(oldest);
+    }
+  }
+
+  /**
+   * Raises the counters a device of the creator without a basis counts as seen; values never come
+   * from a report (CTL-27, CTL-28).
+   */
+  #takeReport(vector: ControlVector): void {
+    if (this.#creatorMemberId !== this.memberId || this.#controlBasis) {
+      return;
+    }
+    for (const [device, counter] of Object.entries(vector)) {
+      if (device !== this.#device && counter > (this.#reported[device] ?? 0)) {
+        if (!(device in this.#reported) && Object.keys(this.#reported).length >= 64) {
+          continue; // bounded like the creator devices a control state tracks (CTL-30)
+        }
+        this.#reported[device] = counter;
+      }
+    }
+  }
+
+  /**
+   * Applies one operation if, and only if, its sender is the creator and it does not name the
+   * creator (CTL-5); a duplicate is inert. Throws `ControlFrameRejectedError` for one that must
+   * not count at all. Two different operations under one device and counter are both kept and
+   * reported (CTL-24); when the device is this one, it stops issuing under its tag.
+   */
+  #applyControlFrame(frame: ControlFrame, sender: MemberId): void {
     if (this.#creatorMemberId === undefined) {
       throw new ControlFrameRejectedError(
         "creator-unknown",
@@ -2477,205 +3542,174 @@ export class DocumentEngine {
         `control frame from ${sender} ignored: only the creator (${this.#creatorMemberId}) may send them`,
       );
     }
-    if (frame.action === "membership" && frame.member === this.#creatorMemberId) {
+    if (memberOf(frame.target) === this.#creatorMemberId) {
       throw new ControlFrameRejectedError(
         "names-the-creator",
         "control frame ignored: the creator's own permission is fixed and cannot be changed",
       );
     }
-    // A resent frame is byte for byte the frame first sent (CTL-12); a different frame under
-    // a number already seen means the creator's application reused it (CTL-17).
-    const known = this.#controlFrameTexts.get(frame.sequence);
-    if (known !== undefined && known !== text) {
-      this.#recordControlConflict(frame, known);
+    const op: ControlOperation = {
+      device: frame.device,
+      counter: frame.counter,
+      target: frame.target,
+      value: frame.value,
+      seen: frame.seen,
+    };
+    const anomaliesBefore = this.#control.anomalies.length;
+    const result = this.#control.add(op);
+    // An operation under this device's tag that this device did not issue: a copy of this device
+    // restored from an older backup, or another one that took its tag — a counter above its own, or
+    // one that collides with what this device holds under that counter, sent or not. It changes its
+    // tag, so the two never collide again (CTL-24).
+    const ownTagElsewhere =
+      frame.device === this.#device &&
+      (frame.counter > this.#counter ||
+        !this.#issuedHere(frame) ||
+        this.#collidesUnderOwnTag(anomaliesBefore));
+    // An operation of the creator this device did not issue — from another device, or read from the
+    // channel's history — is a basis for what this device holds (CTL-28).
+    if (
+      result === "added" &&
+      frame.device !== this.#device &&
+      this.#creatorMemberId === this.memberId
+    ) {
+      this.#gainBasis();
+    }
+    if (ownTagElsewhere) {
+      this.#leaveOwnTag();
+    }
+    if (result === "refused") {
       throw new ControlFrameRejectedError(
-        "sequence-conflict",
-        `control frame ignored: sequence ${frame.sequence} already carried a different frame`,
+        "refused",
+        this.#control.capacityConflict
+          ? "control frame not held: in a capacity conflict, this client takes no new member or layer right beyond its bytes of control state (CTL-32)"
+          : "control frame not held: it would exceed this client's bounds on creator devices, holes or targets",
       );
     }
-    this.#controlFrameTexts.set(frame.sequence, text);
-    if (this.#creatorMemberId === this.memberId) {
-      this.#adoptNumbersOfOtherDevices();
-    }
-
-    // Recorded even when stale — a stale frame still proves the number arrived.
-    if (frame.sequence > this.#controlFloor) {
-      this.#controlReceivedSeqs.add(frame.sequence);
-    }
-    this.#highestControlSeq = Math.max(this.#highestControlSeq, frame.sequence);
-
-    if (frame.action === "policy") {
-      // Newest wins, ordered by the creator's sequence like everything else here —
-      // against the floor a snapshot set and against whatever policy this client
-      // already runs, an invitation's included. Not tracked in `#controlAppliedSeq`:
-      // that map is for membership and close, and an invitation's sequence must not
-      // make a snapshot look stale.
-      if (
-        frame.policy !== undefined &&
-        frame.sequence > Math.max(this.#controlFloor, this.#policy?.sequence ?? -1)
-      ) {
-        this.#adoptPolicy(frame.policy, frame.sequence);
-      }
-      return;
-    }
-
-    const target = frame.action === "close" ? "close" : `member:${frame.member}`;
-    const last = Math.max(this.#controlFloor, this.#controlAppliedSeq.get(target) ?? 0);
-    if (frame.sequence <= last) {
-      return;
-    }
-    this.#controlAppliedSeq.set(target, frame.sequence);
-    if (frame.action === "close") {
-      this.#closed = true;
-      return;
-    }
-    if (frame.member === undefined || frame.permission === undefined) {
-      return;
-    }
-    if (frame.permission === null) {
-      this.#members.delete(frame.member);
-    } else {
-      this.#members.set(frame.member, frame.permission);
+    if (this.#control.anomalies.length > anomaliesBefore || ownTagElsewhere) {
+      this.#onError(
+        new ControlFrameRejectedError(
+          "anomaly",
+          `two different control operations under ${frame.device}:${frame.counter}; merged into one, the narrowest`,
+        ),
+        "apply",
+      );
     }
   }
 
-  /** Runs the policy the creator set from now on, in the scheduler and in `syncPolicy`. */
-  #adoptPolicy(values: Partial<SyncPolicy>, sequence: number): void {
-    this.#policy = { values, sequence };
-    this.#syncPolicy = effectiveSyncPolicy(this.#transport, values);
-    this.#scheduler.setPolicy(this.#syncPolicy);
+  /** Whether a collision noted since there were `anomaliesBefore` lies under this device's own tag (CTL-24). */
+  #collidesUnderOwnTag(anomaliesBefore: number): boolean {
+    return (
+      this.#device !== undefined &&
+      this.#control.anomalies
+        .slice(anomaliesBefore)
+        .some((anomaly) => anomaly.device === this.#device)
+    );
   }
 
-  /**
-   * The highest control sequence applied with nothing missing below it: the
-   * floor (a snapshot's sequence) plus every consecutive number received after
-   * it. What a resync request reports as this client's progress, so that a gap
-   * makes the creator answer and a client with none does not.
-   */
-  /**
-   * The control state this device, not the creator, may pass to another device of its own
-   * member (RSY-8, CTL-11): only when it holds every control frame up to the highest it has
-   * seen, so that a frame older than the snapshot can never undo a newer decision at the
-   * receiver; and only for a request from its own member. `undefined` otherwise.
-   */
-  #relayableControlState(request: { readonly requester: MemberId }): ControlSnapshot | undefined {
-    if (
-      this.#creatorMemberId === undefined ||
-      request.requester !== this.memberId ||
-      this.memberId === this.#creatorMemberId ||
-      !this.#hasCompletedBootstrap ||
-      this.controlGaps.length > 0
-    ) {
-      return undefined;
-    }
-    return this.controlState;
+  /** Stops issuing under this device's tag and continues under a new one (CTL-24). */
+  #leaveOwnTag(): void {
+    this.#device = newDeviceTag();
+    this.#counter = 0;
   }
 
-  /**
-   * Keeps a conflict visible after `onError` reported it (CTL-17): an application can tell the
-   * person that permissions may differ between participants, which an error in a log does not.
-   * One entry per sequence, however many different frames come under it.
-   */
-  #recordControlConflict(rejected: ControlFrame, keptText: string): void {
-    const kept = decodeFrame(keptText);
-    if (kept.kind !== "control") {
-      return; // unreachable: only control frames are kept under a control sequence
+  /** Whether `frame` is an operation this device issued under its current tag. */
+  #issuedHere(frame: ControlFrame): boolean {
+    const unsent = this.#unsent.get(`${frame.device}:${frame.counter}`);
+    if (unsent !== undefined) {
+      return (
+        unsent ===
+        encodeControlFrame({
+          documentId: this.documentId,
+          device: frame.device,
+          counter: frame.counter,
+          target: frame.target,
+          value: frame.value,
+          seen: frame.seen,
+          due: frame.due,
+        })
+      );
     }
-    this.#controlConflicts.set(rejected.sequence, {
-      sequence: rejected.sequence,
-      kept: conflictActionOf(kept),
-      rejected: conflictActionOf(rejected),
-      since: this.#controlConflicts.get(rejected.sequence)?.since ?? Date.now(),
-    });
+    return frame.counter <= this.#counter;
   }
 
-  #contiguousControlSeq(): number {
-    let n = this.#controlFloor;
-    while (this.#controlReceivedSeqs.has(n + 1)) {
-      n++;
-    }
-    return n;
+  /** This client's control state as a device of the creator persists it (CTL-26). */
+  #persisted(
+    control: ControlState,
+    counter: number,
+    unsent: readonly string[],
+  ): PersistedControlState {
+    const member = this.#creatorMemberId !== this.memberId;
+    return {
+      profile: this.#profile.id,
+      control: control.snapshot(),
+      ...(this.#device === undefined ? {} : { device: this.#device, counter }),
+      ...(unsent.length === 0 ? {} : { unsent: [...unsent] }),
+      ...(member ? {} : { basis: this.#controlBasis }),
+      ...(member && this.#hasCompletedBootstrap ? { bootstrapped: true } : {}),
+      ...(control.capacityConflict ? { capacityConflict: true } : {}),
+    };
   }
 
   #notifyControlStateChange(): void {
-    // Not the creator's control state yet: persisted, it would look restored at the next start
-    // and lift the wait it is under (CTL-19).
-    if (!this.#controlStateKnown) {
-      return;
-    }
     this.#onControlStateChange?.(
-      this.#pendingControl === undefined
-        ? this.controlState
-        : { ...this.controlState, pendingControl: this.#pendingControl },
+      this.#persisted(this.#control, this.#counter, [...this.#unsent.values()]),
     );
   }
 
   /**
-   * Adopts the creator's control snapshot, already checked in full by the decoder: replaces the
-   * membership map, never reopens a closed document, and raises the floor below which any
-   * control frame is stale. Ignored if it is older than what this client has already applied.
+   * Merges a control snapshot, already checked in full by the decoder, by union (CTL-25): it never
+   * undoes anything, so it need not be newer than what this client holds, and never reopens a
+   * closed document. For a device of the creator, another of its devices' snapshot is a basis.
    */
-  #applyControlSnapshot(snapshot: DecodedSnapshot): void {
-    const highestApplied = Math.max(this.#controlFloor, ...this.#controlAppliedSeq.values());
-    if (snapshot.sequence < highestApplied) {
-      return;
+  #applyControlSnapshot(snapshot: DecodedSnapshot): boolean {
+    const anomaliesBefore = this.#control.anomalies.length;
+    const { leftOut, refused } = this.#control.mergeOrRefuse(snapshot);
+    if (leftOut > 0) {
+      this.#onError(
+        new ControlFrameRejectedError(
+          "refused",
+          refused
+            ? "a control snapshot not held: it would exceed this client's bytes of control state, a capacity conflict (CTL-32)"
+            : `${leftOut} part(s) of a control snapshot not held: they would exceed this client's bounds on creator devices, holes or targets`,
+        ),
+        "apply",
+      );
     }
-    this.#members = new Map(Object.entries(snapshot.members));
-    this.#closed = this.#closed || snapshot.closed;
-    this.#controlFloor = snapshot.sequence;
-    this.#controlAppliedSeq.clear();
-    for (const seq of [...this.#controlReceivedSeqs]) {
-      if (seq <= snapshot.sequence) {
-        this.#controlReceivedSeqs.delete(seq);
+    if (this.#control.anomalies.length > anomaliesBefore) {
+      // Another copy of this device decided under its tag: it continues under a new one (CTL-24).
+      if (this.#creatorMemberId === this.memberId && this.#collidesUnderOwnTag(anomaliesBefore)) {
+        this.#leaveOwnTag();
       }
+      // Reported as a frame's collision is (CTL-24): an operation the snapshot carries differs from
+      // one held under the same device and counter.
+      this.#onError(
+        new ControlFrameRejectedError(
+          "anomaly",
+          "a control snapshot holds another operation under a device and counter this client holds; merged into one, the narrowest",
+        ),
+        "apply",
+      );
     }
-    this.#highestControlSeq = Math.max(this.#highestControlSeq, snapshot.sequence);
-    // The policy rides in the snapshot as its own fact with its own sequence, adopted only if
-    // newer than the one already run: a stale link's policy yields to it, and a snapshot older
-    // than what this client knows changes nothing.
-    if (
-      snapshot.policy !== undefined &&
-      snapshot.policySequence !== undefined &&
-      snapshot.policySequence > (this.#policy?.sequence ?? -1)
-    ) {
-      this.#adoptPolicy(snapshot.policy, snapshot.policySequence);
-    }
-    // Only the creator's snapshot counts here, and a device of the creator that does not know its
-    // control state sends none (CTL-11, RSY-8): this one came from a device that does (CTL-19).
-    if (this.#creatorMemberId === this.memberId && !this.#controlStateKnown) {
-      this.#learnControlState();
-    }
-    // A device of the creator brought up to date by another of its devices continues after the
-    // snapshot's number (CTL-18). A frame of its own pending under a number the snapshot covers
-    // can no longer go out under it.
-    if (this.#creatorMemberId === this.memberId && snapshot.sequence > this.#issuedControlSeq) {
-      if (this.#pendingControl !== undefined) {
-        this.#pendingControl = undefined;
-        this.#onError(
-          new ControlFrameRejectedError(
-            "sequence-conflict",
-            `this device's pending control frame was given up: another device of the creator reached control sequence ${snapshot.sequence} first`,
-          ),
-          "apply",
-        );
-      }
-      this.#issuedControlSeq = snapshot.sequence;
-      this.#adoptNumbersOfOtherDevices();
+    this.#followPace();
+    if (this.#creatorMemberId === this.memberId && !refused) {
+      this.#gainBasis();
     }
     this.#notifyControlStateChange();
+    return !refused;
+  }
+
+  /**
+   * This device of the creator has a basis for its control state (CTL-28). From now on it counts as
+   * seen what it holds itself, nothing a participant reported: CTL-27 lets only a device without
+   * control state supersede by reports, and one that has a basis but lags behind a member would
+   * otherwise supersede decisions it never saw, wider than any of the creator's devices decided.
+   */
+  #gainBasis(): void {
+    this.#controlBasis = true;
+    this.#reported = {};
   }
 }
-
-function conflictActionOf(frame: ControlFrame): ControlConflictAction {
-  return frame.action === "membership"
-    ? { action: "membership", member: frame.member, permission: frame.permission ?? null }
-    : { action: frame.action };
-}
-
-type ControlFields =
-  | { action: "close" }
-  | { action: "membership"; member: MemberId; permission: ControlPermission }
-  | { action: "policy"; policy: SyncPolicy };
 
 export { isLayerId, isProfileId } from "./framing";
 export {

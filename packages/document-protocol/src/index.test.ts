@@ -24,18 +24,18 @@ import {
   decodeFrame,
   encodeControlFrame,
   encodeEditFrame,
+  encodeHeartbeatFrame,
   encodeResyncRequestFrame,
   encodeResyncResponseFrame,
   FrameDecodeError,
 } from "./framing";
 import {
-  type ControlSnapshot,
   DocumentEngine,
   type DocumentEngineOptions,
-  resolveSyncPolicy,
+  type PersistedControlState,
   SendRefusedError,
   TransportProfileError,
-  UnsupportedProfileError,
+  UnsplittableUpdateError,
   YJS_PARAGRAPHS_1,
 } from "./index";
 
@@ -50,6 +50,15 @@ import {
 // document (the profile's content is a fragment of paragraphs), which is why
 // several assertions below count one delivery for it.
 
+/** What a device of the creator persists, as `onControlStateChange` hands it (CTL-26). */
+function persistedOf(engine: DocumentEngine): PersistedControlState {
+  const device = engine.deviceTag;
+  return {
+    profile: engine.profile,
+    control: engine.controlState,
+    ...(device === undefined ? {} : { device, counter: engine.controlVector[device] ?? 0 }),
+  };
+}
 const DOCUMENT_ID = "doc-1";
 
 // DocumentEngine.create()/.join() default to batchWindowMs: 500 — a real
@@ -194,7 +203,7 @@ describe("DocumentEngine convergence", () => {
         undefined,
         IMMEDIATE,
       );
-      const persisted = { ...alice.controlState, profile: "com.example.other/1" };
+      const persisted = { ...persistedOf(alice), profile: "com.example.other/1" };
       alice.dispose();
       const before = await messenger.receive(DOCUMENT_ID, "bob");
 
@@ -215,7 +224,7 @@ describe("DocumentEngine convergence", () => {
         undefined,
         IMMEDIATE,
       );
-      const controlState = alice.controlState;
+      const controlState = persistedOf(alice);
       alice.dispose();
       const before = await messenger.receive(DOCUMENT_ID, "bob");
 
@@ -1029,196 +1038,6 @@ describe("join-time bootstrap against a history-less transport", () => {
     expect(getPlainText(bob.fragment)).toBe("hello from alice");
   });
 
-  describe("the creator's send policy", () => {
-    // Fake time: a policy with a floor makes the creator's control messages and answers wait.
-    beforeEach(() => {
-      vi.useFakeTimers();
-    });
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
-    it("a late joiner learns it from the creator's bootstrap answer, since the transport replays nothing", async () => {
-      const messenger = new NoHistoryMessengerPort();
-      const alice = await DocumentEngine.create(
-        DOCUMENT_ID,
-        "alice",
-        messenger,
-        undefined,
-        ADMIN_ALICE,
-      );
-      await alice.sync(); // establishes alice's own receive() baseline before carol ever joins
-      await alice.setSyncPolicy({ minIntervalMs: 12_000 });
-
-      const carol = await DocumentEngine.join(
-        DOCUMENT_ID,
-        "carol",
-        messenger,
-        undefined,
-        ADMIN_ALICE,
-      );
-      expect(carol.syncPolicy.minIntervalMs).toBe(0); // told nothing yet: no history, no invitation
-      await alice.sync(); // the creator answers carol's join...
-      await vi.advanceTimersByTimeAsync(12_000); // ...once its floor after the policy change has passed
-      await carol.sync();
-      expect(carol.syncPolicy.minIntervalMs).toBe(12_000);
-    });
-
-    it("a stale invitation yields to a newer policy in the creator's answer", async () => {
-      const messenger = new NoHistoryMessengerPort();
-      const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
-        ...ADMIN_ALICE,
-        syncPolicy: { minIntervalMs: 25_000 },
-      });
-      await alice.sync(); // establishes alice's own receive() baseline before carol ever joins
-      const staleInvitation = alice.invitationPolicy;
-      await afterFloor(alice.setSyncPolicy({ minIntervalMs: 40_000 }), 25_000); // sequence 1, after the seed's floor
-
-      const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", messenger, undefined, {
-        ...ADMIN_ALICE,
-        syncPolicy: staleInvitation?.policy,
-        syncPolicySequence: staleInvitation?.sequence,
-      });
-      expect(carol.syncPolicy.minIntervalMs).toBe(25_000); // the link's, until the creator answers
-      await alice.sync();
-      await vi.advanceTimersByTimeAsync(40_000); // the answer waits for the new floor
-      await carol.sync();
-      expect(carol.syncPolicy.minIntervalMs).toBe(40_000);
-    });
-
-    it("a fresh invitation is not overwritten by an older snapshot", async () => {
-      const messenger = new NoHistoryMessengerPort();
-      const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
-        ...ADMIN_ALICE,
-        syncPolicy: { minIntervalMs: 25_000 },
-      });
-      const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", messenger, undefined, {
-        ...ADMIN_ALICE,
-        syncPolicy: { minIntervalMs: 77_000 },
-        syncPolicySequence: 9, // newer than anything alice has issued
-      });
-      await alice.sync();
-      await carol.sync();
-      expect(carol.syncPolicy.minIntervalMs).toBe(77_000);
-    });
-
-    describe("declining an invitation (SPECIFICATION.md §6.5)", () => {
-      it("sends exactly one decline without joining, and the creator's application is told who and why", async () => {
-        const messenger = new NoHistoryMessengerPort();
-        const declines: unknown[] = [];
-        const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
-          ...ADMIN_ALICE,
-          onDecline: (decline) => declines.push(decline),
-        });
-        await alice.sync();
-        const before = (await messenger.inner.receive(DOCUMENT_ID, "alice")).length;
-
-        await DocumentEngine.decline(DOCUMENT_ID, "carol", messenger, {
-          reason: "unsupported-profile",
-          profiles: ["com.example.markdown/1"],
-          text: "My app only does Markdown.",
-        });
-        const sent = (await messenger.inner.receive(DOCUMENT_ID, "alice")).slice(before);
-        expect(sent.map((d) => [d.sender, decodeFrame(d.payload).kind])).toEqual([
-          ["carol", "decline"],
-        ]);
-
-        await alice.sync();
-        expect(declines).toEqual([
-          {
-            sender: "carol",
-            reason: "unsupported-profile",
-            profiles: ["com.example.markdown/1"],
-            text: "My app only does Markdown.",
-          },
-        ]);
-      });
-
-      it("reports each sender's decline once, whatever repeats, and changes nothing in the document (DCL-3)", async () => {
-        const messenger = new NoHistoryMessengerPort();
-        const declines: unknown[] = [];
-        const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
-          ...ADMIN_ALICE,
-          onDecline: (decline) => declines.push(decline),
-        });
-        await alice.sync();
-        alice.edit((fragment) => insertPlainText(fragment, 0, "unchanged"));
-        const before = alice.controlState;
-        for (let i = 0; i < 3; i += 1) {
-          await DocumentEngine.decline(DOCUMENT_ID, "mallory", messenger, { reason: "declined" });
-        }
-        await DocumentEngine.decline(DOCUMENT_ID, "carol", messenger, { reason: "other" });
-        await alice.sync();
-        expect(declines.map((d) => (d as { sender: string }).sender)).toEqual(["mallory", "carol"]);
-        expect(getPlainText(alice.fragment)).toBe("unchanged");
-        expect(alice.controlState).toEqual(before);
-        expect(alice.closed).toBe(false);
-      });
-
-      it("refuses to send a decline that is too long, before anything goes out", async () => {
-        const messenger = new NoHistoryMessengerPort();
-        await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, ADMIN_ALICE);
-        const before = (await messenger.inner.receive(DOCUMENT_ID, "alice")).length;
-        await expect(
-          DocumentEngine.decline(DOCUMENT_ID, "carol", messenger, {
-            reason: "other",
-            text: "x".repeat(501),
-          }),
-        ).rejects.toThrow(/at most 500/);
-        expect((await messenger.inner.receive(DOCUMENT_ID, "alice")).length).toBe(before);
-      });
-    });
-
-    it("refuses to create or join a document of a profile this engine does not implement, before sending anything (PRF-3)", async () => {
-      const messenger = new NoHistoryMessengerPort();
-      await expect(
-        DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
-          ...ADMIN_ALICE,
-          profile: "com.example.markdown/1",
-        }),
-      ).rejects.toBeInstanceOf(UnsupportedProfileError);
-      await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, ADMIN_ALICE);
-      const before = (await messenger.inner.receive(DOCUMENT_ID, "alice")).length;
-      await expect(
-        DocumentEngine.join(DOCUMENT_ID, "carol", messenger, undefined, {
-          ...ADMIN_ALICE,
-          profile: "yjs-paragraphs/2",
-        }),
-      ).rejects.toBeInstanceOf(UnsupportedProfileError);
-      await expect(
-        DocumentEngine.join(DOCUMENT_ID, "carol", messenger, undefined, {
-          ...ADMIN_ALICE,
-          profile: "not a profile",
-        }),
-      ).rejects.toThrow(/not a document profile id/);
-      expect((await messenger.inner.receive(DOCUMENT_ID, "alice")).length).toBe(before);
-    });
-
-    it("names the document's profile in the creator's snapshot, where a joiner confirms it", async () => {
-      const messenger = new NoHistoryMessengerPort();
-      const alice = await DocumentEngine.create(
-        DOCUMENT_ID,
-        "alice",
-        messenger,
-        undefined,
-        ADMIN_ALICE,
-      );
-      expect(alice.profile).toBe(YJS_PARAGRAPHS_1);
-      expect(alice.controlState.profile).toBe(YJS_PARAGRAPHS_1);
-      await alice.sync();
-      const carol = await DocumentEngine.join(
-        DOCUMENT_ID,
-        "carol",
-        messenger,
-        undefined,
-        ADMIN_ALICE,
-      );
-      await alice.sync();
-      await carol.sync();
-      expect(carol.hasCompletedBootstrap).toBe(true);
-    });
-  });
-
   it("a joiner whose only content-holding peer never comes online ends up empty, honestly reported via hasCompletedBootstrap", async () => {
     const messenger = new NoHistoryMessengerPort();
     const alice = await DocumentEngine.create(
@@ -1333,7 +1152,7 @@ describe("join-time bootstrap against a history-less transport", () => {
       expect(authorIds.every((id) => id === "alice")).toBe(false);
     });
 
-    it("a partial gap-heal attributes newly-applied content to the unattributed sentinel, not the responder", async () => {
+    it("a partial gap-heal leaves newly-applied content unattributed (null), not the responder's", async () => {
       const messenger = new NoHistoryMessengerPort();
       // resyncResponseThrottleMs: 0 — alice answers bob's bootstrap AND
       // his later partial request moments apart in test time.
@@ -1370,6 +1189,8 @@ describe("join-time bootstrap against a history-less transport", () => {
       const authorIds = bob.attribution.ranges.map((range) => range.authorId);
       expect(authorIds.length).toBeGreaterThan(0); // recorded, not silently dropped...
       expect(authorIds).not.toContain("alice"); // ...but never attributed to the responder
+      expect(authorIds).toEqual([null]); // unattributed: no MemberId stands for it (ATR-2)
+      expect([...bob.attribution.lastEditBySender.keys()]).not.toContain(null);
     });
 
     it("content from the creator's answer to someone else's request is unattributed, not the creator's (RSY-13)", async () => {
@@ -1413,6 +1234,7 @@ describe("join-time bootstrap against a history-less transport", () => {
       const authorIds = carol.attribution.ranges.map((range) => range.authorId);
       expect(authorIds.length).toBeGreaterThan(0);
       expect(authorIds).not.toContain("alice"); // the creator sent it, but did not write it
+      expect(authorIds).toEqual([null]);
     });
 
     // A joiner accepts a resync response only from the creator (RSY-12), so there
@@ -1493,7 +1315,7 @@ describe("join-time bootstrap against a history-less transport", () => {
       messenger.forgetHistory(DOCUMENT_ID, "alice");
       const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
         ...ADMIN_ALICE,
-        controlState: alice.controlState,
+        controlState: persistedOf(alice),
       });
       expect(getPlainText(restarted.fragment)).toBe("");
       const requests = await resyncRequestsFrom(messenger.inner, DOCUMENT_ID, "alice");
@@ -1559,7 +1381,7 @@ class WindowedPort implements MessengerPort {
   }
 }
 
-describe("requests a responder could not answer at once (RSY-9)", () => {
+describe("requests a responder could not answer at once (RSY-9, RSY-19)", () => {
   const AS_ALICE = { batchWindowMs: 0, creatorMemberId: "alice", resyncResponseThrottleMs: 1000 };
 
   beforeEach(() => {
@@ -1590,6 +1412,46 @@ describe("requests a responder could not answer at once (RSY-9)", () => {
     expect(carol.mayEdit).toBe(true);
   });
 
+  it("answers two devices of one member that ask at once, each its own request (RSY-19, wappensc/tdsp#31)", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    alice.edit((fragment) => insertPlainText(fragment, 0, "content"));
+    await vi.advanceTimersByTimeAsync(10);
+    const laptop = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    const phone = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await alice.sync(); // both requests in one tick: one answered, the other kept
+    await vi.advanceTimersByTimeAsync(1_100);
+    await alice.sync(); // the kept one, now — not replaced by the other device's
+    await vi.advanceTimersByTimeAsync(10);
+    await laptop.sync();
+    await phone.sync();
+
+    expect(laptop.hasCompletedBootstrap).toBe(true);
+    expect(phone.hasCompletedBootstrap).toBe(true);
+  });
+
+  it("serves requesters in turn, so one that asks again and again does not push another back (RSY-19)", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    alice.edit((fragment) => insertPlainText(fragment, 0, "content"));
+    await vi.advanceTimersByTimeAsync(10);
+    // Bob from three devices, then Carol: four requests in one tick.
+    const bobs = [];
+    for (let i = 0; i < 3; i++)
+      bobs.push(await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE));
+    const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", messenger, undefined, AS_ALICE);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await alice.sync(); // answers Bob's first
+    await vi.advanceTimersByTimeAsync(1_100);
+    await alice.sync(); // then Carol's, not Bob's second
+    await vi.advanceTimersByTimeAsync(10);
+    await carol.sync();
+    expect(carol.hasCompletedBootstrap).toBe(true);
+  });
+
   /** Bob joins alice's document over `port`; alice's first answer meets `failure`. */
   async function answerFails(failure: TransportSendError) {
     const port = new FlakySendPort();
@@ -1615,8 +1477,8 @@ describe("requests a responder could not answer at once (RSY-9)", () => {
       new TransportSendError("rate-limited", "slow down"),
     );
     await vi.advanceTimersByTimeAsync(1_100);
-    await alice.sync(); // nothing new arrived: the kept request is answered again
-    await vi.advanceTimersByTimeAsync(10);
+    await alice.sync(); // nothing new arrived: the kept request is answered again...
+    await vi.advanceTimersByTimeAsync(400); // ...once the spacing the rate limit widened to 1.5 s allows (SND-9)
     await bob.sync();
 
     expect(bob.hasCompletedBootstrap).toBe(true);
@@ -1632,6 +1494,63 @@ describe("requests a responder could not answer at once (RSY-9)", () => {
     expect(await sent("resync-response", "alice")).toBe(0);
   });
 
+  /** Alice, with her errors collected, answers bob's join over `port`; `refuse` decides which of her answer's sends fail. */
+  async function answerRefusedForGood(
+    port: FlakySendPort,
+    refuse: (answerSend: number) => unknown,
+  ) {
+    const errors: unknown[] = [];
+    const alice = await DocumentEngine.create(
+      DOCUMENT_ID,
+      "alice",
+      port,
+      (error) => errors.push(error),
+      AS_ALICE,
+    );
+    alice.edit((fragment) => insertPlainText(fragment, 0, "x".repeat(3000)));
+    await vi.advanceTimersByTimeAsync(10);
+    let answerSends = 0;
+    const send = port.send.bind(port);
+    port.send = async (documentId, sender, payload) => {
+      if (sender === "alice" && decodeFrame(payload).kind === "resync-response") {
+        const failure = refuse(answerSends++);
+        if (failure !== undefined) {
+          throw failure;
+        }
+      }
+      return send(documentId, sender, payload);
+    };
+    await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
+    await vi.advanceTimersByTimeAsync(10);
+    for (let tick = 0; tick < 10; tick += 1) {
+      await alice.sync();
+      await vi.advanceTimersByTimeAsync(1_100);
+    }
+    return { alice, errors, answerSends: () => answerSends };
+  }
+
+  it("reports an answer refused for good once, and does not count it as a change of its own (SND-8)", async () => {
+    const refusal = new TransportSendError("rejected", "never");
+    const { alice, errors, answerSends } = await answerRefusedForGood(new FlakySendPort(), (n) =>
+      n === 0 ? refusal : undefined,
+    );
+    expect(answerSends()).toBe(1); // let go, not answered again (RSY-9)
+    expect(errors).toEqual([refusal]);
+    expect(alice.hasUndistributedChanges).toBe(false); // nothing of alice's own is missing anywhere
+  });
+
+  it("reports an answer in pieces refused for good once, and does not count it as a change of its own (SND-8)", async () => {
+    const port = new FlakySendPort();
+    port.limitTo(1_000); // the answer goes in pieces
+    const refusal = new TransportSendError("rejected", "not this piece");
+    const { alice, errors, answerSends } = await answerRefusedForGood(port, (n) =>
+      n === 1 ? refusal : undefined,
+    );
+    expect(answerSends()).toBe(2); // the first piece, then the refused one: the rest is not sent
+    expect(errors).toEqual([refusal]);
+    expect(alice.hasUndistributedChanges).toBe(false);
+  });
+
   it("keeps a bounded number under a flood, and still answers a single valid request afterwards", async () => {
     const messenger = new InMemoryMessengerPort();
     const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
@@ -1644,9 +1563,13 @@ describe("requests a responder could not answer at once (RSY-9)", () => {
         encodeResyncRequestFrame({
           documentId: DOCUMENT_ID,
           requestId: i.toString(16).padStart(16, "0"),
-          bootstrap: true,
-          controlSequence: 0,
+          control: null,
+          controlDigest: null,
+          force: false,
           stateVector: new Uint8Array([0]),
+          // What a joiner with nothing states: it deleted nothing (Appendix D). Another digest beside
+          // an empty vector would be evidence of a lost deletion at every receiver (LOS-12).
+          stateDigest: "96a296d224f285c6",
         }),
       );
     }
@@ -1854,7 +1777,7 @@ describe("a bridge restart that hides a loss behind deliveries offered again (LO
     port.down = false;
     await alice.sync();
     expect(alice.syncHealth.suspicions.map((s) => s.kind)).toContain("history-truncated");
-    // Bob lacks nothing the creator has, so he does not answer (RSY-7); the request expires.
+    // Bob lacks nothing the creator has, so he does not answer (RSY-17); the request expires.
     for (let tick = 0; tick < 15; tick += 1) {
       await vi.advanceTimersByTimeAsync(1_100);
       await alice.sync();
@@ -1912,7 +1835,7 @@ describe("old deliveries offered again, as a restarted bridge may (TRN-8, BRG-17
 
     expect(getPlainText(bob.fragment)).toBe("once");
     expect(bob.permissionOf("bob")).toBe("read");
-    expect(bob.controlSequence).toBe(1);
+    expect(Object.values(bob.controlVector)).toEqual([1]);
     expect(declines.filter((sender) => sender === "dave")).toHaveLength(1);
     expect(errors).toEqual([]);
   });
@@ -1974,21 +1897,13 @@ class FlakySendPort implements MessengerPort {
     this.maxBytes = maxBytes;
     this.profile = {
       bounds: { minIntervalMs: null, maxBytes },
-      profiles: [
-        {
-          id: "standard",
-          label: "Standard",
-          description: "",
-          values: {
-            minIntervalMs: 0,
-            maxIntervalMs: null,
-            minChars: 0,
-            maxChars: null,
-            expectedLatencyMs: 0,
-          },
-        },
-      ],
-      defaultProfile: "standard",
+      pacing: {
+        minIntervalMs: 0,
+        maxIntervalMs: null,
+        minChars: 0,
+        maxChars: null,
+        expectedLatencyMs: 0,
+      },
     };
   }
 
@@ -2041,6 +1956,35 @@ class FlakySendPort implements MessengerPort {
     return this.inner.listChannels(member);
   }
 }
+
+describe("the bounds of control state when the creator decides (CTL-37, SND-18)", () => {
+  it("refuses a decision after which no answer could carry the control state, and nothing changes", async () => {
+    const port = new FlakySendPort();
+    port.limitTo(4_000);
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, {
+      batchWindowMs: 0,
+      creatorMemberId: "alice",
+    });
+    let refused: unknown;
+    let n = 0;
+    for (; n < 200 && refused === undefined; n++) {
+      await alice
+        .setMembership(`@member-${String(n).padStart(40, "0")}:example.org`, "read")
+        .catch((error: unknown) => {
+          refused = error;
+        });
+    }
+    expect(refused).toBeInstanceOf(SendRefusedError);
+    expect((refused as SendRefusedError).reason).toBe("too-large");
+    const last = `@member-${String(n - 1).padStart(40, "0")}:example.org`;
+    expect(alice.permissionOf(last)).toBeUndefined(); // not held, not persisted, not sent
+    expect(Math.max(...port.sentSizes)).toBeLessThanOrEqual(4_000);
+    // The ones before still fit in one answer.
+    expect(alice.permissionOf(`@member-${String(n - 2).padStart(40, "0")}:example.org`)).toBe(
+      "read",
+    );
+  });
+});
 
 describe("send scheduling and retry", () => {
   const AS_ALICE = { creatorMemberId: "alice" };
@@ -2097,6 +2041,83 @@ describe("send scheduling and retry", () => {
     expect(getPlainText(alice.fragment)).toBe("written offline");
   });
 
+  it("keeps an edit whose send failed for a reason nobody classified, and retries it (TRN-12)", async () => {
+    const port = new FlakySendPort();
+    const errors: unknown[] = [];
+    const { alice, bob } = await pair(port, {}, {}, (error) => errors.push(error));
+    port.failNextSends(new TransportSendError("timeout" as never, "the bridge timed out"));
+
+    bob.edit((fragment) => insertPlainText(fragment, 0, "kept"));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(bob.sendStatus.state).toBe("retrying");
+    expect(bob.hasUndistributedChanges).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await alice.sync();
+    expect(getPlainText(alice.fragment)).toBe("kept");
+    expect(errors).toEqual([]);
+  });
+
+  it("keeps an edit refused until the person acts, waits for the person, and sends it on flush() (TRN-20, TRN-22)", async () => {
+    const port = new FlakySendPort();
+    const errors: unknown[] = [];
+    const { alice, bob } = await pair(port, {}, {}, (error) => errors.push(error));
+    port.failNextSends(
+      new TransportSendError("needs-person", "an identity to trust"),
+      new TransportSendError("needs-person", "an identity to trust"),
+    );
+
+    bob.edit((fragment) => insertPlainText(fragment, 0, "kept for the person"));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(bob.sendStatus.state).toBe("needs-person");
+    expect(bob.sendStatus.lastError).toBe("an identity to trust");
+    expect(bob.hasPendingChanges).toBe(true); // kept, not dropped
+    expect(bob.hasUndistributedChanges).toBe(false);
+    expect(errors).toEqual([]); // not lost, so not an error
+
+    // No back-off that spins: nothing goes out before the longest back-off.
+    const attempts = port.sendAttempts;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(port.sendAttempts).toBe(attempts);
+
+    // The person trusted the identity; the application asks to send now.
+    await expect(bob.flush()).rejects.toThrow("an identity to trust");
+    await bob.flush();
+    expect(bob.sendStatus.state).toBe("idle");
+    await alice.sync();
+    expect(getPlainText(alice.fragment)).toBe("kept for the person");
+    expect(errors).toEqual([]);
+  });
+
+  it("answers a request again only once the wait the provider asked for is over (SND-7, RSY-9)", async () => {
+    const port = new FlakySendPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
+    // The provider throttles alice's account for 30 s from her first answer on.
+    let throttledUntil = 0;
+    const answers: number[] = [];
+    const send = port.send.bind(port);
+    port.send = async (documentId, sender, payload) => {
+      if (sender === "alice" && decodeFrame(payload).kind === "resync-response") {
+        answers.push(Date.now());
+        if (throttledUntil === 0) {
+          throttledUntil = Date.now() + 30_000;
+        }
+        if (Date.now() < throttledUntil) {
+          throw new TransportSendError("rate-limited", "slow down", throttledUntil - Date.now());
+        }
+      }
+      return send(documentId, sender, payload);
+    };
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
+    for (let second = 0; second < 40; second += 1) {
+      await vi.advanceTimersByTimeAsync(1000);
+      await alice.sync();
+      await bob.sync();
+    }
+    expect(answers.filter((at) => at < throttledUntil)).toHaveLength(1); // the refused one, nothing more
+    expect(bob.hasCompletedBootstrap).toBe(true); // answered once the wait was over
+  });
+
   it("delivers through a real disconnect and reconnect of the mock, with no Resync", async () => {
     const port = new InMemoryMessengerPort();
     const { alice, bob } = await pair(port);
@@ -2126,13 +2147,13 @@ describe("send scheduling and retry", () => {
     expect(getPlainText(alice.fragment)).toBe("still arrives");
   });
 
-  it("retries a send failure whose reason is none of the four, as unavailable (TRN-12)", async () => {
+  it("retries a send failure whose reason is outside the five, as unavailable (TRN-12)", async () => {
     const port = new FlakySendPort();
     const errors: unknown[] = [];
     const { alice, bob } = await pair(port, {}, {}, (error) => errors.push(error));
     // An adapter of a later version may name a reason this engine does not know.
-    const unknown = "needs-person" as unknown as TransportSendFailure;
-    port.failNextSends(new TransportSendError(unknown, "the person has to act"));
+    const unknown = "timeout" as unknown as TransportSendFailure;
+    port.failNextSends(new TransportSendError(unknown, "a reason nobody classified"));
 
     bob.edit((fragment) => insertPlainText(fragment, 0, "kept, not dropped"));
     await vi.advanceTimersByTimeAsync(500); // the quiet time; the send is refused
@@ -2401,21 +2422,13 @@ describe("send scheduling and retry", () => {
       /** A transport shaped like the email provider: 30 s suggested, never faster than 15 s. */
       const SLOW_TRANSPORT: TransportProfile = {
         bounds: { minIntervalMs: 15_000, maxBytes: null },
-        profiles: [
-          {
-            id: "standard",
-            label: "Standard",
-            description: "",
-            values: {
-              minIntervalMs: 30_000,
-              maxIntervalMs: 120_000,
-              minChars: 0,
-              maxChars: null,
-              expectedLatencyMs: 60_000,
-            },
-          },
-        ],
-        defaultProfile: "standard",
+        pacing: {
+          minIntervalMs: 30_000,
+          maxIntervalMs: 120_000,
+          minChars: 0,
+          maxChars: null,
+          expectedLatencyMs: 60_000,
+        },
       };
 
       it("supplies the policy when nobody chose one, so an email client sends one message per 30 s without being told", async () => {
@@ -2481,221 +2494,6 @@ describe("send scheduling and retry", () => {
       });
     });
 
-    describe("the creator's policy reaching the others", () => {
-      const policyFrame = (sequence: number, minIntervalMs: number): string =>
-        encodeControlFrame({
-          documentId: DOCUMENT_ID,
-          sequence,
-          action: "policy",
-          policy: resolveSyncPolicy({ minIntervalMs, maxIntervalMs: 600_000 }),
-        });
-
-      it("a policy change by the creator reaches a joiner and takes effect", async () => {
-        const port = new FlakySendPort();
-        const { alice, bob } = await pair(port);
-        expect(bob.syncPolicy.minIntervalMs).toBe(0);
-
-        await alice.setSyncPolicy({ minIntervalMs: 20_000, maxIntervalMs: 90_000 });
-        expect(alice.syncPolicy.minIntervalMs).toBe(20_000); // applied locally once sent
-        expect(alice.controlSequence).toBe(1);
-        await bob.sync();
-
-        expect(bob.syncPolicy.minIntervalMs).toBe(20_000);
-        expect(bob.syncPolicy.maxIntervalMs).toBe(90_000);
-        expect(bob.controlSequence).toBe(1);
-        // ...and it really governs sending, not only the number read back.
-        await vi.advanceTimersByTimeAsync(20_000); // the join's resync request used the floor too (SND-2)
-        bob.edit((fragment) => insertPlainText(fragment, 0, "one"));
-        await vi.advanceTimersByTimeAsync(500);
-        bob.edit((fragment) => insertPlainText(fragment, 3, " two"));
-        await vi.advanceTimersByTimeAsync(19_000);
-        await alice.sync();
-        expect(getPlainText(alice.fragment)).toBe("one");
-        await vi.advanceTimersByTimeAsync(1_000);
-        await alice.sync();
-        expect(getPlainText(alice.fragment)).toBe("one two");
-      });
-
-      it("a change merges over the policy in force, so a partial change keeps the rest", async () => {
-        const port = new FlakySendPort();
-        const { alice, bob } = await pair(port, {
-          syncPolicy: { minIntervalMs: 10_000, maxIntervalMs: 80_000 },
-        });
-        await afterFloor(alice.setSyncPolicy({ maxIntervalMs: 99_000 }), 20_000); // behind the join's answer
-        await bob.sync();
-        expect(bob.syncPolicy.minIntervalMs).toBe(10_000);
-        expect(bob.syncPolicy.maxIntervalMs).toBe(99_000);
-      });
-
-      it("a change waiting for its send window is judged by the new rules at once", async () => {
-        const port = new FlakySendPort();
-        const { alice, bob } = await pair(port, {}, { syncPolicy: { minIntervalMs: 60_000 } });
-        bob.edit((fragment) => insertPlainText(fragment, 0, "first"));
-        await vi.advanceTimersByTimeAsync(500);
-        bob.edit((fragment) => insertPlainText(fragment, 5, " second"));
-        await vi.advanceTimersByTimeAsync(5_000); // waiting behind a 60 s floor
-
-        await alice.setSyncPolicy({ minIntervalMs: 6_000 });
-        await bob.sync();
-        await vi.advanceTimersByTimeAsync(1_000); // 6 s after the first message, not 60
-        await alice.sync();
-        expect(getPlainText(alice.fragment)).toBe("first second");
-      });
-
-      it("a policy older than the invitation's is inert too", async () => {
-        const port = new FlakySendPort();
-        const { bob } = await pair(
-          port,
-          {},
-          { syncPolicy: { minIntervalMs: 77_000 }, syncPolicySequence: 9 },
-        );
-        await port.inner.send(DOCUMENT_ID, "alice", policyFrame(4, 4_000)); // older than the link
-        await bob.sync();
-        expect(bob.syncPolicy.minIntervalMs).toBe(77_000);
-        await port.inner.send(DOCUMENT_ID, "alice", policyFrame(10, 10_000)); // newer than the link
-        await bob.sync();
-        expect(bob.syncPolicy.minIntervalMs).toBe(10_000);
-      });
-
-      it("an invitation carries the policy for a joiner the creator cannot answer yet", async () => {
-        const port = new FlakySendPort();
-        const { alice } = await pair(port, { syncPolicy: { minIntervalMs: 25_000 } });
-        const invitation = alice.invitationPolicy;
-        expect(invitation).toEqual({
-          policy: expect.objectContaining({ minIntervalMs: 25_000 }),
-          sequence: 0,
-        });
-
-        const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", port, undefined, {
-          ...AS_ALICE,
-          syncPolicy: invitation?.policy,
-          syncPolicySequence: invitation?.sequence,
-        });
-        expect(carol.syncPolicy.minIntervalMs).toBe(25_000); // before any bootstrap
-      });
-
-      it("a fresh invitation is not overwritten by an older snapshot", async () => {
-        const port = new FlakySendPort();
-        const { alice } = await pair(port, { syncPolicy: { minIntervalMs: 25_000 } });
-        const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", port, undefined, {
-          ...AS_ALICE,
-          syncPolicy: { minIntervalMs: 77_000 },
-          syncPolicySequence: 9, // newer than anything alice has issued
-        });
-        await alice.sync();
-        await carol.sync();
-        expect(carol.syncPolicy.minIntervalMs).toBe(77_000);
-      });
-
-      it("each receiver clamps to its own transport's bounds, whatever the creator sent", async () => {
-        const port = new FlakySendPort();
-        port.profile = {
-          bounds: { minIntervalMs: 15_000, maxBytes: null },
-          profiles: [
-            {
-              id: "standard",
-              label: "Standard",
-              description: "",
-              values: {
-                minIntervalMs: 0,
-                maxIntervalMs: null,
-                minChars: 0,
-                maxChars: null,
-                expectedLatencyMs: 0,
-              },
-            },
-          ],
-          defaultProfile: "standard",
-        };
-        const { bob } = await pair(port);
-        await port.inner.send(DOCUMENT_ID, "alice", policyFrame(1, 100)); // far below the floor
-        await bob.sync();
-        expect(bob.syncPolicy.minIntervalMs).toBe(15_000);
-      });
-
-      it("the creator never broadcasts a policy it could not run itself", async () => {
-        const port = new FlakySendPort();
-        port.profile = {
-          bounds: { minIntervalMs: 15_000, maxBytes: null },
-          profiles: [
-            {
-              id: "standard",
-              label: "Standard",
-              description: "",
-              values: {
-                minIntervalMs: 0,
-                maxIntervalMs: null,
-                minChars: 0,
-                maxChars: null,
-                expectedLatencyMs: 0,
-              },
-            },
-          ],
-          defaultProfile: "standard",
-        };
-        const { alice, bob } = await pair(port);
-        await afterFloor(alice.setSyncPolicy({ minIntervalMs: 1 }), 30_000); // behind the join's answer
-        expect(alice.syncPolicy.minIntervalMs).toBe(15_000);
-        // What went out on the wire is the clamped value, not just what the creator runs.
-        const sent = (await port.inner.receive(DOCUMENT_ID, "alice")).map((d) =>
-          decodeFrame(d.payload),
-        );
-        const change = sent.find((frame) => frame.kind === "control" && frame.action === "policy");
-        expect(change).toMatchObject({ policy: { minIntervalMs: 15_000 } });
-        await bob.sync();
-        expect(bob.syncPolicy.minIntervalMs).toBe(15_000);
-      });
-
-      it("a creator that re-attaches gets its policy and its sequence back, and keeps issuing from there", async () => {
-        const port = new FlakySendPort();
-        const states: ControlSnapshot[] = [];
-        const { alice, bob } = await pair(port, {
-          onControlStateChange: (state) => states.push(state),
-        });
-        await alice.setSyncPolicy({ minIntervalMs: 33_000 });
-        const persisted = states.at(-1);
-        expect(persisted?.policy?.minIntervalMs).toBe(33_000);
-        expect(persisted?.policySequence).toBe(1);
-
-        // Rejoins as creator (LIF-5). Its join sends a resync request and answers bob's, which
-        // it finds in the channel's history: the second message waits for the restored floor.
-        const again = await afterFloor(
-          DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, {
-            ...AS_ALICE,
-            controlState: persisted,
-          }),
-          33_000,
-        );
-        expect(again.syncPolicy.minIntervalMs).toBe(33_000);
-        expect(again.invitationPolicy?.sequence).toBe(1);
-        await afterFloor(again.setSyncPolicy({ minIntervalMs: 44_000 }), 33_000); // after its resync request's floor
-        expect(again.controlSequence).toBe(2); // continued, not restarted at 1
-        await bob.sync();
-        expect(bob.syncPolicy.minIntervalMs).toBe(44_000);
-      });
-
-      it("cannot be changed once the document is closed", async () => {
-        const port = new FlakySendPort();
-        const { alice } = await pair(port);
-        await alice.closeDocument();
-        await expect(alice.setSyncPolicy({ minIntervalMs: 1000 })).rejects.toBeInstanceOf(
-          SendRefusedError,
-        );
-      });
-
-      it("a joiner told nothing takes the creator's policy, and one told something keeps its own until a newer one arrives", async () => {
-        const port = new FlakySendPort();
-        const { alice } = await pair(port, { syncPolicy: { minIntervalMs: 9_000 } });
-        const told = await DocumentEngine.join(DOCUMENT_ID, "dave", port, undefined, {
-          ...AS_ALICE,
-          syncPolicy: { minIntervalMs: 2_000 },
-        });
-        await alice.sync();
-        await told.sync();
-        expect(told.syncPolicy.minIntervalMs).toBe(2_000); // sequence 0 is not newer than sequence 0
-      });
-    });
-
     describe("a change larger than one message", () => {
       const LIMIT = 400;
 
@@ -2731,16 +2529,17 @@ describe("send scheduling and retry", () => {
         await vi.advanceTimersByTimeAsync(500);
         expect(port.sentSizes.length).toBeGreaterThan(10);
         expect(Math.max(...port.sentSizes)).toBeLessThanOrEqual(LIMIT);
-        expect(
-          (await frameKinds(port)).filter((kind) => kind === "fragment").length,
-        ).toBeGreaterThan(10);
+        // Pieces are ordinary edits, each a valid update (SND-17).
+        expect((await frameKinds(port)).filter((kind) => kind === "edit").length).toBeGreaterThan(
+          10,
+        );
 
         await bob.sync();
         expect(getPlainText(bob.fragment)).toBe(text);
-        expect(bob.syncHealth.incoming).toEqual([]); // nothing left half-received
+        expect(bob.syncHealth.state).toBe("ok"); // nothing held back
       });
 
-      it("spreads a long typed burst over several ordinary edits, each a usable prefix, not fragments", async () => {
+      it("spreads a long typed burst over several ordinary edits, each a usable prefix", async () => {
         const { port, alice, bob } = await limitedPair();
         let typed = "";
         for (let i = 0; i < 300; i += 1) {
@@ -2751,7 +2550,7 @@ describe("send scheduling and retry", () => {
         await vi.advanceTimersByTimeAsync(500);
         expect(port.sentSizes.length).toBeGreaterThan(3);
         expect(Math.max(...port.sentSizes)).toBeLessThanOrEqual(LIMIT);
-        expect(new Set(await frameKinds(port))).not.toContain("fragment");
+        expect(new Set(await frameKinds(port))).toEqual(new Set(["edit"]));
 
         await bob.sync();
         expect(getPlainText(bob.fragment)).toBe(typed);
@@ -2771,36 +2570,51 @@ describe("send scheduling and retry", () => {
         alice.edit((fragment) => insertPlainText(fragment, 0, "x".repeat(3000)));
         alice.edit((fragment) => insertPlainText(fragment, 3000, " and then this"));
         await vi.advanceTimersByTimeAsync(500);
-        const kinds = await frameKinds(port);
-        expect(kinds.lastIndexOf("fragment")).toBeLessThan(kinds.lastIndexOf("edit"));
+        // Applied in the order sent: every piece of the paste lands before the later edit.
+        const sent = await port.inner.receive(DOCUMENT_ID, "alice");
+        const replay = new Y.Doc();
+        for (const delivery of sent.slice(0, -1)) {
+          const frame = decodeFrame(delivery.payload);
+          if (frame.kind === "edit") {
+            Y.applyUpdate(replay, frame.update);
+          }
+        }
+        expect(replay.getXmlFragment("content").toString()).toContain("x".repeat(3000));
+        expect(replay.getXmlFragment("content").toString()).not.toContain("and then this");
         await bob.sync();
         expect(getPlainText(bob.fragment)).toBe(`${"x".repeat(3000)} and then this`);
         await vi.advanceTimersByTimeAsync(60_000);
         expect(bob.syncHealth.state).toBe("ok");
       });
 
-      it("shows the sender how many parts are left and the receiver how far along they are, when the floor spaces them", async () => {
+      it("shows the sender how many pieces are left, and the receiver applies each as it arrives, when the floor spaces them", async () => {
         const { alice, bob } = await limitedPair({ syncPolicy: { minIntervalMs: 2_000 } }, {});
-        // The answer to bob's join goes out first: at this test's 400-byte limit it is itself cut
-        // in two, one part per floor.
-        await vi.advanceTimersByTimeAsync(4_000);
+        // The answer to bob's join goes out first, itself perhaps in pieces, one per floor.
+        for (
+          let tick = 0;
+          tick < 20 && (alice.hasPendingChanges || alice.sendStatus.partsQueued > 0);
+          tick++
+        ) {
+          await vi.advanceTimersByTimeAsync(2_000);
+        }
+        await vi.advanceTimersByTimeAsync(2_000);
         await bob.sync();
         alice.edit((fragment) => insertPlainText(fragment, 0, "y".repeat(2000)));
-        await vi.advanceTimersByTimeAsync(2_000); // the first part goes, one floor after the answer
+        await vi.advanceTimersByTimeAsync(2_000); // the first piece goes, one floor later
         expect(alice.sendStatus.partsQueued).toBeGreaterThan(3);
         expect(alice.hasPendingChanges).toBe(true);
         const before = alice.sendStatus.partsQueued;
         await bob.sync();
-        expect(bob.syncHealth.incoming).toEqual([
-          expect.objectContaining({ sender: "alice", have: 1, total: before + 1 }),
-        ]);
+        // A piece is a valid update: what has arrived shows at once (PRF-1).
+        const shown = getPlainText(bob.fragment).length;
+        expect(shown).toBeGreaterThan(0);
+        expect(shown).toBeLessThan(2000);
         await vi.advanceTimersByTimeAsync(2_000);
         expect(alice.sendStatus.partsQueued).toBe(before - 1);
         await vi.advanceTimersByTimeAsync(60_000);
         await bob.sync();
         expect(getPlainText(bob.fragment)).toBe("y".repeat(2000));
         expect(alice.hasPendingChanges).toBe(false);
-        expect(bob.syncHealth.incoming).toEqual([]);
       });
 
       it("cuts a full-state answer to a joiner too, so a big document can still be joined", async () => {
@@ -2835,37 +2649,41 @@ describe("send scheduling and retry", () => {
         expect(getPlainText(bob.fragment)).toBe("z".repeat(3000));
       });
 
-      it("a part that is lost is noticed and healed like any lost message, by the state the creator sends back", async () => {
+      it("a piece that is lost is a gap like any lost message, noticed and healed by the state a peer sends back", async () => {
         const WATCHED = { syncPolicy: { maxIntervalMs: 20_000, expectedLatencyMs: 5_000 } };
         const { port, alice, bob } = await limitedPair(WATCHED, WATCHED);
-        // Bob types a big paste; one of its parts is lost on the way.
+        // Bob types a big paste; one of its pieces is lost on the way.
         bob.edit((fragment) => insertPlainText(fragment, 0, "w".repeat(2000)));
-        let sent = 0;
+        let bobsEdits = 0;
         const original = port.send.bind(port);
         port.send = async (documentId, sender, payload) => {
-          sent += 1;
-          if (sender === "bob" && sent === 4) {
+          if (sender === "bob" && decodeFrame(payload).kind === "edit" && ++bobsEdits === 2) {
             return "lost"; // accepted, and never delivered
           }
           return original(documentId, sender, payload);
         };
         await vi.advanceTimersByTimeAsync(500);
         await alice.sync();
-        expect(getPlainText(alice.fragment)).toBe(""); // nothing of a cut message applies until it is whole
-        expect(alice.syncHealth.incoming).toHaveLength(1);
+        // The first piece applies; the ones after the lost one wait for it (PRF-1, item 1).
+        const shown = getPlainText(alice.fragment).length;
+        expect(shown).toBeGreaterThan(0);
+        expect(shown).toBeLessThan(2000);
 
-        await vi.advanceTimersByTimeAsync(20_000); // bob's heartbeat: the state he holds
+        await vi.advanceTimersByTimeAsync(5_000); // a latency: the gap is believed
         await alice.sync();
-        await vi.advanceTimersByTimeAsync(5_000); // alice has waited a latency and still lacks it
-        expect(alice.syncHealth.suspicions).toEqual([
-          expect.objectContaining({ kind: "behind-heartbeat", sender: "bob" }),
-        ]);
-        await vi.advanceTimersByTimeAsync(5_000);
+        expect(alice.syncHealth.suspicions).toEqual(
+          expect.arrayContaining([expect.objectContaining({ kind: "pending-gap", sender: "bob" })]),
+        );
+        await vi.advanceTimersByTimeAsync(20_000);
         await alice.sync(); // she asks by herself: a peer answers the creator
-        await bob.sync(); // bob answers with his state, itself cut into parts
+        await bob.sync(); // bob answers with what she lacks, itself in pieces
         await vi.advanceTimersByTimeAsync(0);
         await alice.sync();
         expect(getPlainText(alice.fragment)).toBe("w".repeat(2000));
+        await vi.advanceTimersByTimeAsync(30_000);
+        await alice.sync();
+        await bob.sync();
+        await alice.sync();
         expect(alice.syncHealth.state).toBe("ok");
       });
 
@@ -2876,21 +2694,13 @@ describe("send scheduling and retry", () => {
         // document can be created; a fragment's own header is 25 bytes, so nothing can be cut.
         tiny.profile = {
           bounds: { minIntervalMs: null, maxBytes: 20 },
-          profiles: [
-            {
-              id: "standard",
-              label: "Standard",
-              description: "",
-              values: {
-                minIntervalMs: 0,
-                maxIntervalMs: null,
-                minChars: 0,
-                maxChars: null,
-                expectedLatencyMs: 0,
-              },
-            },
-          ],
-          defaultProfile: "standard",
+          pacing: {
+            minIntervalMs: 0,
+            maxIntervalMs: null,
+            minChars: 0,
+            maxChars: null,
+            expectedLatencyMs: 0,
+          },
         };
         const solo = await DocumentEngine.create(
           DOCUMENT_ID,
@@ -2902,18 +2712,37 @@ describe("send scheduling and retry", () => {
         solo.edit((fragment) => insertPlainText(fragment, 0, "no room"));
         await vi.advanceTimersByTimeAsync(500);
         expect(
-          errors.filter((e) => e instanceof Error && e.name === "FragmentationImpossibleError"),
+          errors.filter((e) => e instanceof Error && e.name === "PieceTooSmallError"),
         ).toHaveLength(1);
         expect(solo.hasPendingChanges).toBe(false);
         expect(getPlainText(solo.fragment)).toBe("no room"); // still applied locally
       });
 
+      it("drops and reports an indivisible unit larger than a message, and marks the change undistributed (SND-19)", async () => {
+        const errors: unknown[] = [];
+        const port = new FlakySendPort();
+        port.limitTo(LIMIT);
+        const creator = await DocumentEngine.create(
+          DOCUMENT_ID,
+          "alice",
+          port,
+          (error) => errors.push(error),
+          AS_ALICE,
+        );
+        creator.document.getArray("com.example.files/1").insert(0, [new Uint8Array(LIMIT * 2)]);
+        await vi.advanceTimersByTimeAsync(500);
+        expect(errors.filter((e) => e instanceof UnsplittableUpdateError)).toHaveLength(1);
+        expect(creator.hasUndistributedChanges).toBe(true);
+        expect(creator.hasPendingChanges).toBe(false);
+      });
+
       it("a client on a transport that states no limit never splits anything", async () => {
         const port = new FlakySendPort();
         const { alice, bob } = await pair(port);
+        const before = (await port.inner.receive(DOCUMENT_ID, "alice")).length;
         alice.edit((fragment) => insertPlainText(fragment, 0, "q".repeat(20_000)));
         await vi.advanceTimersByTimeAsync(500);
-        expect(new Set(await frameKinds(port))).not.toContain("fragment");
+        expect((await port.inner.receive(DOCUMENT_ID, "alice")).length - before).toBe(1);
         await bob.sync();
         expect(getPlainText(bob.fragment)).toBe("q".repeat(20_000));
       });
@@ -2958,7 +2787,7 @@ describe("send scheduling and retry", () => {
         expect(await heartbeatsFrom(port, "bob")).toHaveLength(0);
         await vi.advanceTimersByTimeAsync(1); // 20 s after the edit went out
         const [heartbeat] = await heartbeatsFrom(port, "bob");
-        expect(heartbeat).toMatchObject({ kind: "heartbeat", controlSequence: 0 });
+        expect(heartbeat).toMatchObject({ kind: "heartbeat", control: null });
         // ...and it is the state vector of what bob holds.
         expect(heartbeat && "stateVector" in heartbeat ? heartbeat.stateVector : null).toEqual(
           encodeStateVector(bob.document),
@@ -3020,7 +2849,22 @@ describe("send scheduling and retry", () => {
         const heartbeats = await heartbeatsFrom(port, "alice");
         expect(heartbeats.length).toBeGreaterThan(0);
         const last = heartbeats.at(-1);
-        expect(last?.kind === "heartbeat" && last.controlSequence).toBe(alice.controlSequence);
+        expect(last?.kind === "heartbeat" && last.control).toEqual(alice.controlVector);
+      });
+
+      it("is still sent after a close refused an edit that was waiting to go out (LIF-6, SND-23)", async () => {
+        const port = new FlakySendPort();
+        const { alice, bob } = await pair(port, WATCHED, WATCHED);
+        await vi.advanceTimersByTimeAsync(60_000); // every heartbeat the join owed has gone out
+        bob.edit((fragment) => insertPlainText(fragment, 0, "sent"));
+        await vi.advanceTimersByTimeAsync(500); // goes out: a heartbeat is owed
+        const before = (await heartbeatsFrom(port, "bob")).length;
+        await alice.closeDocument();
+        bob.edit((fragment) => insertPlainText(fragment, 4, " held")); // waits for the quiet time
+        await bob.sync(); // the close arrives first
+        await vi.advanceTimersByTimeAsync(500); // the waiting edit is refused (CTL-13) and dropped
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect((await heartbeatsFrom(port, "bob")).length).toBe(before + 1);
       });
 
       it("a lost FINAL message is noticed from the heartbeat — the case no gap ever shows", async () => {
@@ -3043,6 +2887,100 @@ describe("send scheduling and retry", () => {
         expect(alice.syncHealth.suspicions).toEqual([
           expect.objectContaining({ kind: "behind-heartbeat", sender: "bob" }),
         ]);
+      });
+
+      it("a lost final message between two devices of one member is noticed from the heartbeat (LOS-4)", async () => {
+        const port = new FlakySendPort();
+        const { alice, bob } = await pair(port, WATCHED, WATCHED);
+        const bobsPhone = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, {
+          ...AS_ALICE,
+          ...WATCHED,
+        });
+        await alice.sync(); // answers the phone's join
+        await bobsPhone.sync();
+        bob.edit((fragment) => insertPlainText(fragment, 0, "all of this arrives"));
+        await vi.advanceTimersByTimeAsync(500);
+        await bobsPhone.sync();
+        bob.edit((fragment) => insertPlainText(fragment, 19, " but this last part is lost"));
+        port.inner.dropNextSend("bob");
+        await vi.advanceTimersByTimeAsync(500); // sent, and lost
+        await vi.advanceTimersByTimeAsync(20_000); // the laptop's heartbeat, which does arrive
+        await bobsPhone.sync();
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(getPlainText(bobsPhone.fragment)).toBe("all of this arrives");
+        expect(bobsPhone.syncHealth.suspicions).toEqual([
+          expect.objectContaining({ kind: "behind-heartbeat", sender: "bob" }),
+        ]);
+      });
+
+      it("a heartbeat of one device that crossed another's edit does not hide that device's silence (LOS-11, LOS-16)", async () => {
+        const port = new FlakySendPort();
+        const { alice, bob } = await pair(port, WATCHED, WATCHED);
+        const bobsPhone = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, {
+          ...AS_ALICE,
+          ...WATCHED,
+        });
+        // A third device of bob's watches as well: its own member's devices count like anyone's.
+        const bobsTablet = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, {
+          ...AS_ALICE,
+          ...WATCHED,
+        });
+        // Alice answers the joins, one a second (RSY-9).
+        for (let tick = 0; tick < 10 && !(bobsPhone.mayEdit && bobsTablet.mayEdit); tick += 1) {
+          await vi.advanceTimersByTimeAsync(1_000);
+          for (const engine of [alice, bob, bobsPhone, bobsTablet]) {
+            await engine.sync();
+          }
+        }
+        expect(bobsPhone.mayEdit && bobsTablet.mayEdit).toBe(true);
+        await vi.advanceTimersByTimeAsync(60_000); // every heartbeat the joins owed has gone out
+        for (const engine of [alice, bob, bobsPhone, bobsTablet]) {
+          await engine.sync();
+        }
+        expect(alice.syncHealth.suspicions).toEqual([]);
+        const heartbeatsBefore = (await heartbeatsFrom(port, "bob")).length;
+
+        bobsPhone.edit((fragment) => insertPlainText(fragment, 0, "phone "));
+        await vi.advanceTimersByTimeAsync(1_000);
+        // The laptop writes; the phone does not sync, so its heartbeat will not hold this edit.
+        bob.edit((fragment) => insertPlainText(fragment, 0, "laptop "));
+        await vi.advanceTimersByTimeAsync(19_500); // the phone's heartbeat, owed 20 s after its edit
+        expect((await heartbeatsFrom(port, "bob")).length).toBe(heartbeatsBefore + 1);
+        port.inner.dropNextSend("bob"); // the laptop's heartbeat, lost
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect((await heartbeatsFrom(port, "bob")).length).toBe(heartbeatsBefore + 1);
+        await alice.sync();
+        await bobsTablet.sync();
+        expect(getPlainText(alice.fragment)).toContain("laptop");
+
+        // Due 20 s after the watchers heard the laptop's edit, plus 5 s of latency: then its
+        // silence is evidence.
+        await vi.advanceTimersByTimeAsync(24_999);
+        expect(alice.syncHealth.suspicions).toEqual([]);
+        await vi.advanceTimersByTimeAsync(1);
+        for (const watcher of [alice, bobsTablet]) {
+          expect(watcher.syncHealth.suspicions).toEqual([
+            expect.objectContaining({ kind: "sender-overdue", sender: "bob" }),
+          ]);
+        }
+      });
+
+      it("its own edit coming back promises it nothing, also where the echo has another delivery id (LOS-11)", async () => {
+        const port = new FlakySendPort();
+        // A transport that does not tell the sender the id its message is delivered under: the
+        // engine sees its own messages again, and only their content tells them apart.
+        const original = port.send.bind(port);
+        port.send = async (documentId, sender, payload) =>
+          `sent-${await original(documentId, sender, payload)}`;
+        const { alice } = await pair(port, WATCHED, WATCHED);
+        alice.edit((fragment) => insertPlainText(fragment, 0, "hello"));
+        await vi.advanceTimersByTimeAsync(500);
+        port.inner.dropNextSend("alice"); // her heartbeat, which would end any expectation
+        await vi.advanceTimersByTimeAsync(20_000);
+        await alice.sync(); // her own edit comes back
+        await vi.advanceTimersByTimeAsync(60_000);
+        await alice.sync();
+        expect(alice.syncHealth.suspicions.filter((s) => s.sender === "alice")).toEqual([]);
       });
 
       it("a lost MIDDLE message is noticed as a gap, and names whose", async () => {
@@ -3122,9 +3060,9 @@ describe("send scheduling and retry", () => {
         const { alice, bob } = await pair(port, WATCHED, WATCHED);
         port.inner.dropNextSend("alice"); // the membership change is lost
         await alice.setMembership("carol", "read");
-        await vi.advanceTimersByTimeAsync(20_000); // alice's heartbeat carries control sequence 1
+        await vi.advanceTimersByTimeAsync(20_000); // alice's heartbeat carries her control vector
         await bob.sync();
-        expect(bob.controlSequence).toBe(0); // bob never saw it
+        expect(bob.permissionOf("carol")).toBeUndefined(); // bob never saw it
         expect(bob.syncHealth.state).toBe("ok");
         await vi.advanceTimersByTimeAsync(5_000);
         expect(bob.syncHealth.suspicions).toEqual([
@@ -3301,7 +3239,7 @@ describe("send scheduling and retry", () => {
           expect(heartbeats).toHaveLength(0);
         });
 
-        it("a joiner's request alone makes no bystander suspect it went quiet, and starts no cascade of requests (LOS-3)", async () => {
+        it("a joiner's request alone makes no bystander suspect it went quiet, and starts no cascade of requests (LOS-11)", async () => {
           const port = new FlakySendPort();
           const { alice, bob } = await pair(port, WATCHED, WATCHED);
           await vi.advanceTimersByTimeAsync(120_000);
@@ -3333,7 +3271,9 @@ describe("send scheduling and retry", () => {
           port.inner.disconnect("bob");
           await expect(bob.requestResync()).rejects.toThrow("disconnected");
           port.inner.reconnect("bob");
-          expect(await bob.requestResync()).toEqual({ sent: true });
+          const again = bob.requestResync(); // the slot is free; the send waits out the back-off (SND-7)
+          await vi.advanceTimersByTimeAsync(1_000);
+          expect(await again).toEqual({ sent: true });
         });
 
         it("a joiner nobody has answered asks again by itself, waiting longer each time, and stops when answered", async () => {
@@ -3390,6 +3330,72 @@ describe("send scheduling and retry", () => {
           expect(await bob.requestResync()).toEqual({ sent: true }); // a person still can
         });
 
+        it("asks a bounded number of times when every request is refused for good, and reports none as a lost change (RSY-5, SND-10)", async () => {
+          const port = new FlakySendPort();
+          await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, {
+            ...AS_ALICE,
+            ...WATCHED,
+          });
+          let attempts = 0;
+          const send = port.send.bind(port);
+          port.send = async (documentId, sender, payload) => {
+            if (sender === "bob" && decodeFrame(payload).kind === "resync-request") {
+              attempts += 1;
+              throw new TransportSendError("rejected", "bob may not post here");
+            }
+            return send(documentId, sender, payload);
+          };
+          const errors: unknown[] = [];
+          const bob = await DocumentEngine.join(
+            DOCUMENT_ID,
+            "bob",
+            port,
+            (error) => errors.push(error),
+            {
+              ...AS_ALICE,
+              ...WATCHED,
+            },
+          );
+          for (let minute = 0; minute < 48 * 60; minute += 1) {
+            await vi.advanceTimersByTimeAsync(60_000);
+            await bob.sync();
+          }
+          expect(attempts).toBe(1 + 5); // the join's own, and five automatic ones
+          expect(errors).toEqual([]);
+          // No error, but not invisible either: the request's outcome says it (SND-10, RSY-4).
+          expect(bob.syncHealth.resync).toMatchObject({ state: "idle", lastOutcome: "failed" });
+        });
+
+        it("asks again after a request that could not go out for now, without spending an attempt (LOS-6, SND-7)", async () => {
+          const port = new FlakySendPort();
+          const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, {
+            ...AS_ALICE,
+            ...WATCHED,
+          });
+          const errors: unknown[] = [];
+          port.inner.disconnect("bob"); // bob's messenger is not reachable when he joins
+          const bob = await DocumentEngine.join(
+            DOCUMENT_ID,
+            "bob",
+            port,
+            (error) => errors.push(error),
+            {
+              ...AS_ALICE,
+              ...WATCHED,
+            },
+          );
+          await vi.advanceTimersByTimeAsync(30_000);
+          await bob.sync(); // fails: still disconnected
+          port.inner.reconnect("bob");
+          for (let second = 0; second < 30 && !bob.hasCompletedBootstrap; second += 1) {
+            await vi.advanceTimersByTimeAsync(1_000);
+            await bob.sync();
+            await alice.sync();
+          }
+          expect(bob.hasCompletedBootstrap).toBe(true);
+          expect(errors).toEqual([]); // a request that could not go out is no lost change (SND-10)
+        });
+
         it("asks by itself for a lost middle message, after a conservative wait, and is healed", async () => {
           const port = new FlakySendPort();
           const { alice, bob } = await pair(port, WATCHED, WATCHED);
@@ -3442,6 +3448,34 @@ describe("send scheduling and retry", () => {
             await bob.sync();
           }
           expect(await requestsSeen(port)).toBe(before + 3); // three, then only a person can ask
+        });
+
+        it("asks by itself while it keeps writing: a request the floor holds back waits, and is not spent (LOS-6, RSY-3)", async () => {
+          const port = new FlakySendPort();
+          // A floor of 10 s, and bob types all along: whenever the client looks, it has sent a
+          // message less than a floor ago.
+          const paced = {
+            syncPolicy: { minIntervalMs: 10_000, maxIntervalMs: 30_000, expectedLatencyMs: 2_000 },
+          };
+          const { alice, bob } = await pair(port, paced, paced);
+          const tick = async (seconds: number, bobTypes: boolean) => {
+            for (let second = 0; second < seconds; second += 1) {
+              if (bobTypes) bob.edit((fragment) => insertPlainText(fragment, 0, "b"));
+              await vi.advanceTimersByTimeAsync(1_000);
+              await alice.sync();
+              await bob.sync();
+            }
+          };
+          await tick(60, false);
+          port.inner.dropNextSend("alice");
+          alice.edit((fragment) => insertPlainText(fragment, 0, "lost "));
+          await tick(15, false);
+          alice.edit((fragment) => insertPlainText(fragment, 0, "late "));
+          const before = await requestsSeen(port);
+          await tick(120, true);
+          expect(await requestsSeen(port)).toBeGreaterThan(before);
+          expect(getPlainText(bob.fragment)).toContain("lost ");
+          expect(bob.syncHealth.suspicions).toEqual([]);
         });
 
         /** A gap nobody can heal: alice sends three edits, the middle one is lost, and she never syncs again. */
@@ -3682,7 +3716,7 @@ describe("starting from persisted content (join's restore, SPECIFICATION.md §6.
     const { alice, bob } = await twoAuthors(t.messenger);
     const saved = encodeUpdate(alice.document);
     const attribution = alice.attribution.toJSON();
-    const controlState = alice.controlState;
+    const controlState = persistedOf(alice);
     alice.dispose();
     await t.restart("alice");
     const before = await t.lastId();
@@ -3700,6 +3734,164 @@ describe("starting from persisted content (join's restore, SPECIFICATION.md §6.
     expect(await t.kindsFrom("alice", before)).toEqual(["resync-request", "edit"]);
     await bob.sync();
     expect(getPlainText(bob.fragment)).toBe("Hallo Welt");
+  });
+
+  it("sends restored text without attribution as unattributed: authorId null, no last edit, for the joiner too (ATR-2, §5.4)", async () => {
+    const t = transport();
+    const { alice } = await twoAuthors(t.messenger);
+    const saved = encodeUpdate(alice.document);
+    const controlState = persistedOf(alice);
+    alice.dispose();
+    await t.restart("alice");
+    const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", t.messenger, undefined, {
+      ...OPTIONS,
+      creatorMemberId: "alice",
+      controlState,
+      restore: { state: saved },
+    });
+    expect(restarted.attribution.toJSON()).toEqual({
+      ranges: [{ start: 0, end: 10, authorId: null }],
+      lastEditBySender: {},
+    });
+
+    await restarted.setMembership("carol", "read");
+    const before = await t.lastId();
+    const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", t.messenger, undefined, {
+      ...OPTIONS,
+      creatorMemberId: "alice",
+    });
+    await restarted.sync();
+    await carol.sync();
+    const answer = (await t.port.receive(DOCUMENT_ID, "x"))
+      .filter((delivery) => delivery.sender === "alice" && Number(delivery.id) > before)
+      .map((delivery) => decodeFrame(delivery.payload))
+      .find((frame) => frame.kind === "resync-response");
+    expect(answer?.kind === "resync-response" ? answer.attribution : undefined).toEqual({
+      ranges: [{ start: 0, end: 10, authorId: null }],
+      lastEditBySender: {},
+    });
+    expect(getPlainText(carol.fragment)).toBe("Hallo Welt");
+    expect(carol.attribution.toJSON()).toEqual({
+      ranges: [{ start: 0, end: 10, authorId: null }],
+      lastEditBySender: {},
+    });
+  });
+
+  it("keeps a restarted member's own attribution when the creator's overlay is as long: only a first join adopts one wholesale (ATR-1, ATR-2)", async () => {
+    const t = transport();
+    const { alice, bob } = await twoAuthors(t.messenger);
+    await bob.sync();
+    const saved = encodeUpdate(bob.document);
+    bob.dispose();
+    await t.restart("bob");
+    const restarted = await DocumentEngine.join(DOCUMENT_ID, "bob", t.messenger, undefined, {
+      ...OPTIONS,
+      creatorMemberId: "alice",
+      restore: { state: saved },
+    });
+    await alice.sync(); // answers the restarted bob's request, with an overlay of the same length
+    await restarted.sync();
+    expect(restarted.hasCompletedBootstrap).toBe(true);
+    expect(alice.attribution.ranges.map((range) => range.authorId)).toEqual(["alice", "bob"]);
+    expect(restarted.attribution.ranges).toEqual([{ start: 0, end: 10, authorId: null }]);
+  });
+
+  it("retries the whole state when its first send after the restart is refused for now (SND-6, SND-7, SND-10)", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = transport();
+      const { alice, bob } = await twoAuthors(t.messenger);
+      const saved = encodeUpdate(alice.document);
+      const controlState = persistedOf(alice);
+      alice.dispose();
+      await t.restart("alice");
+      // Right after the restart the messenger cannot be reached yet: the first edit is refused.
+      let refuseNextEdit = true;
+      const send = t.messenger.send.bind(t.messenger);
+      t.messenger.send = async (documentId, sender, payload) => {
+        if (sender === "alice" && refuseNextEdit && decodeFrame(payload).kind === "edit") {
+          refuseNextEdit = false;
+          throw new TransportSendError("unavailable", "not reachable yet");
+        }
+        return send(documentId, sender, payload);
+      };
+      const errors: unknown[] = [];
+      const restarted = await DocumentEngine.join(
+        DOCUMENT_ID,
+        "alice",
+        t.messenger,
+        (error) => errors.push(error),
+        {
+          ...OPTIONS,
+          creatorMemberId: "alice",
+          controlState,
+          restore: { state: saved },
+        },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(refuseNextEdit).toBe(false); // the first attempt was made, and refused
+      expect(restarted.sendStatus).toMatchObject({ state: "retrying", failures: 1 });
+      expect(restarted.hasUndistributedChanges).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(1_000); // the back-off
+      expect(restarted.sendStatus.state).toBe("idle");
+      expect(restarted.hasUndistributedChanges).toBe(false);
+      expect(errors).toEqual([]); // retried, never dropped: no error (SND-10)
+      await bob.sync();
+      expect(getPlainText(bob.fragment)).toBe("Hallo Welt");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a piece of the whole state refused for good once, and keeps the mark (SND-8)", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = transport();
+      const { alice } = await twoAuthors(t.messenger);
+      alice.edit((fragment) =>
+        insertPlainText(fragment, 10, " and a lot more text too".repeat(20)),
+      );
+      const saved = encodeUpdate(alice.document);
+      const controlState = persistedOf(alice);
+      alice.dispose();
+      await t.restart("alice");
+      // A transport that carries small messages only, and refuses the second edit frame for good.
+      let edits = 0;
+      const send = t.messenger.send.bind(t.messenger);
+      const small: MessengerPort = {
+        ...t.messenger,
+        transportProfile: async () => ({
+          ...(await t.port.transportProfile()),
+          bounds: { minIntervalMs: null, maxBytes: 300 },
+        }),
+        send: async (documentId, sender, payload) => {
+          if (decodeFrame(payload).kind === "edit" && ++edits === 2) {
+            throw new TransportSendError("rejected", "not permitted");
+          }
+          return send(documentId, sender, payload);
+        },
+      };
+      const errors: unknown[] = [];
+      const restarted = await DocumentEngine.join(
+        DOCUMENT_ID,
+        "alice",
+        small,
+        (error) => errors.push(error),
+        {
+          ...OPTIONS,
+          creatorMemberId: "alice",
+          controlState,
+          restore: { state: saved },
+        },
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(edits).toBeGreaterThanOrEqual(2); // in pieces, the second refused
+      expect(errors.filter((error) => error instanceof TransportSendError)).toHaveLength(1);
+      expect(restarted.hasUndistributedChanges).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("delivers a change that never went out before the restart, once the creator has bootstrapped it (non-creator)", async () => {
@@ -3789,90 +3981,898 @@ describe("starting from persisted content (join's restore, SPECIFICATION.md §6.
   });
 });
 
-describe("a control conflict kept visible (SPECIFICATION.md CTL-17)", () => {
-  async function settle(...engines: DocumentEngine[]) {
-    for (let round = 0; round < 4; round++) {
-      for (const engine of engines) {
-        await engine.sync();
-        await engine.flush();
+describe("the heartbeat keeps the promise of the edit that owes it (SND-11, SND-14, SND-23, LOS-11, LOS-16)", () => {
+  // Matrix to a real homeserver, as Appendix B suggests: a floor of 1 s, 15 s, 5 s of latency.
+  const MATRIX = {
+    batchWindowMs: 0,
+    resyncResponseThrottleMs: 0,
+    syncPolicy: { minIntervalMs: 1_000, maxIntervalMs: 15_000, expectedLatencyMs: 5_000 },
+  };
+
+  it("an answer to a joiner just after an edit does not make the others suspect the creator, or ask", async () => {
+    vi.useFakeTimers();
+    try {
+      const port = new InMemoryMessengerPort();
+      const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, MATRIX);
+      await afterFloor(alice.setMembership("bob", "write"), 1_000);
+      const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, {
+        ...MATRIX,
+        creatorMemberId: "alice",
+      });
+      const engines = [alice, bob];
+      const tick = async (seconds: number) => {
+        for (let i = 0; i < seconds; i += 1) {
+          await vi.advanceTimersByTimeAsync(1_000);
+          for (const engine of engines) await engine.sync();
+        }
+      };
+      await tick(120); // everything settled, every heartbeat sent
+      const before = (await port.receive(DOCUMENT_ID, "x")).length;
+
+      alice.edit((fragment) => insertPlainText(fragment, 0, "Hallo")); // promises a follow-up within 15 s
+      await tick(9);
+      // A joiner asks; the creator answers some 10 s after her edit, before the heartbeat it owes.
+      const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", port, undefined, {
+        ...MATRIX,
+        creatorMemberId: "alice",
+      });
+      engines.push(carol);
+      const overdue: number[] = [];
+      for (let second = 0; second < 60; second += 1) {
+        await tick(1);
+        if (bob.syncHealth.suspicions.some((s) => s.kind === "sender-overdue"))
+          overdue.push(second);
       }
+      expect(overdue).toEqual([]);
+      const bobsRequests = (await port.receive(DOCUMENT_ID, "x"))
+        .slice(before)
+        .filter(
+          (delivery) =>
+            delivery.sender === "bob" && decodeFrame(delivery.payload).kind === "resync-request",
+        );
+      expect(bobsRequests).toEqual([]);
+      expect(getPlainText(carol.fragment)).toBe("Hallo");
+    } finally {
+      vi.useRealTimers();
     }
+  });
+});
+
+describe("the creator's pace and each sender's due (SND-14, SND-15)", () => {
+  const AS_CREATOR = { batchWindowMs: 0, creatorMemberId: "alice" };
+
+  async function trio(bobOptions: DocumentEngineOptions = {}) {
+    const port = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_CREATOR);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, {
+      ...AS_CREATOR,
+      ...bobOptions,
+    });
+    await alice.sync();
+    await bob.sync();
+    return { port, alice, bob };
   }
 
-  it("names what two devices of the creator did under one number, everywhere, until the creator acts again", async () => {
-    const port = new InMemoryMessengerPort();
-    const options = { batchWindowMs: 0, resyncResponseThrottleMs: 0, creatorMemberId: "alice" };
-    const errors: unknown[] = [];
-    const onError = (error: unknown) => errors.push(error);
-    const laptop = await DocumentEngine.create(DOCUMENT_ID, "alice", port, onError, options);
-    await laptop.setMembership("bob", "write"); // 1
-    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, onError, options);
-    const tablet = await DocumentEngine.join(DOCUMENT_ID, "alice", port, onError, options);
-    await settle(laptop, bob, tablet);
-    expect(laptop.controlConflicts).toEqual([]);
+  it("the creator's pace reaches everyone and raises only the floor between messages (SND-15)", async () => {
+    const { alice, bob } = await trio({ syncPolicy: { maxIntervalMs: 20_000 } });
+    await alice.setPace(30_000);
+    await bob.sync();
+    expect(bob.pace).toBe(30_000);
+    expect(bob.syncPolicy.minIntervalMs).toBe(30_000);
+    expect(alice.syncPolicy.minIntervalMs).toBe(30_000);
+    // Bob's own longest wait cannot fall below the floor (resolveSyncPolicy), the rest is his.
+    expect(bob.syncPolicy.maxIntervalMs).toBe(30_000);
+  });
 
-    // Both act before either has seen the other: two frames under 2.
-    await Promise.all([
-      laptop.setMembership("gina", "read"),
-      tablet.setMembership("hank", "write"),
-    ]);
-    await settle(laptop, bob, tablet);
-    const gina = { action: "membership", member: "gina", permission: "read" };
-    const hank = { action: "membership", member: "hank", permission: "write" };
-    expect(laptop.controlConflicts).toEqual([
-      { sequence: 2, kept: gina, rejected: hank, since: expect.any(Number) },
-    ]);
-    expect(tablet.controlConflicts).toEqual([
-      { sequence: 2, kept: hank, rejected: gina, since: expect.any(Number) },
-    ]);
-    expect(bob.controlConflicts).toEqual([
-      { sequence: 2, kept: gina, rejected: hank, since: expect.any(Number) },
-    ]);
-    expect(errors).toHaveLength(3); // reported once each, as before
-    expect(bob.syncHealth.state).toBe("ok"); // not loss: a resync does not resolve it
+  it("a participant may send slower than the pace, never faster", async () => {
+    const { alice, bob } = await trio({ syncPolicy: { minIntervalMs: 60_000 } });
+    await alice.setPace(30_000);
+    await bob.sync();
+    expect(bob.syncPolicy.minIntervalMs).toBe(60_000);
+  });
 
-    await settle(laptop, bob, tablet); // the same frames offered again change nothing
-    expect(bob.controlConflicts).toHaveLength(1);
-    expect(errors).toHaveLength(3);
+  it("a transport's floor above the pace still wins (SND-15)", async () => {
+    const port = new FlakySendPort();
+    port.profile = {
+      bounds: { minIntervalMs: 45_000, maxBytes: null },
+      pacing: {
+        minIntervalMs: 0,
+        maxIntervalMs: null,
+        minChars: 0,
+        maxChars: null,
+        expectedLatencyMs: 0,
+      },
+    };
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_CREATOR);
+    expect(alice.syncPolicy.minIntervalMs).toBe(45_000);
+  });
 
-    // The creator acts again on both members, from one device: everyone agrees after that.
-    await laptop.setMembership("gina", "read"); // 3
-    await laptop.setMembership("hank", "write"); // 4
-    await settle(laptop, bob, tablet);
-    for (const engine of [laptop, bob, tablet]) {
-      expect([engine.permissionOf("gina"), engine.permissionOf("hank")]).toEqual(["read", "write"]);
+  it("only the creator sets the pace, as a whole number of milliseconds", async () => {
+    const { alice, bob } = await trio();
+    await expect(bob.setPace(1_000)).rejects.toThrow(/not the creator/);
+    await expect(alice.setPace(1.5)).rejects.toThrow(/whole number/);
+    await expect(alice.setPace(-1)).rejects.toThrow(/whole number/);
+  });
+
+  it("every edit and control frame says when its sender will speak again: its own longest wait (SND-14)", async () => {
+    const { port, alice, bob } = await trio({ syncPolicy: { maxIntervalMs: 20_000 } });
+    bob.edit((fragment) => insertPlainText(fragment, 0, "hi"));
+    await bob.flush();
+    await alice.setMembership("bob", "write");
+    const frames = (await port.receive(DOCUMENT_ID, "alice")).map((d) => ({
+      sender: d.sender,
+      frame: decodeFrame(d.payload),
+    }));
+    const bobsEdit = frames.find((f) => f.sender === "bob" && f.frame.kind === "edit");
+    const alicesControl = frames.find((f) => f.sender === "alice" && f.frame.kind === "control");
+    expect(bobsEdit?.frame).toMatchObject({ due: 20_000 });
+    expect(alicesControl?.frame).toMatchObject({ due: 0 }); // alice promises nothing: no longest wait
+  });
+
+  it("the frame that raises the pace promises what its sender keeps under it, so nobody takes the sender for silent (SND-14, SND-15)", async () => {
+    vi.useFakeTimers();
+    try {
+      const watched = {
+        ...AS_CREATOR,
+        syncPolicy: { maxIntervalMs: 20_000, expectedLatencyMs: 5_000 },
+      };
+      const port = new InMemoryMessengerPort();
+      const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, watched);
+      const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, watched);
+      const tick = async (seconds: number, onTick: () => void = () => {}) => {
+        for (let second = 0; second < seconds; second += 1) {
+          await vi.advanceTimersByTimeAsync(1_000);
+          await alice.sync();
+          await bob.sync();
+          onTick();
+        }
+      };
+      await tick(60); // the join is answered, and every heartbeat it owed has gone out
+      await alice.setPace(60_000); // above alice's own longest wait of 20 s
+      const paceFrame = (await port.receive(DOCUMENT_ID, "bob"))
+        .map((delivery) => decodeFrame(delivery.payload))
+        .find((frame) => frame.kind === "control" && frame.target === "pace");
+      expect(paceFrame).toMatchObject({ value: 60_000, due: 60_000 });
+      expect(alice.syncPolicy.maxIntervalMs).toBe(60_000); // what she keeps from now on
+      const suspected: string[] = [];
+      await tick(90, () => suspected.push(...bob.syncHealth.suspicions.map((s) => s.kind)));
+      expect(suspected).toEqual([]);
+      // A member that has learned the pace promises the same in what it sends from then on.
+      bob.edit((fragment) => insertPlainText(fragment, 0, "x"));
+      await vi.advanceTimersByTimeAsync(60_000);
+      const bobsEdit = (await port.receive(DOCUMENT_ID, "alice"))
+        .filter((delivery) => delivery.sender === "bob")
+        .map((delivery) => decodeFrame(delivery.payload))
+        .find((frame) => frame.kind === "edit");
+      expect(bobsEdit).toMatchObject({ due: 60_000 });
+    } finally {
+      vi.useRealTimers();
     }
   });
 
-  it("keeps one entry per number, however many different frames come under it", async () => {
+  it("two devices of the creator setting the pace at once: the longer interval holds everywhere", async () => {
     const port = new InMemoryMessengerPort();
-    const options = { batchWindowMs: 0, creatorMemberId: "alice" };
-    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, () => {}, options);
-    await alice.setMembership("bob", "write"); // 1
-    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, () => {}, options);
+    const laptop = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_CREATOR);
+    const tablet = await DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, AS_CREATOR);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_CREATOR);
+    for (const engine of [laptop, tablet, bob]) await engine.sync();
+    await Promise.all([laptop.setPace(10_000), tablet.setPace(40_000)]);
+    for (const engine of [laptop, tablet, bob]) await engine.sync();
+    for (const engine of [laptop, tablet, bob]) {
+      expect(engine.pace).toBe(40_000);
+    }
+  });
+});
+
+describe("reading with a cursor (TRN-18, TRN-19, LOS-9)", () => {
+  const AS_CREATOR = { batchWindowMs: 0, creatorMemberId: "alice" };
+
+  it("asks only for what came after the last delivery it saw", async () => {
+    const port = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_CREATOR);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_CREATOR);
+    await alice.sync();
+    const cursors: (string | undefined)[] = [];
+    const original = port.receiveSince.bind(port);
+    port.receiveSince = async (documentId, member, after) => {
+      if (member === "bob") cursors.push(after);
+      return original(documentId, member, after);
+    };
     await bob.sync();
-    for (const member of ["carol", "dave"]) {
-      await port.send(
-        DOCUMENT_ID,
-        "alice",
-        encodeControlFrame({
-          documentId: DOCUMENT_ID,
-          sequence: 1,
-          action: "membership",
-          member,
-          permission: "read",
-        }),
-      );
+    alice.edit((fragment) => insertPlainText(fragment, 0, "x"));
+    await alice.flush();
+    await bob.sync();
+    expect(cursors[0]).toBeDefined();
+    expect(cursors[1]).not.toBe(cursors[0]);
+    expect(getPlainText(bob.fragment)).toBe("x");
+  });
+
+  it("treats a cursor that left the window as evidence at once, and asks regardless (LOS-9)", async () => {
+    const port = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, {
+      ...AS_CREATOR,
+      resyncResponseThrottleMs: 0,
+    });
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_CREATOR);
+    await alice.sync();
+    await bob.sync();
+    const all = await port.receive(DOCUMENT_ID, "bob");
+    port.forgetOldest(DOCUMENT_ID, all.length);
+    await port.send(DOCUMENT_ID, "alice", encodeEditFrame(DOCUMENT_ID, new Uint8Array([0, 0])));
+    await bob.sync();
+    expect(bob.syncHealth.suspicions).toEqual([
+      expect.objectContaining({ kind: "history-truncated" }),
+    ]);
+    const requests = (await port.receive(DOCUMENT_ID, "alice"))
+      .map((d) => decodeFrame(d.payload))
+      .filter((frame) => frame.kind === "resync-request");
+    expect(requests.at(-1)).toMatchObject({ force: true });
+    await alice.sync();
+    await bob.sync();
+    expect(bob.syncHealth.state).toBe("ok");
+  });
+
+  it("treats a bridge restart as evidence too, even when the cursor is still there (TRN-19)", async () => {
+    const port = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_CREATOR);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_CREATOR);
+    await alice.sync();
+    await bob.sync();
+    port.restartBridge();
+    await bob.sync();
+    expect(bob.syncHealth.suspicions).toEqual([
+      expect.objectContaining({ kind: "history-truncated" }),
+    ]);
+  });
+
+  it("treats a bridge restart as evidence without a cursor too, where LOS-8's overlap sees nothing (LOS-9)", async () => {
+    const port = new InMemoryMessengerPort();
+    // A transport that names its bridge instance but offers no cursor (TRN-19 without TRN-18).
+    Object.defineProperty(port, "receiveSince", { value: undefined });
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_CREATOR);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_CREATOR);
+    await alice.sync();
+    await bob.sync();
+    await bob.sync(); // the same window again: nothing to suspect
+    expect(bob.syncHealth.state).toBe("ok");
+    port.restartBridge(); // the window stays, so the answers still overlap
+    await bob.sync();
+    expect(bob.syncHealth.suspicions).toEqual([
+      expect.objectContaining({ kind: "history-truncated" }),
+    ]);
+  });
+
+  /**
+   * Bob, bootstrapped with write, stops; his application kept his control state, his content and
+   * the cursor and the instance as they stood together (LIF-8). Alice is away when he starts again.
+   */
+  async function bobRestartsWith(betweenStops: (port: InMemoryMessengerPort) => void) {
+    const port = new InMemoryMessengerPort();
+    let control: PersistedControlState | undefined;
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, {
+      ...AS_CREATOR,
+      resyncResponseThrottleMs: 0,
+    });
+    await alice.setMembership("bob", "write");
+    const before = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, {
+      ...AS_CREATOR,
+      onControlStateChange: (state) => {
+        control = state;
+      },
+    });
+    for (let round = 0; round < 4; round++) {
+      await alice.sync();
+      await before.sync();
+    }
+    expect(before.mayEdit).toBe(true);
+    const restore = {
+      state: encodeUpdate(before.document),
+      cursor: before.cursor,
+      instance: before.instance,
+    };
+    before.dispose();
+    port.disconnect("alice");
+    betweenStops(port);
+    return DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, {
+      ...AS_CREATOR,
+      controlState: control as PersistedControlState,
+      restore,
+    });
+  }
+
+  it("reads on after a restart under the instance it kept with the cursor, without evidence (LIF-8, TRN-19)", async () => {
+    const bob = await bobRestartsWith(() => {});
+    expect(bob.syncHealth.state).toBe("ok");
+    expect(bob.hasCompletedBootstrap).toBe(true);
+    expect(bob.mayEdit).toBe(true);
+  });
+
+  it("takes another instance than the one kept with the cursor as evidence, and waits for the creator (LOS-9)", async () => {
+    const bob = await bobRestartsWith((port) => port.restartBridge());
+    expect(bob.syncHealth.suspicions).toEqual([
+      expect.objectContaining({ kind: "history-truncated" }),
+    ]);
+    expect(bob.hasCompletedBootstrap).toBe(false);
+    expect(bob.mayEdit).toBe(false);
+  });
+
+  it("shows what the bridge gives up while it answers the first read after a restart, before it bootstraps (TRN-19)", async () => {
+    // The bridge reads its messenger for this answer and gives an event up: a new epoch by the time
+    // it has answered, the cursor still in the window and the answer not truncated.
+    const bob = await bobRestartsWith((port) => {
+      const original = port.receiveSince.bind(port);
+      port.receiveSince = async (documentId, member, after) => {
+        const answer = await original(documentId, member, after);
+        port.restartBridge();
+        port.receiveSince = original;
+        return answer;
+      };
+    });
+    expect(bob.syncHealth.suspicions).toEqual([
+      expect.objectContaining({ kind: "history-truncated" }),
+    ]);
+    expect(bob.hasCompletedBootstrap).toBe(false);
+    expect(bob.mayEdit).toBe(false);
+  });
+});
+
+describe("MemberIds with dots, as Matrix's and email's have (FRM-9, CTL-25)", () => {
+  it("a joiner that sees none of the creator's operations learns its right from the snapshot", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const options = { batchWindowMs: 0, resyncResponseThrottleMs: 0 };
+    const alice = await DocumentEngine.create(
+      "doc-dots",
+      "@alice:example.org",
+      messenger,
+      undefined,
+      options,
+    );
+    await alice.setMembership("@bob:example.org", "read");
+    await alice.sync();
+    messenger.forgetOldest(
+      "doc-dots",
+      (await messenger.receive("doc-dots", "@x:example.org")).length,
+    );
+    const bob = await DocumentEngine.join("doc-dots", "@bob:example.org", messenger, undefined, {
+      ...options,
+      creatorMemberId: "@alice:example.org",
+    });
+    for (let round = 0; round < 6; round++) {
+      await alice.sync();
       await bob.sync();
     }
-    const [conflict] = bob.controlConflicts;
-    expect(bob.controlConflicts).toHaveLength(1);
-    expect(conflict?.kept).toEqual({ action: "membership", member: "bob", permission: "write" });
-    expect(conflict?.rejected).toEqual({
-      action: "membership",
-      member: "dave",
-      permission: "read",
+    expect(bob.hasCompletedBootstrap).toBe(true);
+    expect(bob.permissionOf("@bob:example.org")).toBe("read");
+    expect(bob.mayEdit).toBe(false);
+  });
+});
+
+describe("collisions under one device and counter, whichever way they arrive (CTL-24)", () => {
+  const options = { batchWindowMs: 0, resyncResponseThrottleMs: 0 };
+  const anomalies = (errors: readonly unknown[]) =>
+    errors.filter(
+      (error) => error instanceof Error && (error as { reason?: string }).reason === "anomaly",
+    ).length;
+
+  /** Alice lets Bob write; Carol joins — with `onlySnapshot`, after the frame left the window. */
+  async function carolJoins(onlySnapshot: boolean) {
+    const messenger = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, options);
+    await alice.setMembership("bob", "write");
+    await alice.sync();
+    if (onlySnapshot) {
+      messenger.forgetOldest(
+        DOCUMENT_ID,
+        (await messenger.receive(DOCUMENT_ID, "observer")).length,
+      );
+    }
+    const errors: unknown[] = [];
+    const carol = await DocumentEngine.join(
+      DOCUMENT_ID,
+      "carol",
+      messenger,
+      (error) => errors.push(error),
+      {
+        ...options,
+        creatorMemberId: "alice",
+      },
+    );
+    for (let round = 0; round < 4; round++) {
+      await alice.sync();
+      await carol.sync();
+    }
+    expect(carol.hasCompletedBootstrap).toBe(true);
+    expect(anomalies(errors)).toBe(0);
+    return { messenger, carol, errors, tag: alice.deviceTag as string };
+  }
+
+  it("reports a frame that collides with an operation taken from the creator's snapshot", async () => {
+    const { messenger, carol, errors, tag } = await carolJoins(true);
+    const other = encodeControlFrame({
+      documentId: DOCUMENT_ID,
+      device: tag,
+      counter: 1,
+      target: "member:bob",
+      value: null,
+      seen: {},
     });
-    expect(bob.permissionOf("bob")).toBe("write");
+    await messenger.send(DOCUMENT_ID, "alice", other);
+    await carol.sync();
+    expect(anomalies(errors)).toBe(1);
+    expect(carol.controlAnomalies).toEqual([{ device: tag, counter: 1 }]);
+    expect(carol.permissionOf("bob")).toBeUndefined(); // the narrowest of the two
+  });
+
+  it("reports a snapshot that collides with an operation taken as a frame", async () => {
+    const { messenger, carol, errors, tag } = await carolJoins(false);
+    const answer = encodeResyncResponseFrame({
+      documentId: DOCUMENT_ID,
+      respondsTo: "0123456789abcdef",
+      update: Y.encodeStateAsUpdate(new Y.Doc()),
+      control: {
+        profile: YJS_PARAGRAPHS_1,
+        vector: { [tag]: 1 },
+        targets: {
+          "member:bob": { seen: {}, heads: [{ device: tag, counter: 1, value: null, seen: {} }] },
+        },
+      },
+    });
+    await messenger.send(DOCUMENT_ID, "alice", answer);
+    await carol.sync();
+    expect(anomalies(errors)).toBe(1);
+    expect(carol.controlAnomalies).toEqual([{ device: tag, counter: 1 }]);
+    expect(carol.permissionOf("bob")).toBeUndefined();
+  });
+});
+
+describe("a device of the creator that meets another copy of itself (CTL-24)", () => {
+  const options = { batchWindowMs: 0, resyncResponseThrottleMs: 0 };
+  /** Another copy of this device's operation 1: same tag and counter, another value. */
+  const otherCopy = (tag: string) =>
+    encodeControlFrame({
+      documentId: DOCUMENT_ID,
+      device: tag,
+      counter: 1,
+      target: "member:bob",
+      value: null,
+      seen: {},
+    });
+
+  async function aliceGrantsBob(
+    messenger: InMemoryMessengerPort,
+    onControlStateChange?: (state: PersistedControlState) => void,
+  ) {
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...options,
+      onControlStateChange,
+    });
+    await alice.setMembership("bob", "write"); // counter 1, sent
+    await alice.sync();
+    return alice;
+  }
+
+  it("takes a new tag when an operation it issued and sent comes back with other content", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const alice = await aliceGrantsBob(messenger);
+    const tag = alice.deviceTag as string;
+    await messenger.send(DOCUMENT_ID, "alice", otherCopy(tag));
+    await alice.sync();
+    expect(alice.controlAnomalies).toEqual([{ device: tag, counter: 1 }]);
+    expect(alice.deviceTag).not.toBe(tag);
+    // Its next decision no longer competes with the copy under the old tag.
+    await alice.setMembership("carol", "read");
+    expect(alice.controlVector[alice.deviceTag as string]).toBe(1);
+  });
+
+  it("takes a new tag for it after a restart too, from what it restored", async () => {
+    const messenger = new InMemoryMessengerPort();
+    let persisted: PersistedControlState | undefined;
+    const before = await aliceGrantsBob(messenger, (state) => {
+      persisted = state;
+    });
+    const tag = before.deviceTag as string;
+    before.dispose();
+    messenger.forgetOldest(DOCUMENT_ID, (await messenger.receive(DOCUMENT_ID, "observer")).length);
+    const alice = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...options,
+      creatorMemberId: "alice",
+      controlState: persisted,
+    });
+    expect(alice.deviceTag).toBe(tag);
+    await messenger.send(DOCUMENT_ID, "alice", otherCopy(tag));
+    await alice.sync();
+    expect(alice.deviceTag).not.toBe(tag);
+  });
+
+  it("takes a new tag when a snapshot brings the other copy", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const alice = await aliceGrantsBob(messenger);
+    const tag = alice.deviceTag as string;
+    const answer = encodeResyncResponseFrame({
+      documentId: DOCUMENT_ID,
+      respondsTo: "0123456789abcdef",
+      update: Y.encodeStateAsUpdate(new Y.Doc()),
+      control: {
+        profile: YJS_PARAGRAPHS_1,
+        vector: { [tag]: 1 },
+        targets: {
+          "member:bob": { seen: {}, heads: [{ device: tag, counter: 1, value: null, seen: {} }] },
+        },
+      },
+    });
+    await messenger.send(DOCUMENT_ID, "alice", answer); // another device of alice, answering a member
+    await alice.sync();
+    expect(alice.deviceTag).not.toBe(tag);
+  });
+
+  it("keeps its tag when its own operation merely comes back again", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const alice = await aliceGrantsBob(messenger);
+    const tag = alice.deviceTag as string;
+    const own = (await messenger.receive(DOCUMENT_ID, "observer")).find(
+      (delivery) => decodeFrame(delivery.payload).kind === "control",
+    );
+    await messenger.send(DOCUMENT_ID, "alice", own?.payload as string);
+    await alice.sync();
+    expect(alice.controlAnomalies).toEqual([]);
+    expect(alice.deviceTag).toBe(tag);
+  });
+});
+
+describe("what a device of the creator takes from participants' reports (CTL-27, CTL-28)", () => {
+  const options = { batchWindowMs: 0, resyncResponseThrottleMs: 0, creatorMemberId: "alice" };
+  async function settle(...engines: DocumentEngine[]) {
+    for (let round = 0; round < 6; round++) for (const engine of engines) await engine.sync();
+  }
+
+  it("with a basis it counts nothing reported as seen: a decision it never saw is not superseded", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const a = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, options);
+    await a.setMembership("carol", "write"); // A:1
+    const b = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, options);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, options);
+    await settle(a, b, bob);
+    expect(b.controlConfirmed).toBe(true);
+    // A revokes carol; Bob gets it, B never does: its window moved past it.
+    await a.setMembership("carol", null); // A:2
+    await settle(bob);
+    messenger.forgetOldest(DOCUMENT_ID, (await messenger.receive(DOCUMENT_ID, "observer")).length);
+    expect(await bob.requestResync()).toEqual({ sent: true }); // its control vector holds A:2: a report for B
+    await b.sync();
+    const before = (await messenger.receive(DOCUMENT_ID, "observer")).length;
+    await b.setMembership("carol", "read"); // the person on B decides, not knowing of the revocation
+    const frames = (await messenger.receive(DOCUMENT_ID, "observer"))
+      .slice(before)
+      .map((delivery) => decodeFrame(delivery.payload));
+    const op = frames.find((frame) => frame.kind === "control");
+    expect(op?.kind === "control" && op.seen[a.deviceTag as string]).toBe(1); // what B holds of A, not A:2
+    // So the two decisions are concurrent, and the narrower holds for everyone (CTL-23).
+    await settle(a, bob);
+    expect(bob.permissionOf("carol")).toBeUndefined();
+  });
+});
+
+describe("whether a restored device of the creator has a basis (CTL-26, CTL-28)", () => {
+  const options = { batchWindowMs: 0, resyncResponseThrottleMs: 0, creatorMemberId: "alice" };
+  async function settle(...engines: DocumentEngine[]) {
+    for (let round = 0; round < 6; round++) for (const engine of engines) await engine.sync();
+  }
+
+  /** Alice's old device made Bob a reader and is lost; a new one, seeing none of it, grants Carol. */
+  async function newDeviceDecides() {
+    const messenger = new InMemoryMessengerPort();
+    const old = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, options);
+    await old.setMembership("bob", "read");
+    await old.sync();
+    old.dispose();
+    messenger.forgetOldest(DOCUMENT_ID, (await messenger.receive(DOCUMENT_ID, "observer")).length);
+    let persisted: PersistedControlState | undefined;
+    const fresh = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...options,
+      onControlStateChange: (state) => {
+        persisted = state;
+      },
+    });
+    await fresh.setMembership("carol", "write");
+    expect(fresh.controlConfirmed).toBe(false);
+    fresh.dispose();
+    return { messenger, persisted: persisted as PersistedControlState };
+  }
+
+  it("persists that it had none, and restored stays without one: a reader it never decided about is not bootstrapped", async () => {
+    const { messenger, persisted } = await newDeviceDecides();
+    expect(persisted.basis).toBe(false);
+    const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...options,
+      controlState: persisted,
+    });
+    expect(restarted.controlConfirmed).toBe(false);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, options);
+    await settle(restarted, bob);
+    expect(bob.hasCompletedBootstrap).toBe(false);
+    expect(bob.mayEdit).toBe(false);
+  });
+
+  it("persists that it had one, and restored keeps it", async () => {
+    const messenger = new InMemoryMessengerPort();
+    let persisted: PersistedControlState | undefined;
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...options,
+      onControlStateChange: (state) => {
+        persisted = state;
+      },
+    });
+    await alice.setMembership("bob", "read");
+    alice.dispose();
+    expect(persisted?.basis).toBe(true);
+    const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...options,
+      controlState: persisted,
+    });
+    expect(restarted.controlConfirmed).toBe(true);
+  });
+
+  it("takes a state persisted without the field as one with a basis, as before", async () => {
+    const { messenger, persisted } = await newDeviceDecides();
+    const { basis: _left, ...older } = persisted;
+    const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...options,
+      controlState: older,
+    });
+    expect(restarted.controlConfirmed).toBe(true);
+  });
+});
+
+describe("a device of the creator that restarts (RSY-5, RSY-14, LOS-6)", () => {
+  const options = { batchWindowMs: 0, resyncResponseThrottleMs: 0, creatorMemberId: "alice" };
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  /** `ms` of fake time in steps of ten seconds, every engine reading at each. */
+  async function pass(ms: number, ...engines: DocumentEngine[]) {
+    for (let t = 0; t < ms; t += 10_000) {
+      await vi.advanceTimersByTimeAsync(10_000);
+      for (const engine of engines) await engine.sync();
+    }
+  }
+  const requestsOfAlice = async (messenger: InMemoryMessengerPort) =>
+    (await resyncRequestsFrom(messenger, DOCUMENT_ID, "observer")).filter(
+      (request) => request.requester === "alice",
+    ).length;
+
+  /** Alice decides and writes, Bob holds the same; Alice's application kept her control state and content. */
+  async function aliceStops() {
+    const messenger = new InMemoryMessengerPort();
+    let control: PersistedControlState | undefined;
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...options,
+      onControlStateChange: (state) => {
+        control = state;
+      },
+    });
+    await alice.setMembership("bob", "write");
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, options);
+    alice.edit((fragment) => insertPlainText(fragment, 0, "Plan"));
+    await pass(20_000, alice, bob);
+    const content = encodeUpdate(alice.document);
+    alice.dispose();
+    return { messenger, bob, control: control as PersistedControlState, content };
+  }
+
+  it("with a basis and its content it is bootstrapped at once, and asks once, not again and again", async () => {
+    const { messenger, bob, control, content } = await aliceStops();
+    const before = await requestsOfAlice(messenger);
+    const alice = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...options,
+      controlState: control,
+      restore: { state: content },
+    });
+    expect(alice.hasCompletedBootstrap).toBe(true);
+    await pass(800_000, alice, bob); // Bob holds nothing Alice lacks, so he rightly stays silent (RSY-17)
+    expect((await requestsOfAlice(messenger)) - before).toBe(1); // the one of RSY-1
+  });
+
+  it("still asks by itself on evidence after its own bootstrap requests ran out", async () => {
+    const { messenger, control } = await aliceStops();
+    messenger.forgetOldest(DOCUMENT_ID, (await messenger.receive(DOCUMENT_ID, "observer")).length);
+    // Without its content, and nobody online who could give it back.
+    const alice = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...options,
+      controlState: control,
+    });
+    await pass(800_000, alice);
+    expect(alice.hasCompletedBootstrap).toBe(false);
+    const asked = await requestsOfAlice(messenger);
+    // Bob comes back: his heartbeat shows content Alice does not hold (LOS-4).
+    const bobs = new Y.Doc();
+    bobs.getXmlFragment("content").insert(0, [new Y.XmlElement("paragraph")]);
+    await messenger.send(
+      DOCUMENT_ID,
+      "bob",
+      encodeHeartbeatFrame({
+        documentId: DOCUMENT_ID,
+        control: null,
+        controlDigest: null,
+        stateVector: Y.encodeStateVector(bobs),
+        stateDigest: "0".repeat(16),
+      }),
+    );
+    await pass(60_000, alice);
+    expect(alice.syncHealth.suspicions.length).toBeGreaterThan(0);
+    expect(await requestsOfAlice(messenger)).toBeGreaterThan(asked);
+    // Bounded per episode, as for anyone (LOS-6).
+    await pass(1_800_000, alice);
+    expect(await requestsOfAlice(messenger)).toBe(asked + 3);
+  });
+});
+
+describe("the overlay a joiner adopts for its bootstrap (RSY-15)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("stands when a second bootstrap request of its own is answered later", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+      batchWindowMs: 0,
+    });
+    alice.edit((fragment) => insertPlainText(fragment, 0, "Plan"));
+    await vi.advanceTimersByTimeAsync(0);
+    // Bob sees none of it, and asks twice before anyone answers: the first request expired.
+    messenger.forgetOldest(DOCUMENT_ID, (await messenger.receive(DOCUMENT_ID, "observer")).length);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, {
+      ...JOIN_ALICE,
+      autoResync: false,
+    });
+    await vi.advanceTimersByTimeAsync(11_000);
+    expect(await bob.requestResync()).toEqual({ sent: true });
+    const [first, second] = (await resyncRequestsFrom(messenger, DOCUMENT_ID, "observer")).filter(
+      (r) => r.requester === "bob",
+    );
+    expect(second).toBeDefined();
+    const overlay = alice.attribution.toJSON();
+    const answer = (respondsTo: string, authorId: string) =>
+      encodeResyncResponseFrame({
+        documentId: DOCUMENT_ID,
+        respondsTo,
+        update: encodeUpdate(alice.document),
+        control: alice.controlState,
+        attribution: {
+          ...overlay,
+          ranges: overlay.ranges.map((range) => ({ ...range, authorId })),
+        },
+      });
+    await messenger.send(DOCUMENT_ID, "alice", answer(first?.id as string, "alice"));
+    await bob.sync();
+    expect(bob.hasCompletedBootstrap).toBe(true);
+    expect(bob.attribution.ranges.map((range) => range.authorId)).toEqual(["alice"]);
+    // The answer to the second request brings another overlay; the first one adopted stands.
+    await messenger.send(DOCUMENT_ID, "alice", answer(second?.id as string, "dave"));
+    await bob.sync();
+    expect(bob.attribution.ranges.map((range) => range.authorId)).toEqual(["alice"]);
+  });
+});
+
+describe("an answer to this engine's own request that does not bootstrap it (RSY-4, LOS-16)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("answers the request and ends the silence it expected, though it carries no control state", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const old = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+      batchWindowMs: 0,
+    });
+    await old.setMembership("bob", "write");
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, {
+      ...JOIN_ALICE,
+      syncPolicy: { maxIntervalMs: 30_000 },
+    });
+    for (let round = 0; round < 3; round++) {
+      await old.sync();
+      await bob.sync();
+    }
+    old.dispose();
+    const window = (await messenger.receive(DOCUMENT_ID, "observer")).length;
+    // Bob's last edit promises a follow-up within 30 s; then he is gone for good.
+    bob.edit((fragment) => insertPlainText(fragment, 0, "B"));
+    await vi.advanceTimersByTimeAsync(0);
+    bob.dispose();
+    // A new device of Alice sees none of the old one's decisions: it has no basis (CTL-28).
+    messenger.forgetOldest(DOCUMENT_ID, window);
+    const fresh = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...JOIN_ALICE,
+      resyncResponseThrottleMs: 0,
+    });
+    const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", messenger, undefined, {
+      ...JOIN_ALICE,
+      autoResync: false,
+    });
+    expect(carol.syncHealth.resync.state).toBe("requested");
+    await fresh.sync(); // answers Carol's request without control state: it never decided about her
+    await carol.sync();
+    expect(carol.hasCompletedBootstrap).toBe(false);
+    expect(carol.syncHealth.resync).toMatchObject({ state: "idle", lastOutcome: "answered" });
+    await vi.advanceTimersByTimeAsync(120_000);
+    await carol.sync();
+    expect(
+      carol.syncHealth.suspicions.filter((suspicion) => suspicion.kind === "sender-overdue"),
+    ).toEqual([]);
+  });
+});
+
+describe("an answer that failed, and the turn of its requester (RSY-9, RSY-19)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps the requester's place: the next answer goes to it again, not to the one after it", async () => {
+    const messenger = new InMemoryMessengerPort();
+    let failAnswers = 0;
+    // Alice's side of the messenger, which refuses her next answer for now (§3.4: worth retrying).
+    const alicesPort: MessengerPort = {
+      transportProfile: () => messenger.transportProfile(),
+      createDocument: (documentId, creator) => messenger.createDocument(documentId, creator),
+      receive: (documentId, member) => messenger.receive(documentId, member),
+      listChannels: (member) => messenger.listChannels(member),
+      send: async (documentId, sender, payload) => {
+        if (failAnswers > 0 && decodeFrame(payload).kind === "resync-response") {
+          failAnswers -= 1;
+          throw new TransportSendError("unavailable", "the messenger is away for a moment");
+        }
+        return messenger.send(documentId, sender, payload);
+      },
+    };
+    const options = { batchWindowMs: 0, creatorMemberId: "alice", resyncResponseThrottleMs: 1000 };
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", alicesPort, undefined, options);
+    alice.edit((fragment) => insertPlainText(fragment, 0, "content"));
+    await vi.advanceTimersByTimeAsync(10);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, {
+      ...options,
+      autoResync: false,
+    });
+    const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", messenger, undefined, {
+      ...options,
+      autoResync: false,
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    const requests = (await resyncRequestsFrom(messenger, DOCUMENT_ID, "observer")).filter(
+      (r) => r.requester !== "alice",
+    );
+    expect(requests.map((r) => r.requester)).toEqual(["bob", "carol"]);
+
+    failAnswers = 1;
+    await alice.sync(); // Bob's turn: his answer fails
+    await vi.advanceTimersByTimeAsync(1_100);
+    await alice.sync(); // still Bob's turn
+    await vi.advanceTimersByTimeAsync(10);
+    const answers = (await messenger.receive(DOCUMENT_ID, "observer"))
+      .map((delivery) => decodeFrame(delivery.payload))
+      .filter((frame) => frame.kind === "resync-response");
+    expect(answers.map((frame) => frame.kind === "resync-response" && frame.respondsTo)).toEqual([
+      requests[0]?.id,
+    ]);
+    await vi.advanceTimersByTimeAsync(1_100);
+    await alice.sync(); // then Carol's
+    await vi.advanceTimersByTimeAsync(10);
+    await bob.sync();
+    await carol.sync();
+    expect(bob.hasCompletedBootstrap).toBe(true);
+    expect(carol.hasCompletedBootstrap).toBe(true);
   });
 });

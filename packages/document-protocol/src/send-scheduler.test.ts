@@ -162,6 +162,32 @@ afterEach(() => {
 });
 
 describe("SendScheduler timing", () => {
+  it("merges only updates that change the same top-level types (LAY-7)", async () => {
+    const sent: { update: Uint8Array; roots: ReadonlySet<string> }[] = [];
+    const writer = typist();
+    const scheduler = new SendScheduler({
+      quietMs: 500,
+      policy: resolveSyncPolicy({}),
+      send: async (update, roots) => {
+        sent.push({ update, roots });
+      },
+      classify: () => ({ retryable: true }),
+      onDropped: () => {},
+    });
+    const layer = new Set(["com.example.comments/1"]);
+    scheduler.enqueue(writer.type("a"), 1, new Set(["content"]));
+    scheduler.enqueue(writer.type("b"), 1, new Set(["content"]));
+    scheduler.enqueue(writer.type("c"), 1, layer);
+    scheduler.enqueue(writer.type("d"), 1, new Set(["content"]));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(sent.map((message) => [...message.roots])).toEqual([
+      ["content"],
+      ["com.example.comments/1"],
+      ["content"],
+    ]);
+    expect(receive(sent.map((message) => message.update))).toBe("abcd");
+  });
+
   it("sends after the quiet time, and merges everything queued into one message", async () => {
     const h = harness({ quietMs: 500 });
     h.type("a");
@@ -451,6 +477,78 @@ describe("SendScheduler retry", () => {
   });
 });
 
+describe("SendScheduler: a refusal only the person can lift (SPECIFICATION.md TRN-20, TRN-22)", () => {
+  const needsPerson = (): SendFailureClass => ({ retryable: true, needsPerson: true });
+
+  it("keeps the change, says it waits for the person, and tries again only after the longest back-off", async () => {
+    const h = harness({ quietMs: 0, classify: needsPerson });
+    h.failWith(...Array.from({ length: 3 }, () => new Error("an identity to trust")));
+    h.type("a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.scheduler.status.state).toBe("needs-person");
+    expect(h.scheduler.status.lastError).toBe("an identity to trust");
+    expect(h.scheduler.hasPending).toBe(true);
+    expect(h.dropped).toHaveLength(0);
+    // No growing back-off that would offer the same refused message again and again: every
+    // attempt waits the longest back-off.
+    await vi.advanceTimersByTimeAsync(RETRY_MAX_MS * 4);
+    expect(gaps(h.attemptTimes)).toEqual([RETRY_MAX_MS, RETRY_MAX_MS, RETRY_MAX_MS]);
+    expect(receive(h.sent)).toBe("a");
+    expect(h.scheduler.status.state).toBe("idle");
+  });
+
+  it("waits the policy's maxIntervalMs where that caps the back-off", async () => {
+    const h = harness({ quietMs: 0, policy: { maxIntervalMs: 5000 }, classify: needsPerson });
+    h.failWith(new Error("a device to confirm"), new Error("a device to confirm"));
+    h.type("a");
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(gaps(h.attemptTimes)).toEqual([5000, 5000]);
+  });
+
+  it("does not send a later edit past it, but merges it into the change it keeps", async () => {
+    const h = harness({ quietMs: 0, classify: needsPerson });
+    h.failWith(new Error("signed out"));
+    h.type("a");
+    await vi.advanceTimersByTimeAsync(0);
+    h.type("b");
+    await vi.advanceTimersByTimeAsync(RETRY_MAX_MS - 1);
+    expect(h.attemptTimes).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.sent).toHaveLength(1);
+    expect(receive(h.sent)).toBe("ab");
+  });
+
+  it("sends at once on flush(), once the person acted", async () => {
+    const h = harness({ quietMs: 0, classify: needsPerson });
+    h.failWith(new Error("an identity to trust"));
+    h.type("a");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.scheduler.status.state).toBe("needs-person");
+    await h.scheduler.flush();
+    expect(receive(h.sent)).toBe("a");
+    expect(h.scheduler.status.state).toBe("idle");
+    expect(h.attemptTimes).toEqual([T0, T0 + 1000]);
+  });
+
+  it("holds back every other message too, as long", async () => {
+    const h = harness({ quietMs: 0, classify: needsPerson });
+    const submitted: number[] = [];
+    await expect(
+      h.scheduler.submit(
+        async () => {
+          throw new Error("no account");
+        },
+        { armsHeartbeat: false },
+      ),
+    ).rejects.toThrow("no account");
+    void h.scheduler.submit(async () => submitted.push(Date.now()), { armsHeartbeat: false });
+    await vi.advanceTimersByTimeAsync(RETRY_MAX_MS - 1);
+    expect(submitted).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(submitted).toEqual([T0 + RETRY_MAX_MS]);
+  });
+});
+
 describe("SendScheduler adaptive spacing", () => {
   const rateLimited = (): SendFailureClass => ({ retryable: true, rateLimited: true });
 
@@ -543,7 +641,7 @@ describe("SendScheduler splitting a change larger than one message", () => {
         maxBytes: LIMIT,
         frameSize: (update) => update.length + HEADER,
         // Slices of 50 bytes, tagged so the test can tell which update they came from.
-        fragment: (update) => {
+        pieces: (update: Uint8Array) => {
           if (cutFails) {
             throw new Error("cannot be cut");
           }
@@ -630,7 +728,7 @@ describe("SendScheduler splitting a change larger than one message", () => {
     expect(seen.at(-1)).toBe(TYPED);
   });
 
-  it("cuts a single update that is by itself too large into fragments sent in order, one per slot", async () => {
+  it("splits a single update that is by itself too large into pieces sent in order, one per slot", async () => {
     const h = limited({ minIntervalMs: 1000 });
     h.paste(500); // an update of 500-odd bytes: over the limit on its own
     await vi.advanceTimersByTimeAsync(30_000);
@@ -651,7 +749,7 @@ describe("SendScheduler splitting a change larger than one message", () => {
     expect(receive([whole])).toBe("P".repeat(500));
   });
 
-  it("puts an edit typed after a big paste behind all of its fragments, so nothing arrives before what it builds on", async () => {
+  it("puts an edit typed after a big paste behind all of its pieces, so nothing arrives before what it builds on", async () => {
     const h = limited({ minIntervalMs: 500 });
     h.paste(500);
     h.type("z"); // queued behind the paste
@@ -689,10 +787,10 @@ describe("SendScheduler splitting a change larger than one message", () => {
     expect(h.scheduler.hasPending).toBe(false);
   });
 
-  it("retries a fragment that failed, in its place, without reordering or repeating the others", async () => {
+  it("retries a piece that failed, in its place, without reordering or repeating the others", async () => {
     const h = limited({ minIntervalMs: 500 });
     h.paste(300);
-    await vi.advanceTimersByTimeAsync(0); // the first fragment goes
+    await vi.advanceTimersByTimeAsync(0); // the first piece goes
     h.failWith(new Error("down")); // the second fails once
     await vi.advanceTimersByTimeAsync(60_000);
     const parts = h.messages.filter((m) => m.kind === "frame");
@@ -733,7 +831,7 @@ describe("SendScheduler splitting a change larger than one message", () => {
       splitting: {
         maxBytes: LIMIT,
         frameSize: (update) => update.length + HEADER,
-        fragment: (update) => {
+        pieces: (update: Uint8Array) => {
           const slices: string[] = [];
           for (let at = 0; at < update.length; at += 50) {
             slices.push(toFrame(update.slice(at, at + 50)));
@@ -770,14 +868,17 @@ describe("SendScheduler splitting a change larger than one message", () => {
     expect(partsSentWhileTyping).toBeGreaterThanOrEqual(10);
   });
 
-  it("flush() sends every part at once, ignoring the floor", async () => {
+  it("flush() sends every part, each a floor after the one before: an explicit request does not lift the floor (SND-2)", async () => {
     const h = limited({ minIntervalMs: 60_000 });
     h.paste(500);
     await vi.advanceTimersByTimeAsync(0);
     expect(h.scheduler.hasPending).toBe(true);
-    await h.scheduler.flush();
+    const flushing = h.scheduler.flush();
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    await flushing;
     expect(h.scheduler.hasPending).toBe(false);
     expect(h.messages.length).toBeGreaterThan(5);
+    expect(new Set(gaps(h.messages.map((m) => m.at)))).toEqual(new Set([60_000]));
   });
 
   it("queues frames handed to it and sends them in order at the permitted rate, ahead of an edit", async () => {
@@ -789,6 +890,46 @@ describe("SendScheduler splitting a change larger than one message", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(h.messages.map((m) => m.kind)).toEqual(["update", "frame", "frame", "frame", "update"]);
     expect(h.messages.slice(1, 4).map((m) => m.bytes[0])).toEqual([1, 2, 3]);
+  });
+
+  it("counts a group refused for good as a dropped change only when it is one of its own, and tells only whoever enqueued it (SND-8)", async () => {
+    const dropped: unknown[] = [];
+    let refuse = 0;
+    const scheduler = new SendScheduler({
+      quietMs: 0,
+      policy: resolveSyncPolicy({}),
+      send: async () => {},
+      classify: () => ({ retryable: false }),
+      onDropped: (error) => dropped.push(error),
+      splitting: {
+        maxBytes: 1_000,
+        frameSize: (update) => update.length,
+        pieces: () => [],
+        sendFrame: async () => {
+          if (refuse > 0) {
+            refuse -= 1;
+            throw new Error("refused for good");
+          }
+        },
+      },
+    });
+    refuse = 1;
+    // An answer's pieces: its outcome goes to whoever enqueued them, who reports it.
+    const answer = scheduler
+      .enqueueFrames(["1", "2"], { own: false })
+      .catch((error: Error) => error.message);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await answer).toBe("refused for good");
+    expect(dropped).toEqual([]);
+    expect(scheduler.droppedCount).toBe(0);
+    refuse = 1;
+    // resync()'s pieces: a change of this client's own, counted as dropped, and reported by
+    // whoever waits for them — not here as well, or one refusal would be reported twice.
+    const repair = scheduler.enqueueFrames(["1", "2"]).catch((error: Error) => error.message);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await repair).toBe("refused for good");
+    expect(dropped).toEqual([]);
+    expect(scheduler.droppedCount).toBe(1);
   });
 
   it("holds the heartbeat back until every part has gone out", async () => {
@@ -807,7 +948,7 @@ describe("SendScheduler splitting a change larger than one message", () => {
       splitting: {
         maxBytes: LIMIT,
         frameSize: (update) => update.length + HEADER,
-        fragment: (update) => {
+        pieces: (update: Uint8Array) => {
           const slices: string[] = [];
           for (let at = 0; at < update.length; at += 50) {
             slices.push(toFrame(update.slice(at, at + 50)));
@@ -826,7 +967,7 @@ describe("SendScheduler splitting a change larger than one message", () => {
   });
 });
 
-describe("SendScheduler: every other message goes through it too (SPECIFICATION.md SND-2)", () => {
+describe("SendScheduler: every other message goes through it too (SPECIFICATION.md SND-2, SND-20)", () => {
   it("holds a submitted message for the floor after the last one, then sends it", async () => {
     const h = harness({ quietMs: 0, policy: { minIntervalMs: 10_000 } });
     h.type("a"); // goes at once
@@ -889,6 +1030,76 @@ describe("SendScheduler: every other message goes through it too (SPECIFICATION.
     expect(h.dropped).toEqual([]); // the submitter's to report, not the scheduler's
   });
 
+  it("after a rate-limit refusal of one it does not retry, holds back the next send of any kind as the provider asked (SND-7, SND-9)", async () => {
+    const h = harness({
+      quietMs: 0,
+      classify: () => ({ retryable: true, rateLimited: true, retryAfterMs: 30_000 }),
+    });
+    const refused = h.scheduler.submit(
+      async () => {
+        throw new Error("slow down");
+      },
+      { armsHeartbeat: false },
+    );
+    await expect(refused).rejects.toThrow("slow down");
+    expect(h.scheduler.effectiveMinIntervalMs).toBe(RETRY_BASE_MS * ADAPT_GROWTH); // spaced wider
+    expect(h.scheduler.status.state).toBe("idle"); // no change of its own is being retried
+
+    // The same message again — a responder answering the request a second time (RSY-9) — and an edit.
+    const sentAt: number[] = [];
+    const again = h.scheduler.submit(
+      async () => {
+        sentAt.push(Date.now());
+      },
+      { armsHeartbeat: false },
+    );
+    h.type("a");
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(sentAt).toEqual([]);
+    expect(h.attemptTimes).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    await again;
+    expect(sentAt).toEqual([T0 + 30_000]);
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS * ADAPT_GROWTH);
+    expect(receive(h.sent)).toBe("a");
+  });
+
+  it("backs off exponentially after refusals of messages it does not retry, and a success resets it (SND-7)", async () => {
+    const h = harness({ quietMs: 0 }); // every failure is worth retrying
+    const runs: number[] = [];
+    // Settles to the failure's message, so that a refusal while time is advanced is never unhandled.
+    const fail = () =>
+      h.scheduler
+        .submit(
+          async () => {
+            runs.push(Date.now());
+            throw new Error("unreachable");
+          },
+          { armsHeartbeat: false },
+        )
+        .catch((error: Error) => error.message);
+    expect(await fail()).toBe("unreachable"); // at T0
+    const second = fail();
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS - 1);
+    expect(runs).toEqual([T0]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await second).toBe("unreachable");
+    expect(runs).toEqual([T0, T0 + RETRY_BASE_MS]);
+    h.type("a");
+    await vi.advanceTimersByTimeAsync(2 * RETRY_BASE_MS - 1); // doubled
+    expect(h.attemptTimes).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.attemptTimes).toEqual([T0 + 3 * RETRY_BASE_MS]);
+    expect(receive(h.sent)).toBe("a");
+
+    const third = fail(); // after the success: one second again, not four
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await third).toBe("unreachable");
+    h.type("b");
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS);
+    expect(h.attemptTimes.at(-1)).toBe(T0 + 4 * RETRY_BASE_MS);
+  });
+
   it("rejects what is still waiting when it stops", async () => {
     const h = harness({ quietMs: 0, policy: { minIntervalMs: 10_000 } });
     h.type("a");
@@ -898,7 +1109,7 @@ describe("SendScheduler: every other message goes through it too (SPECIFICATION.
   });
 });
 
-describe("SendScheduler: a submitted message kept for a retry (SPECIFICATION.md SND-7, CTL-12)", () => {
+describe("SendScheduler: a submitted message kept for a retry (SPECIFICATION.md SND-7, CTL-26)", () => {
   const RETRYABLE: SendFailureClass = { retryable: true };
   const PERMANENT: SendFailureClass = { retryable: false };
 
@@ -981,24 +1192,40 @@ describe("SendScheduler: a submitted message kept for a retry (SPECIFICATION.md 
     expect(receive(h.sent)).toBe("a");
   });
 
-  it("a flush tries it at once and throws a retryable failure, keeping it for the next attempt", async () => {
+  it("a flush waits out the back-off, tries it, and throws a retryable failure, keeping it for the next attempt (SND-7)", async () => {
     const h = harness({ quietMs: 0, classify: () => RETRYABLE });
-    const message = failing(new Error("offline"), new Error("still offline"));
+    const message = failing(
+      new Error("offline"),
+      new Error("still offline"),
+      new Error("offline again"),
+    );
     const done = h.scheduler.submit(message.run, { armsHeartbeat: false, retry: true });
     await vi.advanceTimersByTimeAsync(0);
-    await expect(h.scheduler.flush()).rejects.toThrow("still offline");
-    expect(message.runs).toEqual([T0, T0]);
-    await h.scheduler.flush();
+    const flushing = h.scheduler.flush().catch((error: Error) => error.message);
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS - 1);
+    expect(message.runs).toEqual([T0]); // not before the back-off
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await flushing).toBe("still offline");
+    expect(message.runs).toEqual([T0, T0 + RETRY_BASE_MS]);
+    // Kept: the scheduler's own retry follows after the next, doubled back-off.
+    await vi.advanceTimersByTimeAsync(2 * RETRY_BASE_MS);
+    expect(message.runs).toEqual([T0, T0 + RETRY_BASE_MS, T0 + 3 * RETRY_BASE_MS]);
+    await vi.advanceTimersByTimeAsync(4 * RETRY_BASE_MS);
     await expect(done).resolves.toBe("id-1");
   });
 
-  it("a final flush makes one last attempt and then rejects it, as stopping does", async () => {
+  it("a final flush makes one last attempt, once the back-off permits, and then rejects it, as stopping does", async () => {
     const h = harness({ quietMs: 0, classify: () => RETRYABLE });
     const message = failing(new Error("offline"), new Error("still offline"));
-    const done = h.scheduler.submit(message.run, { armsHeartbeat: false, retry: true });
+    const done = h.scheduler
+      .submit(message.run, { armsHeartbeat: false, retry: true })
+      .catch((error: Error) => error.message);
     await vi.advanceTimersByTimeAsync(0);
-    await h.scheduler.flush({ final: true });
-    await expect(done).rejects.toThrow("still offline");
+    const flushing = h.scheduler.flush({ final: true });
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS);
+    await flushing;
+    expect(await done).toBe("still offline");
+    expect(message.runs).toEqual([T0, T0 + RETRY_BASE_MS]);
 
     const stopped = harness({ quietMs: 0, classify: () => RETRYABLE });
     const other = failing(new Error("offline"));
@@ -1058,6 +1285,23 @@ describe("SendScheduler heartbeat", () => {
     expect(h.heartbeats).toHaveLength(1);
   });
 
+  it("is not retried when refused, but the refusal holds back the next send like any other (SND-12, SND-7)", async () => {
+    const heartbeats: number[] = [];
+    const h = harnessWith({ maxIntervalMs: 20_000 }, () => {
+      heartbeats.push(Date.now());
+      return Promise.reject(new Error("unreachable"));
+    });
+    h.type("a"); // at T0
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(heartbeats).toEqual([T0 + 20_000]); // refused
+    h.type("b");
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS - 1);
+    expect(h.sent).toHaveLength(1); // held back by the refusal's back-off
+    await vi.advanceTimersByTimeAsync(1);
+    expect(receive(h.sent)).toBe("ab");
+    expect(heartbeats).toHaveLength(1); // and never sent again by itself
+  });
+
   it("is not sent when the policy has no maxIntervalMs", async () => {
     const h = watched({});
     h.type();
@@ -1088,15 +1332,97 @@ describe("SendScheduler heartbeat", () => {
     expect(h.heartbeats).toEqual([]);
   });
 
-  it("stays owed across such a message, and is counted from it so that it keeps the floor", async () => {
+  it("stays owed across such a message, and is counted from the edit that owes it, not from the request (SND-11, SND-23)", async () => {
     const h = watched({ ...WATCHED, minIntervalMs: 5_000 });
     h.type(); // at T0: a heartbeat is now owed at T0 + 20 s
     await vi.advanceTimersByTimeAsync(15_000);
     await h.scheduler.submit(async () => {}, { armsHeartbeat: false }); // a request at T0 + 15 s
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(h.heartbeats).toEqual([]); // not at T0 + 20 s any more...
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(h.heartbeats).toEqual([T0 + 15_000 + 20_000]); // ...but 20 s after the request
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(h.heartbeats).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.heartbeats).toEqual([T0 + 20_000]); // what the edit promised, and a floor after the request
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.heartbeats).toHaveLength(1);
+  });
+
+  it("is counted from the edit even when an answer went out later, so the edit's promise holds (SND-14, SND-23)", async () => {
+    const h = watched({ ...WATCHED, minIntervalMs: 1_000 });
+    h.type(); // at T0, promising a follow-up within 20 s
+    await vi.advanceTimersByTimeAsync(19_000);
+    await h.scheduler.submit(async () => {}, { armsHeartbeat: false }); // an answer to a joiner at T0 + 19 s
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.heartbeats).toEqual([T0 + 20_000]); // not 20 s after the answer
+  });
+
+  it("goes ahead of an answer waiting to go out when it falls due within a floor (SND-14, SND-23)", async () => {
+    const order: string[] = [];
+    const h = watched({ ...WATCHED, minIntervalMs: 5_000 });
+    h.type(); // at T0
+    await vi.advanceTimersByTimeAsync(17_000);
+    const answered = h.scheduler.submit(
+      async () => {
+        order.push(`answer at ${Date.now() - T0}`);
+      },
+      { armsHeartbeat: false },
+    ); // ready at T0 + 17 s; sent first, it would push the heartbeat to T0 + 22 s
+    await vi.advanceTimersByTimeAsync(10_000);
+    await answered;
+    expect(h.heartbeats).toEqual([T0 + 17_000]); // a little early, within the promise
+    expect(order).toEqual(["answer at 22000"]); // a floor after the heartbeat
+  });
+
+  it("is counted from the earliest promise still open: an edit, then a control frame (SND-23, LOS-16)", async () => {
+    const h = watched();
+    h.type(); // an edit at T0: receivers expect a further edit, or a heartbeat that holds it
+    await vi.advanceTimersByTimeAsync(10_000);
+    // A control frame is another source at receivers: it does not keep the edit's promise.
+    await h.scheduler.submit(async () => {}, { armsHeartbeat: true, promise: "control" });
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(h.heartbeats).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.heartbeats).toEqual([T0 + 20_000]);
+  });
+
+  it.each([
+    ["with", { minIntervalMs: 5_000, maxIntervalMs: 60_000 }],
+    ["without", { minIntervalMs: 5_000 }],
+  ] as const)(
+    "owed at once, goes as soon as the floor permits, not maxIntervalMs later, %s maxIntervalMs (SND-24)",
+    async (_name, policy) => {
+      const h = watched(policy);
+      await h.scheduler.submit(async () => {}, { armsHeartbeat: false }); // a message at T0
+      h.scheduler.oweHeartbeat({ now: true }); // a request showed its last report misleads
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(h.heartbeats).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(h.heartbeats).toEqual([T0 + 5_000]);
+      await vi.advanceTimersByTimeAsync(24 * 3_600_000);
+      expect(h.heartbeats).toHaveLength(1);
+    },
+  );
+
+  it("owes one after an answer in pieces, counted from its last piece, which promised nothing else (SND-11, SND-23)", async () => {
+    const heartbeats: number[] = [];
+    const scheduler = new SendScheduler({
+      quietMs: 0,
+      policy: resolveSyncPolicy({ minIntervalMs: 1_000, maxIntervalMs: 20_000 }),
+      send: async () => {},
+      classify: () => ({ retryable: true }),
+      onDropped: () => {},
+      sendHeartbeat: async () => {
+        heartbeats.push(Date.now());
+      },
+      splitting: {
+        maxBytes: 1_000,
+        frameSize: (update) => update.length,
+        pieces: () => [],
+        sendFrame: async () => {},
+      },
+    });
+    const sent = scheduler.enqueueFrames(["1", "2", "3"], { own: false }); // at T0, T0 + 1 s, T0 + 2 s
+    await vi.advanceTimersByTimeAsync(60_000);
+    await sent;
+    expect(heartbeats).toEqual([T0 + 2_000 + 20_000]);
   });
 
   it("is cancelled by a new edit and counted afresh from that edit's own send", async () => {
@@ -1143,6 +1469,61 @@ describe("SendScheduler heartbeat", () => {
     expect(heartbeats).toEqual([]);
   });
 
+  it("is still sent after a change refused for good, when an earlier message owes it (SND-11, SND-23)", async () => {
+    const heartbeats: number[] = [];
+    const writer = typist();
+    let refuse = false;
+    const scheduler = new SendScheduler({
+      quietMs: 0,
+      policy: resolveSyncPolicy({ maxIntervalMs: 20_000 }),
+      send: async () => {
+        if (refuse) {
+          refuse = false;
+          throw new Error("refused for good");
+        }
+      },
+      classify: () => ({ retryable: false }),
+      onDropped: () => {},
+      sendHeartbeat: async () => {
+        heartbeats.push(Date.now());
+      },
+    });
+    scheduler.enqueue(writer.type("a"), 1); // goes out at T0: receivers expect a follow-up
+    await vi.advanceTimersByTimeAsync(5_000);
+    refuse = true;
+    scheduler.enqueue(writer.type("b"), 1); // refused for good at T0 + 5 s, and dropped
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(heartbeats).toEqual([T0 + 20_000]); // what the edit that went out promised
+  });
+
+  it("is still sent after a change that could not be cut into pieces was dropped (SND-11, SND-19, SND-23)", async () => {
+    const heartbeats: number[] = [];
+    const writer = typist();
+    const scheduler = new SendScheduler({
+      quietMs: 0,
+      policy: resolveSyncPolicy({ maxIntervalMs: 20_000 }),
+      send: async () => {},
+      classify: () => ({ retryable: false }),
+      onDropped: () => {},
+      sendHeartbeat: async () => {
+        heartbeats.push(Date.now());
+      },
+      splitting: {
+        maxBytes: 1_000,
+        frameSize: (update) => update.length,
+        pieces: () => {
+          throw new Error("cannot be cut");
+        },
+        sendFrame: async () => {},
+      },
+    });
+    scheduler.enqueue(writer.type("a"), 1); // at T0
+    await vi.advanceTimersByTimeAsync(5_000);
+    scheduler.enqueue(writer.paste(5_000), 5_000); // too large, and cannot be cut: dropped
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(heartbeats).toEqual([T0 + 20_000]); // nothing was sent after the first edit
+  });
+
   it("is re-counted when the policy changes, and dropped if the new policy has no maxIntervalMs", async () => {
     const h = watched();
     h.type();
@@ -1185,7 +1566,7 @@ describe("SendScheduler heartbeat", () => {
 });
 
 describe("SendScheduler flush and stop", () => {
-  it("flush() sends at once, ignoring the quiet time, minChars and the floor", async () => {
+  it("flush() sends at once, ignoring the quiet time and minChars", async () => {
     const h = harness({
       quietMs: 60_000,
       policy: { minIntervalMs: 60_000, minChars: 500, maxIntervalMs: 600_000 },
@@ -1194,6 +1575,51 @@ describe("SendScheduler flush and stop", () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(h.sent).toHaveLength(0);
     await h.scheduler.flush();
+    expect(receive(h.sent)).toBe("a");
+  });
+
+  it("flush() waits for the floor after the last message: an explicit request does not lift it (SND-2)", async () => {
+    const h = harness({
+      quietMs: 60_000,
+      policy: { minIntervalMs: 60_000, minChars: 500, maxIntervalMs: 600_000 },
+    });
+    await h.scheduler.submit(async () => {}, { armsHeartbeat: false }); // a message at T0
+    h.type("a");
+    const flushing = h.scheduler.flush();
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(h.sent).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    await flushing;
+    expect(h.attemptTimes).toEqual([T0 + 60_000]);
+    expect(receive(h.sent)).toBe("a");
+  });
+
+  it("a final flush waits for the floor too, and sends nothing before it (SND-2)", async () => {
+    const h = harness({ quietMs: 60_000, policy: { minIntervalMs: 30_000 } });
+    await h.scheduler.submit(async () => {}, { armsHeartbeat: false }); // a message at T0
+    h.type("a");
+    const flushing = h.scheduler.flush({ final: true });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(h.attemptTimes).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    await flushing;
+    expect(h.attemptTimes).toEqual([T0 + 30_000]);
+  });
+
+  it("flush() waits for what the provider asked after a rate-limit refusal (SND-7)", async () => {
+    const h = harness({
+      quietMs: 60_000,
+      classify: () => ({ retryable: true, rateLimited: true, retryAfterMs: 45_000 }),
+    });
+    h.failWith(new Error("slow down"));
+    h.type("a");
+    await expect(h.scheduler.flush()).rejects.toThrow("slow down"); // at T0, refused
+    const flushing = h.scheduler.flush();
+    await vi.advanceTimersByTimeAsync(44_999);
+    expect(h.attemptTimes).toEqual([T0]);
+    await vi.advanceTimersByTimeAsync(1);
+    await flushing;
+    expect(h.attemptTimes).toEqual([T0, T0 + 45_000]);
     expect(receive(h.sent)).toBe("a");
   });
 

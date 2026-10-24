@@ -12,14 +12,14 @@ import {
   transact,
 } from "@tdsp/reconciliation";
 import { describe, expect, it } from "vitest";
-import { DocumentEngine, SendRefusedError } from "./index";
+import { DocumentEngine, type PersistedControlState, SendRefusedError } from "./index";
 
 /**
- * What a person types while the engine would refuse the edit (SPECIFICATION.md CTL-13).
+ * What a person types while the engine would refuse the edit (SPECIFICATION.md CTL-13, CTL-42).
  * Typed into the engine's document, it can leave the device although the engine never sends
  * it as an edit: a non-creator answers a creator that restarts with its state since the
  * creator's (RSY-6, RSY-8), whatever its own permission and before its own bootstrap
- * (RSY-10). Held outside that document, as CTL-13 lets an application do, it leaves only once
+ * (RSY-10). Held outside that document, as CTL-42 lets an application do, it leaves only once
  * the engine may edit, as a local edit the CRDT merges.
  * Security tests: only the CI role may change this file (.github/CODEOWNERS, CONTRIBUTING.md).
  */
@@ -42,7 +42,7 @@ function persisted(engine: DocumentEngine) {
 }
 
 /**
- * CTL-13's second way, as Appendix E describes it: the person types into a replica that
+ * CTL-42's second way, as Appendix E describes it: the person types into a replica that
  * applies every update the engine's document applies; what the person typed reaches the
  * engine's document only through `release()`, once the engine may edit.
  */
@@ -68,7 +68,8 @@ function hold(engine: DocumentEngine) {
  * Alice creates the document with "Plan" in it; Bob may write, Carol may read. Bob and Carol
  * stop, their applications keeping the content, and start again while Alice is away: neither
  * can be bootstrapped (RSY-6). `meanwhile` is what Alice did before she went away. Carol joins
- * first each time, so a creator that answers one request at a time answers hers first (RSY-9).
+ * first each time, so a creator that answers one request at a time answers hers first (RSY-9,
+ * RSY-19).
  */
 async function membersResumeWhileTheCreatorIsAway(
   meanwhile?: (alice: DocumentEngine) => Promise<void>,
@@ -79,7 +80,14 @@ async function membersResumeWhileTheCreatorIsAway(
     if (error instanceof SendRefusedError) refusals[who].push(error.reason);
   };
 
-  const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
+  // What Alice's application persists of her control state (CTL-26), as the engine hands it over.
+  let aliceControl: PersistedControlState | undefined;
+  const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, {
+    ...AS_ALICE,
+    onControlStateChange: (state) => {
+      aliceControl = state;
+    },
+  });
   await alice.setMembership("bob", "write");
   await alice.setMembership("carol", "read");
   const carolBefore = await DocumentEngine.join(DOCUMENT_ID, "carol", port, undefined, AS_ALICE);
@@ -94,7 +102,6 @@ async function membersResumeWhileTheCreatorIsAway(
 
   await meanwhile?.(alice);
   await alice.sync();
-  const aliceControl = alice.controlState;
   const aliceContent = persisted(alice);
   port.disconnect("alice");
   alice.dispose();
@@ -115,7 +122,7 @@ async function membersResumeWhileTheCreatorIsAway(
     bob,
     carol,
     refusals,
-    /** Alice starts again with her persisted control state (CTL-12), and her content if kept. */
+    /** Alice starts again with her persisted control state (CTL-26), and her content if kept. */
     creatorRestarts(
       withContent: boolean,
       options: { resyncResponseThrottleMs?: number } = {},
@@ -131,7 +138,7 @@ async function membersResumeWhileTheCreatorIsAway(
   };
 }
 
-describe("a change the engine refuses (CTL-13)", () => {
+describe("a change the engine refuses (CTL-13, CTL-42)", () => {
   describe("typed into the engine's document, it leaves the device in an answer to a creator that restarts (RSY-8, RSY-10)", () => {
     it("a reader's change", async () => {
       const { carol, refusals, creatorRestarts } = await membersResumeWhileTheCreatorIsAway();

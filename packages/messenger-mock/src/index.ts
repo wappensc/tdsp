@@ -28,33 +28,14 @@ import {
  */
 const MOCK_TRANSPORT_PROFILE: TransportProfile = {
   bounds: { minIntervalMs: null, maxBytes: null },
-  profiles: [
-    {
-      id: "instant",
-      label: "Instant",
-      description: "No limit: a message after every typing pause.",
-      values: {
-        minIntervalMs: 0,
-        maxIntervalMs: null,
-        minChars: 0,
-        maxChars: null,
-        expectedLatencyMs: 0,
-      },
-    },
-    {
-      id: "slow",
-      label: "Slow (test)",
-      description: "At most one message every 2 seconds, as a rate-limited provider would force.",
-      values: {
-        minIntervalMs: 2_000,
-        maxIntervalMs: 10_000,
-        minChars: 0,
-        maxChars: null,
-        expectedLatencyMs: 3_000,
-      },
-    },
-  ],
-  defaultProfile: "instant",
+  // No limit: a message after every typing pause (SND-16).
+  pacing: {
+    minIntervalMs: 0,
+    maxIntervalMs: null,
+    minChars: 0,
+    maxChars: null,
+    expectedLatencyMs: 0,
+  },
 };
 
 export class InMemoryMessengerPort implements MessengerPort {
@@ -73,6 +54,8 @@ export class InMemoryMessengerPort implements MessengerPort {
 
   // --- fault-injection state (mock-only) ---
   #disconnected = new Set<MemberId>();
+  #instanceCount = 1;
+  #instance = "instance-1";
   #frozenReceiveCount = new Map<string, number>(); // `${documentId}:${member}` -> deliveries.length at disconnect
   #heldNextSend = new Set<MemberId>();
   #held = new Map<DocumentId, Delivery[]>();
@@ -82,11 +65,8 @@ export class InMemoryMessengerPort implements MessengerPort {
   // --- MessengerPort ---
 
   /**
-   * Two send policies, so the policy path can be exercised without a real provider
-   * (SPECIFICATION.md §3.5): `instant`, the default, is no limit at all; `slow` paces sends
-   * the way a rate-limited provider would force, which lets an application's policy choice
-   * and the creator's policy change be seen and tested locally. The mock imposes no bound of its own. A test double's
-   * profile, not a claim about any messenger.
+   * No bound and no pacing of its own (SND-16): a message after every typing pause. A test
+   * double's profile, not a claim about any messenger; a test that needs a floor sets its own.
    */
   async transportProfile(): Promise<TransportProfile> {
     return MOCK_TRANSPORT_PROFILE;
@@ -144,6 +124,27 @@ export class InMemoryMessengerPort implements MessengerPort {
       return deliveries.slice(0, frozenCount);
     }
     return deliveries;
+  }
+
+  /** `receive` from a cursor (TRN-18): what came after `after`, or everything with `truncated` when it is gone. */
+  async receiveSince(
+    documentId: DocumentId,
+    member: MemberId,
+    after: DeliveryId | undefined,
+  ): Promise<{ readonly deliveries: readonly Delivery[]; readonly truncated: boolean }> {
+    const visible = await this.receive(documentId, member);
+    if (after === undefined) {
+      return { deliveries: visible, truncated: false };
+    }
+    const at = visible.findIndex((delivery) => delivery.id === after);
+    return at === -1
+      ? { deliveries: visible, truncated: true }
+      : { deliveries: visible.slice(at + 1), truncated: false };
+  }
+
+  /** This simulated bridge's instance id (TRN-19); `restartBridge()` changes it. */
+  async instance(): Promise<string> {
+    return this.#instance;
   }
 
   /**
@@ -221,6 +222,17 @@ export class InMemoryMessengerPort implements MessengerPort {
   }
 
   /** The member's next send() never becomes visible to anyone. Simulates a dropped message. */
+  /** Simulates a bridge restart: a new instance id (TRN-19). What it holds stays, as a persisted window would. */
+  restartBridge(): void {
+    this.#instanceCount += 1;
+    this.#instance = `instance-${this.#instanceCount}`;
+  }
+
+  /** Simulates the bridge's window moving on: its `count` oldest deliveries of `documentId` are gone (BRG-17). */
+  forgetOldest(documentId: DocumentId, count: number): void {
+    this.#deliveries.get(documentId)?.splice(0, count);
+  }
+
   dropNextSend(member: MemberId): void {
     this.#dropNextSend.add(member);
   }

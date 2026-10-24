@@ -7,12 +7,15 @@ import { readFileSync, writeFileSync } from "node:fs";
  * §14, VER-1). `wire/wire-lock.json` holds a hash of every entry of every frozen wire file and
  * published test vector, of the constants and versions stored beside them, and of each
  * normative wire section of the specification, of each binding document as a whole, together with
- * the specification's version.
+ * the specification's version and, while there is one, the draft marker (VER-3).
  *
  * `compareWireLock` says what changed and what kind of change it is:
  *
  * - **incompatible** — an entry changed or disappeared, or a constant or version changed: the
- *   bytes on the wire are no longer what they were. Needs a new major version.
+ *   bytes on the wire are no longer what they were. So does a draft marker that appears or
+ *   disappears: entering a draft or leaving it changes the version every frame and invitation
+ *   carries (VER-1, VER-3), though the frozen files of the earlier version stay as they were.
+ *   Needs a new major version.
  * - **addition** — only new entries: older implementations are unaffected (a compatible
  *   addition, §14). Needs a new minor version of the specification.
  * - **specification** — a wire section's or a binding document's text changed, or the lock
@@ -22,11 +25,16 @@ import { readFileSync, writeFileSync } from "node:fs";
  *   it accepts, by the version it gives the specification.
  *
  * Only the CI role may accept a change (`pnpm run wire:lock -- --accept <kind>`), and the
- * lock checks that the specification's version moved accordingly. Both this file and the lock
+ * lock checks that the specification's version — within a draft, its marker (VER-3) — moved
+ * accordingly. Both this file and the lock
  * are owned by the CI role (.github/CODEOWNERS).
  */
 
-/** Files whose entries are the wire, frozen: the reference implementation's and the published vectors. */
+/**
+ * Files whose entries are the wire, frozen: the reference implementation's and the published
+ * vectors — of every version, since a version's files stay as they were when the next one comes
+ * (CONTRIBUTING.md, "A change to the wire") — the bindings' own, and the draft's (VER-3).
+ */
 export const WIRE_FILES = [
   "wire/frames-v1.json",
   "wire/invitations-v1.json",
@@ -36,6 +44,11 @@ export const WIRE_FILES = [
   "packages/document-protocol/test-vectors/frames-v1.json",
   "packages/document-protocol/test-vectors/invitations-v1.json",
   "bridges/email-bridge/test-vectors/member-ids-v1.json",
+  "wire/frames-draft-5.json",
+  "wire/invitations-draft-5.json",
+  "packages/document-protocol/test-vectors/frames-draft-5.json",
+  "packages/document-protocol/test-vectors/invitations-draft-5.json",
+  "packages/document-protocol/test-vectors/control-draft-5.json",
 ] as const;
 
 /** The specification's normative wire sections, by heading: frame, profiles, control state, invitations, values. */
@@ -60,6 +73,9 @@ export const WIRE_DOCUMENTS: readonly string[] = [
   "bindings/email.md",
 ];
 
+/** The file whose `version` is the draft marker frames and invitations carry, while there is one (VER-3). */
+const MARKER_FILE = "wire/frames-draft-5.json";
+
 export const LOCK_FILE = "wire/wire-lock.json";
 
 export type ChangeKind = "incompatible" | "addition" | "specification";
@@ -73,6 +89,8 @@ export interface FileSnapshot {
 
 export interface WireSnapshot {
   readonly specificationVersion: string;
+  /** The draft marker frames and invitations carry instead of the version, while there is one (VER-3). */
+  readonly draftMarker?: string;
   readonly files: Readonly<Record<string, FileSnapshot>>;
   readonly sections: Readonly<Record<string, string>>;
   /** Every locked document's hash, by path; absent in a lock written before documents were locked. */
@@ -152,7 +170,13 @@ export function snapshot(repoRoot: string): WireSnapshot {
     documents: Object.fromEntries(
       WIRE_DOCUMENTS.map((path) => [path, sha256(read(path).replace(/\s+/g, " ").trim())]),
     ),
+    ...draftMarkerOf(read),
   };
+}
+
+function draftMarkerOf(read: (relative: string) => string): { draftMarker?: string } {
+  const version = (JSON.parse(read(MARKER_FILE)) as { version?: unknown }).version;
+  return typeof version === "string" ? { draftMarker: version } : {};
 }
 
 export function compareWireLock(lock: WireSnapshot, current: WireSnapshot): Finding[] {
@@ -219,6 +243,15 @@ export function compareWireLock(lock: WireSnapshot, current: WireSnapshot): Find
       findings.push({ kind: "specification", message: `${path} is newly locked` });
     }
   }
+  if (current.draftMarker !== lock.draftMarker) {
+    // Entering or leaving a draft is incompatible (VER-1); a new marker within the draft is the
+    // version finding that draftProblem asks for with an incompatible change (VER-3).
+    const entersOrLeaves = lock.draftMarker === undefined || current.draftMarker === undefined;
+    findings.push({
+      kind: entersOrLeaves ? "incompatible" : "version",
+      message: `the draft marker is ${current.draftMarker ?? "gone"}, the lock records ${lock.draftMarker ?? "none"}`,
+    });
+  }
   if (current.specificationVersion !== lock.specificationVersion) {
     findings.push({
       kind: "version",
@@ -271,6 +304,34 @@ export function versionProblem(kind: ChangeKind, from: string, to: string): stri
   return `an ${kind} change needs SPECIFICATION.md at version ${expected}, not ${to} (from ${from})`;
 }
 
+/**
+ * Within a draft (VER-3) the specification keeps its version, and what an incompatible change
+ * needs is a new draft marker instead: an addition or a specification change keeps the marker,
+ * an incompatible change names a new one. Leaving the draft for the release drops the marker,
+ * which counts as incompatible. Outside a draft, the version rules apply. `undefined` when it fits.
+ */
+export function draftProblem(
+  kind: ChangeKind,
+  lock: WireSnapshot,
+  current: WireSnapshot,
+): string | undefined {
+  if (lock.draftMarker === undefined) {
+    return versionProblem(kind, lock.specificationVersion, current.specificationVersion);
+  }
+  const markerChanged = current.draftMarker !== lock.draftMarker;
+  if (kind === "incompatible") {
+    return markerChanged
+      ? undefined
+      : `an incompatible change of the draft needs a new draft marker, not ${lock.draftMarker} again (VER-3)`;
+  }
+  if (markerChanged) {
+    return `a new draft marker (${current.draftMarker ?? "none"}) is for an incompatible change, not an ${kind}`;
+  }
+  return current.specificationVersion === lock.specificationVersion
+    ? undefined
+    : `within the draft the specification keeps version ${lock.specificationVersion}`;
+}
+
 export function readLock(repoRoot: string): WireSnapshot {
   return JSON.parse(readFileSync(`${repoRoot}/${LOCK_FILE}`, "utf8")) as WireSnapshot;
 }
@@ -281,7 +342,7 @@ export function writeLock(repoRoot: string, current: WireSnapshot): void {
     `${JSON.stringify(
       {
         $comment:
-          "The wire lock (tools/wire-lock.ts): hashes of every frozen wire entry, published test vector, constant and normative wire section of the specification, with the specification's version. tools/wire-lock.wire.test.ts fails on any difference and names its kind; only the CI role may accept one, with `pnpm run wire:lock -- --accept <incompatible|addition|specification>`, which checks that the specification's version moved accordingly. Never edit by hand.",
+          "The wire lock (tools/wire-lock.ts): hashes of every frozen wire entry, published test vector, constant, normative wire section of the specification and binding document, with the specification's version and, within a draft, its marker. tools/wire-lock.wire.test.ts fails on any difference and names its kind; only the CI role may accept one, with `pnpm run wire:lock -- --accept <incompatible|addition|specification>`, which checks that the version, or within a draft the marker, moved accordingly. Never edit by hand.",
         ...current,
       },
       null,
@@ -319,7 +380,7 @@ export function main(repoRoot: string, args: readonly string[]): number {
     console.error(`wire-lock: the change is ${kind}; it cannot be accepted as ${accepted}`);
     return 1;
   }
-  const problem = versionProblem(accepted, lock.specificationVersion, current.specificationVersion);
+  const problem = draftProblem(accepted, lock, current);
   if (problem !== undefined) {
     console.error(`wire-lock: ${problem}`);
     return 1;

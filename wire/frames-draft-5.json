@@ -1,0 +1,378 @@
+{
+  "$comment": "The TDSP 2.0 draft engine's frames at draft revision 5: for each entry the encoder writes exactly `frame` from `input`, and the decoder reads `frame` back to `input` (bytes as Base64, no limit as null). Every digest is that of a state the entry could come from: the state digest of the §4.5 document, which deleted nothing, and a control digest of operations that give the vector shown. Frozen like frames-v1.json: within the draft marker an entry may be added, never changed or removed (VER-3).",
+  "version": "de.wappensc.together.tdsp.probe.draft-5",
+  "entries": [
+    {
+      "name": "edit: the §4.5 example",
+      "kind": "edit",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "update": "AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=",
+        "due": 0
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"due\":0}"
+    },
+    {
+      "name": "edit: a sender that will speak again within 20 s",
+      "kind": "edit",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "update": "AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=",
+        "due": 20000
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"due\":20000}"
+    },
+    {
+      "name": "control: a member may write",
+      "kind": "control",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "device": "Q0FGRS1jcmVhdG9yLTAwMQ",
+        "counter": 1,
+        "target": "member:bob",
+        "value": "write",
+        "seen": {},
+        "due": 60000
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"device\":\"Q0FGRS1jcmVhdG9yLTAwMQ\",\"counter\":1,\"target\":\"member:bob\",\"value\":\"write\",\"seen\":{},\"due\":60000}"
+    },
+    {
+      "name": "control: a member may read, decided after another device's operation",
+      "kind": "control",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "device": "Q0FGRS1jcmVhdG9yLTAwMQ",
+        "counter": 2,
+        "target": "member:bob",
+        "value": "read",
+        "seen": {
+          "VGFibGV0LWNyZWF0b3ItMD": 1
+        },
+        "due": 60000
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"device\":\"Q0FGRS1jcmVhdG9yLTAwMQ\",\"counter\":2,\"target\":\"member:bob\",\"value\":\"read\",\"seen\":{\"VGFibGV0LWNyZWF0b3ItMD\":1},\"due\":60000}"
+    },
+    {
+      "name": "control: a member's permission revoked",
+      "kind": "control",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "device": "Q0FGRS1jcmVhdG9yLTAwMQ",
+        "counter": 3,
+        "target": "member:bob",
+        "value": null,
+        "seen": {
+          "VGFibGV0LWNyZWF0b3ItMD": 1
+        },
+        "due": 60000
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"device\":\"Q0FGRS1jcmVhdG9yLTAwMQ\",\"counter\":3,\"target\":\"member:bob\",\"value\":null,\"seen\":{\"VGFibGV0LWNyZWF0b3ItMD\":1},\"due\":60000}"
+    },
+    {
+      "name": "control: close",
+      "kind": "control",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "device": "Q0FGRS1jcmVhdG9yLTAwMQ",
+        "counter": 4,
+        "target": "close",
+        "value": true,
+        "seen": {
+          "VGFibGV0LWNyZWF0b3ItMD": 1
+        },
+        "due": 60000
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"device\":\"Q0FGRS1jcmVhdG9yLTAwMQ\",\"counter\":4,\"target\":\"close\",\"value\":true,\"seen\":{\"VGFibGV0LWNyZWF0b3ItMD\":1},\"due\":60000}"
+    },
+    {
+      "name": "control: the pace, a shortest interval of 30 s",
+      "kind": "control",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "device": "VGFibGV0LWNyZWF0b3ItMD",
+        "counter": 2,
+        "target": "pace",
+        "value": 30000,
+        "seen": {
+          "Q0FGRS1jcmVhdG9yLTAwMQ": 1
+        },
+        "due": 60000
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"device\":\"VGFibGV0LWNyZWF0b3ItMD\",\"counter\":2,\"target\":\"pace\",\"value\":30000,\"seen\":{\"Q0FGRS1jcmVhdG9yLTAwMQ\":1},\"due\":60000}"
+    },
+    {
+      "name": "heartbeat: a device of the creator, with its control vector",
+      "kind": "heartbeat",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "control": {
+          "Q0FGRS1jcmVhdG9yLTAwMQ": 4,
+          "VGFibGV0LWNyZWF0b3ItMD": 2
+        },
+        "controlDigest": "9edc993140509171",
+        "stateVector": "AYma9JgPBA==",
+        "stateDigest": "96a296d224f285c6",
+        "stream": "0c4f9a2be81d7365",
+        "sequence": 4
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"heartbeat\",\"documentId\":\"doc-a1b2c3\",\"control\":{\"Q0FGRS1jcmVhdG9yLTAwMQ\":4,\"VGFibGV0LWNyZWF0b3ItMD\":2},\"controlDigest\":\"9edc993140509171\",\"stateVector\":\"AYma9JgPBA==\",\"stateDigest\":\"96a296d224f285c6\",\"stream\":\"0c4f9a2be81d7365\",\"sequence\":4}"
+    },
+    {
+      "name": "heartbeat: anyone else, without",
+      "kind": "heartbeat",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "control": null,
+        "controlDigest": null,
+        "stateVector": "AYma9JgPBA==",
+        "stateDigest": "96a296d224f285c6",
+        "stream": "3b8e1f0a7c5d2946",
+        "sequence": 2
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"heartbeat\",\"documentId\":\"doc-a1b2c3\",\"control\":null,\"controlDigest\":null,\"stateVector\":\"AYma9JgPBA==\",\"stateDigest\":\"96a296d224f285c6\",\"stream\":\"3b8e1f0a7c5d2946\",\"sequence\":2}"
+    },
+    {
+      "name": "resync-request: a joiner with nothing",
+      "kind": "resync-request",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "requestId": "5f3a9c0e12b47d68",
+        "control": null,
+        "controlDigest": null,
+        "force": false,
+        "stateVector": "AA==",
+        "stateDigest": "96a296d224f285c6",
+        "stream": "7e0d5b31a9c4f286",
+        "sequence": 1
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"resync-request\",\"documentId\":\"doc-a1b2c3\",\"requestId\":\"5f3a9c0e12b47d68\",\"control\":null,\"controlDigest\":null,\"force\":false,\"stateVector\":\"AA==\",\"stateDigest\":\"96a296d224f285c6\",\"stream\":\"7e0d5b31a9c4f286\",\"sequence\":1}"
+    },
+    {
+      "name": "resync-request: a member that fell behind, asking regardless",
+      "kind": "resync-request",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "requestId": "0123456789abcdef",
+        "control": {
+          "Q0FGRS1jcmVhdG9yLTAwMQ": 2
+        },
+        "controlDigest": "65c8b96bd8413762",
+        "force": true,
+        "stateVector": "AYma9JgPBA==",
+        "stateDigest": "96a296d224f285c6",
+        "stream": "3b8e1f0a7c5d2946",
+        "sequence": 3
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"resync-request\",\"documentId\":\"doc-a1b2c3\",\"requestId\":\"0123456789abcdef\",\"control\":{\"Q0FGRS1jcmVhdG9yLTAwMQ\":2},\"controlDigest\":\"65c8b96bd8413762\",\"force\":true,\"stateVector\":\"AYma9JgPBA==\",\"stateDigest\":\"96a296d224f285c6\",\"stream\":\"3b8e1f0a7c5d2946\",\"sequence\":3}"
+    },
+    {
+      "name": "resync-response: a piece before the last, content only",
+      "kind": "resync-response",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "respondsTo": "0123456789abcdef",
+        "update": "AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=",
+        "control": null,
+        "attribution": null,
+        "stateVector": null,
+        "stateDigest": null,
+        "stream": "0c4f9a2be81d7365",
+        "sequence": 5,
+        "piece": 1,
+        "pieces": null
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"0123456789abcdef\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"control\":null,\"attribution\":null,\"stateVector\":null,\"stateDigest\":null,\"stream\":\"0c4f9a2be81d7365\",\"sequence\":5,\"piece\":1,\"pieces\":null}"
+    },
+    {
+      "name": "resync-response: a joiner's bootstrap in one piece, with control snapshot, attribution and the responder's state",
+      "kind": "resync-response",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "respondsTo": "5f3a9c0e12b47d68",
+        "update": "AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=",
+        "control": {
+          "profile": "yjs-paragraphs/1",
+          "vector": {
+            "Q0FGRS1jcmVhdG9yLTAwMQ": 2
+          },
+          "targets": {
+            "member:bob": {
+              "seen": {
+                "Q0FGRS1jcmVhdG9yLTAwMQ": 1
+              },
+              "heads": [
+                {
+                  "device": "Q0FGRS1jcmVhdG9yLTAwMQ",
+                  "counter": 2,
+                  "value": "write",
+                  "seen": {}
+                }
+              ]
+            }
+          }
+        },
+        "attribution": {
+          "ranges": [
+            {
+              "start": 0,
+              "end": 2,
+              "authorId": "alice"
+            }
+          ],
+          "lastEditBySender": {
+            "alice": 2
+          }
+        },
+        "stateVector": "AYma9JgPBA==",
+        "stateDigest": "96a296d224f285c6",
+        "stream": "0c4f9a2be81d7365",
+        "sequence": 6,
+        "piece": 1,
+        "pieces": 1
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"5f3a9c0e12b47d68\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"control\":{\"profile\":\"yjs-paragraphs/1\",\"vector\":{\"Q0FGRS1jcmVhdG9yLTAwMQ\":2},\"targets\":{\"member:bob\":{\"seen\":{\"Q0FGRS1jcmVhdG9yLTAwMQ\":1},\"heads\":[{\"device\":\"Q0FGRS1jcmVhdG9yLTAwMQ\",\"counter\":2,\"value\":\"write\",\"seen\":{}}]}}},\"attribution\":{\"ranges\":[{\"start\":0,\"end\":2,\"authorId\":\"alice\"}],\"lastEditBySender\":{\"alice\":2}},\"stateVector\":\"AYma9JgPBA==\",\"stateDigest\":\"96a296d224f285c6\",\"stream\":\"0c4f9a2be81d7365\",\"sequence\":6,\"piece\":1,\"pieces\":1}"
+    },
+    {
+      "name": "resync-response: an overlay with text whose author is unknown",
+      "kind": "resync-response",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "respondsTo": "0123456789abcdef",
+        "update": "AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=",
+        "control": null,
+        "attribution": {
+          "ranges": [
+            {
+              "start": 0,
+              "end": 1,
+              "authorId": "alice"
+            },
+            {
+              "start": 1,
+              "end": 2,
+              "authorId": null
+            }
+          ],
+          "lastEditBySender": {
+            "alice": 1
+          }
+        },
+        "stateVector": "AYma9JgPBA==",
+        "stateDigest": "96a296d224f285c6",
+        "stream": "0c4f9a2be81d7365",
+        "sequence": 7,
+        "piece": 1,
+        "pieces": 1
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"0123456789abcdef\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"control\":null,\"attribution\":{\"ranges\":[{\"start\":0,\"end\":1,\"authorId\":\"alice\"},{\"start\":1,\"end\":2,\"authorId\":null}],\"lastEditBySender\":{\"alice\":1}},\"stateVector\":\"AYma9JgPBA==\",\"stateDigest\":\"96a296d224f285c6\",\"stream\":\"0c4f9a2be81d7365\",\"sequence\":7,\"piece\":1,\"pieces\":1}"
+    },
+    {
+      "name": "resync-response: an answer's last piece, with the responder's state",
+      "kind": "resync-response",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "respondsTo": "5f3a9c0e12b47d68",
+        "update": "AAA=",
+        "control": null,
+        "attribution": null,
+        "stateVector": "AYma9JgPBA==",
+        "stateDigest": "96a296d224f285c6",
+        "stream": "0c4f9a2be81d7365",
+        "sequence": 8,
+        "piece": 3,
+        "pieces": 3
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"5f3a9c0e12b47d68\",\"update\":\"AAA=\",\"control\":null,\"attribution\":null,\"stateVector\":\"AYma9JgPBA==\",\"stateDigest\":\"96a296d224f285c6\",\"stream\":\"0c4f9a2be81d7365\",\"sequence\":8,\"piece\":3,\"pieces\":3}"
+    },
+    {
+      "name": "resync-response: a snapshot with counters held above a hole, one of them superseded",
+      "kind": "resync-response",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "respondsTo": "5f3a9c0e12b47d69",
+        "update": "AAA=",
+        "control": {
+          "profile": "yjs-paragraphs/1",
+          "vector": {
+            "Q0FGRS1jcmVhdG9yLTAwMQ": 1
+          },
+          "targets": {
+            "member:bob": {
+              "seen": {},
+              "heads": [
+                {
+                  "device": "Q0FGRS1jcmVhdG9yLTAwMQ",
+                  "counter": 1,
+                  "value": "write",
+                  "seen": {}
+                }
+              ]
+            },
+            "member:carol": {
+              "seen": {
+                "Q0FGRS1jcmVhdG9yLTAwMQ": 3
+              },
+              "heads": [
+                {
+                  "device": "Q0FGRS1jcmVhdG9yLTAwMQ",
+                  "counter": 4,
+                  "value": "read",
+                  "seen": {}
+                }
+              ]
+            }
+          },
+          "aboveHoles": {
+            "Q0FGRS1jcmVhdG9yLTAwMQ": [3, 4]
+          }
+        },
+        "attribution": null,
+        "stateVector": "AYma9JgPBA==",
+        "stateDigest": "96a296d224f285c6",
+        "stream": "0c4f9a2be81d7365",
+        "sequence": 9,
+        "piece": 1,
+        "pieces": 1
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"5f3a9c0e12b47d69\",\"update\":\"AAA=\",\"control\":{\"profile\":\"yjs-paragraphs/1\",\"vector\":{\"Q0FGRS1jcmVhdG9yLTAwMQ\":1},\"targets\":{\"member:bob\":{\"seen\":{},\"heads\":[{\"device\":\"Q0FGRS1jcmVhdG9yLTAwMQ\",\"counter\":1,\"value\":\"write\",\"seen\":{}}]},\"member:carol\":{\"seen\":{\"Q0FGRS1jcmVhdG9yLTAwMQ\":3},\"heads\":[{\"device\":\"Q0FGRS1jcmVhdG9yLTAwMQ\",\"counter\":4,\"value\":\"read\",\"seen\":{}}]}},\"aboveHoles\":{\"Q0FGRS1jcmVhdG9yLTAwMQ\":[3,4]}},\"attribution\":null,\"stateVector\":\"AYma9JgPBA==\",\"stateDigest\":\"96a296d224f285c6\",\"stream\":\"0c4f9a2be81d7365\",\"sequence\":9,\"piece\":1,\"pieces\":1}"
+    },
+    {
+      "name": "decline: the Appendix D example",
+      "kind": "decline",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "reason": "unsupported-profile",
+        "profiles": ["com.example.markdown/1"],
+        "text": "My app cannot open this document."
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"unsupported-profile\",\"profiles\":[\"com.example.markdown/1\"],\"text\":\"My app cannot open this document.\"}"
+    },
+    {
+      "name": "decline: unsupported-version, nothing else",
+      "kind": "decline",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "reason": "unsupported-version"
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"unsupported-version\"}"
+    },
+    {
+      "name": "decline: declined, nothing else",
+      "kind": "decline",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "reason": "declined"
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"declined\"}"
+    },
+    {
+      "name": "decline: other, nothing else",
+      "kind": "decline",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "reason": "other"
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"other\"}"
+    }
+  ]
+}

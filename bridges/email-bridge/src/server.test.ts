@@ -197,8 +197,7 @@ describe("bridges/email-bridge server", () => {
     it("serves the local profile, with no limit, for a mail server on this machine", async () => {
       const { response, profile } = await profileFrom(baseUrl); // the fake sender is plaintext-loopback
       expect(response.status).toBe(200);
-      expect(profile?.defaultProfile).toBe("local");
-      expect(profile?.profiles.find((p) => p.id === "local")?.values).toEqual({
+      expect(profile?.pacing).toEqual({
         minIntervalMs: 0,
         maxIntervalMs: null,
         minChars: 0,
@@ -217,13 +216,10 @@ describe("bridges/email-bridge server", () => {
         const url =
           typeof address === "object" && address ? `http://127.0.0.1:${address.port}` : "";
         const { profile } = await profileFrom(url);
-        expect(profile?.defaultProfile).toBe("standard");
-        expect(profile?.profiles.find((p) => p.id === "standard")?.values.minIntervalMs).toBe(
-          30_000,
-        );
+        expect(profile?.pacing.minIntervalMs).toBe(30_000);
         expect(profile?.bounds.minIntervalMs).toBe(15_000);
-        // A frame the client may send in one mail: a larger change is split, not refused
-        // by the provider and dropped (SPECIFICATION.md §15.1, FRG-1).
+        // A frame the client may send in one mail: a larger change goes as pieces, not
+        // refused by the provider and dropped (SPECIFICATION.md §9.4).
         expect(profile?.bounds.maxBytes).toBe(4 * 1024 * 1024);
       }
     });

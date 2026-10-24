@@ -19,7 +19,7 @@ state a security property that the specification, a test and CONFORMANCE.md do n
 1. `git switch main && git pull`, then `git status --short --branch`.
 2. Inspect document metadata with `rg -n "^(title|summary|read_when):" docs` and read only
    the documents whose `read_when` conditions match the task. For protocol work, read the
-   relevant sections of SPECIFICATION.md; its requirements are numbered (e.g. `CTL-12`).
+   relevant sections of SPECIFICATION.md; its requirements are numbered (e.g. `CTL-20`).
 3. Before changing anything the CI role owns ([.github/CODEOWNERS](.github/CODEOWNERS)),
    read [CONTRIBUTING.md](CONTRIBUTING.md), "Roles".
 4. Before starting or exploring local or real-messenger test infrastructure (Docker, the
@@ -117,9 +117,10 @@ Keep metadata accurate when the document changes.
   reads. Adapters and bridges pass a frame on unparsed (ARC-3).
 - `DocumentEngine` (`packages/document-protocol/src/index.ts`) holds control state (§7)
   and bootstrap and resync (§8), and composes one module per other part of the
-  specification: `framing.ts` and `strict-json.ts` (§4), `profile.ts` (§5; the profile
-  itself is `packages/reconciliation`), `resync-gate.ts` (RSY-3), `send-scheduler.ts` and
-  `sync-policy.ts` (§9.1–9.3), `fragments.ts` (§9.4–9.5), `loss-detector.ts` (§10),
+  specification: `control-state.ts` (§7, operations and their merge), `framing.ts` and
+  `strict-json.ts` (§4), `profile.ts` (§5; the profile itself, `split.ts` for §9.4
+  included, is `packages/reconciliation`), `resync-gate.ts` (RSY-3), `send-scheduler.ts`
+  and `sync-policy.ts` (§9.1–9.3), `digest.ts` (LOS-12), `loss-detector.ts` (§10),
   `invitation.ts` (§11.3).
 - The three bridges share one layout: `index.ts` (environment, bind to 127.0.0.1),
   `server.ts` (the local bridge interface, §12.6), `bind-store.ts` (`documentId` ↔
@@ -136,8 +137,8 @@ Keep metadata accurate when the document changes.
   or Matrix and email groups skipped instead of ran.
 - `wire/wire-lock.json` hashes the specification's wire sections (§4, §5, §7, §11,
   Appendices A and B), the binding documents in `bindings/` but the local bridge interface,
-  and the wire files, so a change of wording in any of them, even an editorial one, fails
-  `tools/wire-lock.wire.test.ts`.
+  and the wire files, with the draft marker while there is one (VER-3), so a change of wording
+  in any of them, even an editorial one, fails `tools/wire-lock.wire.test.ts`.
 
 ## Repository conventions
 

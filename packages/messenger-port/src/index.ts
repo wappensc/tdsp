@@ -157,6 +157,27 @@ export interface MessengerPort {
   receive(documentId: DocumentId, member: MemberId): Promise<readonly Delivery[]>;
 
   /**
+   * The deliveries after `after` (TRN-18, TRN-21): `after` is the last `DeliveryId` the
+   * caller saw, `undefined` for everything still held; `truncated` is true when `after` has left
+   * the bridge's window, so deliveries may have come and gone unseen. In the order the window
+   * holds them, oldest first: the last one is where the next call continues. Optional: a transport
+   * that cannot tell offers only `receive`, and the engine keeps LOS-8 for it (LOS-9).
+   */
+  receiveSince?(
+    documentId: DocumentId,
+    member: MemberId,
+    after: DeliveryId | undefined,
+  ): Promise<{ readonly deliveries: readonly Delivery[]; readonly truncated: boolean }>;
+
+  /**
+   * The epoch of the bridge's window (TRN-19): it changes whenever the bridge may have lost a
+   * delivery it held or one its messenger had handed it — on every restart, for a bridge that keeps
+   * either only in memory — and should stay the same across a restart that kept both. Optional,
+   * and read with or without `receiveSince` (LOS-9).
+   */
+  instance?(): Promise<string>;
+
+  /**
    * Lists the raw messenger channels/groups/rooms `member`'s underlying
    * messenger account can see — used exclusively to populate a bind/
    * picker (which existing channel should this new document's
@@ -215,93 +236,47 @@ export interface SyncPolicyValues {
   readonly expectedLatencyMs: number;
 }
 
-/** One named bundle of policy values a creator can pick instead of entering five numbers. */
-export interface TransportPolicyProfile {
-  /** Stable, unique within the transport profile: what `defaultProfile` names. */
-  readonly id: string;
-  readonly label: string;
-  readonly description: string;
-  readonly values: SyncPolicyValues;
-}
-
 /**
- * A transport's statement about its own limits (SPECIFICATION.md §3.5), exactly as a bridge serves it: every field present, "no bound" spelled `null`.
- * **Defaults and profiles are suggestions; bounds are not**: a policy from anywhere — the
- * creator, an invitation, a message from someone who may be forging it — is clamped to
- * them, so a bad policy can make a document slower but never make a client exceed what
- * its provider tolerates.
+ * A transport's statement about its own limits (SND-16, §3.5), exactly as a
+ * bridge serves it: every field present, "no bound" spelled `null`. **`pacing` is a suggestion;
+ * `bounds` are not**: the pace the creator sets and every local choice are clamped to them, so
+ * nothing can make a client exceed what its provider tolerates (SND-15). Named presets with labels
+ * belong to the application, not to the transport.
  */
 export interface TransportProfile {
   readonly bounds: {
-    /** No policy may space messages closer than this; `null` for no floor. */
+    /** No message may follow the previous one closer than this; `null` for no floor. */
     readonly minIntervalMs: number | null;
     /** The largest frame one message carries, in bytes of its UTF-8 text; `null` for no limit. */
     readonly maxBytes: number | null;
   };
-  /**
-   * Named bundles of policy values, in the order to offer them — an array, because a JSON
-   * object's member order is not something a parser has to keep.
-   */
-  readonly profiles: readonly TransportPolicyProfile[];
-  /** The id of the bundle that applies when the creator picks none. Always one of `profiles`. */
-  readonly defaultProfile: string;
+  /** The pacing this transport suggests for a client that chose none: a complete policy. */
+  readonly pacing: SyncPolicyValues;
 }
 
 /**
  * Reads a `TransportProfile` off the wire (the bridge's `GET /transport-profile`), or
  * `undefined` if it is not one — which the adapter turns into a failed call, never into
- * "no profile" (TRN-13). Strict on purpose, and as a whole: a missing field, a field
- * the specification does not define, a number that is negative or not finite, `null`
- * where no limit is not allowed, no profile at all, two profiles with one id, a profile
- * without a string label and description, a `defaultProfile` that names nothing — each
- * makes the whole profile unusable rather than half-applied. Requiring every field is what keeps a misspelled one from reading
- * as "no bound", which is a way to end up sending faster than the provider allows.
+ * "no profile" (TRN-13). Strict on purpose, and as a whole: a missing field, a field the draft
+ * does not define, a number that is negative or not finite, `null` where no limit is not
+ * allowed — each makes the whole profile unusable rather than half-applied. Requiring every
+ * field is what keeps a misspelled one from reading as "no bound", which is a way to end up
+ * sending faster than the provider allows.
  */
 export function parseTransportProfile(raw: unknown): TransportProfile | undefined {
   if (
-    !hasExactly(raw, ["bounds", "profiles", "defaultProfile"]) ||
-    !hasExactly(raw.bounds, ["minIntervalMs", "maxBytes"]) ||
-    !Array.isArray(raw.profiles) ||
-    raw.profiles.length === 0
+    !hasExactly(raw, ["bounds", "pacing"]) ||
+    !hasExactly(raw.bounds, ["minIntervalMs", "maxBytes"])
   ) {
     return undefined;
   }
   const minIntervalMs = numberOrNull(raw.bounds.minIntervalMs);
   const maxBytes = numberOrNull(raw.bounds.maxBytes);
-  if (minIntervalMs === undefined || maxBytes === undefined) {
+  const pacing = parseValues(raw.pacing);
+  if (minIntervalMs === undefined || maxBytes === undefined || pacing === undefined) {
     return undefined;
   }
-  const profiles: TransportPolicyProfile[] = [];
-  for (const entry of raw.profiles as unknown[]) {
-    if (
-      !hasExactly(entry, ["id", "label", "description", "values"]) ||
-      typeof entry.id !== "string" ||
-      entry.id.length === 0 ||
-      profiles.some((profile) => profile.id === entry.id) ||
-      typeof entry.label !== "string" ||
-      typeof entry.description !== "string"
-    ) {
-      return undefined;
-    }
-    const values = parseValues(entry.values);
-    if (values === undefined) {
-      return undefined;
-    }
-    profiles.push({ id: entry.id, label: entry.label, description: entry.description, values });
-  }
-  const defaultProfile = raw.defaultProfile;
-  if (typeof defaultProfile !== "string" || !profiles.some((p) => p.id === defaultProfile)) {
-    return undefined;
-  }
-  return { bounds: { minIntervalMs, maxBytes }, profiles, defaultProfile };
-}
-
-/** The bundle of `transport` with this id, or `undefined`. */
-export function transportPolicyProfile(
-  transport: TransportProfile | undefined,
-  id: string,
-): TransportPolicyProfile | undefined {
-  return transport?.profiles.find((profile) => profile.id === id);
+  return { bounds: { minIntervalMs, maxBytes }, pacing };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -355,9 +330,9 @@ function parseValues(raw: unknown): SyncPolicyValues | undefined {
 
 /**
  * Why a transport refused or failed a `send()` (SPECIFICATION.md §3.4). Two are worth
- * retrying and two are not; the caller (`document-protocol`'s send scheduler)
- * keeps the change and tries again for the first two and drops it, reporting
- * the error, for the others.
+ * retrying, one waits for the person, and two are not worth retrying; the caller
+ * (`document-protocol`'s send scheduler) keeps the change for the first three and drops it,
+ * reporting the error, for the others.
  *
  * - `"rate-limited"` — the provider is throttling us (an SMTP 4xx, a Matrix
  *   `M_LIMIT_EXCEEDED`, a Signal rate-limit error). Retryable; the scheduler also
@@ -365,15 +340,24 @@ function parseValues(raw: unknown): SyncPolicyValues | undefined {
  *   pace is too fast.
  * - `"unavailable"` — the messenger or the bridge cannot be reached right now: a
  *   disconnection, a timeout, a 5xx. Retryable.
+ * - `"needs-person"` — refused until a person acts on an account: none set up or signed in,
+ *   an identity not trusted, a device not confirmed, the storage full (TRN-11). Kept, but tried
+ *   again only when the application says the person acted or after the longest back-off
+ *   (TRN-20): waiting alone does not pass it.
  * - `"too-large"` — the payload exceeds what this transport carries in one
  *   message. Not retryable: the same payload would be refused again.
  * - `"rejected"` — the transport refuses for a reason waiting cannot change (an
  *   unknown document, a sender that is not a member). Not retryable.
  */
-export type TransportSendFailure = "rate-limited" | "unavailable" | "too-large" | "rejected";
+export type TransportSendFailure =
+  | "rate-limited"
+  | "unavailable"
+  | "needs-person"
+  | "too-large"
+  | "rejected";
 
 /**
- * What a `MessengerPort.send()` throws when it knows which of the four it is.
+ * What a `MessengerPort.send()` throws when it knows which of the five it is.
  * **An error that is not a `TransportSendError` is treated as retryable**, because
  * the alternative — dropping a change on a failure nobody classified — is exactly
  * the fault this exists to remove (without it a refused send is a lost message, and
@@ -393,27 +377,35 @@ export class TransportSendError extends Error {
   }
 
   /**
-   * Whether waiting can help: for every reason but `too-large` and `rejected`. A reason none of
-   * the four — one an adapter of a later version names — counts as `unavailable`
-   * (SPECIFICATION.md TRN-12), for the same reason an unclassified error does.
+   * Only `too-large` and `rejected` are permanent; `needs-person` keeps the change too, and
+   * waits (`needsPerson`). A reason outside the five — from an adapter written without these
+   * types, or an error decoded from another process — counts as `unavailable` (TRN-12): wrongly
+   * retrying costs a bounded back-off, wrongly dropping costs the change.
    */
   get retryable(): boolean {
     return this.reason !== "too-large" && this.reason !== "rejected";
+  }
+
+  /** Whether only a person can lift the refusal (TRN-20): kept, but not retried by back-off. */
+  get needsPerson(): boolean {
+    return this.reason === "needs-person";
   }
 }
 
 /**
  * How the bridge HTTP API says why a `send` failed (SPECIFICATION.md, the
- * bridge API), turned into the `TransportSendError` a `MessengerPort` throws. Shared
- * by every adapter that speaks to a bridge, so the four outcomes mean the same thing
+ * bridge API, LBI-6), turned into the `TransportSendError` a `MessengerPort` throws. Shared
+ * by every adapter that speaks to a bridge, so the five outcomes mean the same thing
  * whichever messenger is behind it:
  *
  * - `429` — rate-limited; a `Retry-After` header (seconds, or an HTTP date) is
  *   passed on as `retryAfterMs`.
  * - `413` — too large.
- * - `400`, `403`, `404`, `409`, `422` — rejected: the bridge refuses this request
+ * - `409` — needs the person: not provisioned or linked yet, an identity to trust, a device
+ *   to confirm — a state the person ends, not one waiting ends.
+ * - `400`, `403`, `404`, `422` — rejected: the bridge refuses this request
  *   and asking again will not change that (a malformed request, an unknown or
- *   unbound document, a forbidden sender, a state it will not send in).
+ *   unbound document, a forbidden sender).
  * - anything else, `5xx` above all — unavailable: the bridge or the messenger
  *   behind it could not be reached or failed. A status nobody classified lands
  *   here too, so a change is never dropped on a failure nobody thought about.
@@ -434,7 +426,10 @@ export function transportSendErrorFromHttp(
   if (status === 429) {
     return new TransportSendError("rate-limited", message, parseRetryAfter(retryAfterHeader));
   }
-  if (status === 400 || status === 403 || status === 404 || status === 409 || status === 422) {
+  if (status === 409) {
+    return new TransportSendError("needs-person", message);
+  }
+  if (status === 400 || status === 403 || status === 404 || status === 422) {
     return new TransportSendError("rejected", message);
   }
   return new TransportSendError("unavailable", message);
@@ -497,8 +492,8 @@ export const MAX_JSON_NESTING = 32;
  * text, skipping strings and never recursing, for any text at all — valid JSON or not — so it
  * can run *before* a parser: one that recurses once per level (Foundation's
  * `JSONSerialization`, among others) exhausts its stack on a few kilobytes of brackets
- * (§1.6). V8's `JSON.parse` does not recurse; the check is what makes every receiver draw the
- * line in the same place.
+ * (§1.6, JSN-1). V8's `JSON.parse` does not recurse; the check is what makes every receiver draw
+ * the line in the same place.
  */
 export function jsonTextTooDeep(text: string): boolean {
   let depth = 0;
@@ -527,7 +522,7 @@ export function jsonTextTooDeep(text: string): boolean {
 
 /**
  * The same limit for a value a messenger hands over already parsed — Matrix's event content,
- * which is the envelope there (§13.3). Walks it without recursion.
+ * which is the envelope there (bindings/matrix.md, §13.3). Walks it without recursion.
  */
 export function jsonValueTooDeep(value: unknown): boolean {
   const pending: { readonly value: unknown; readonly depth: number }[] = [{ value, depth: 0 }];

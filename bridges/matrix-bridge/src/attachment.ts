@@ -249,7 +249,7 @@ export function parseAttachmentRef(raw: unknown): AttachmentRef | undefined {
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /**
- * The frame an attachment carries is the UTF-8 text of a frame (bindings/bridges.md §13.1);
+ * The frame an attachment carries is the UTF-8 text of a frame (bindings/bridges.md BND-4);
  * bytes that are not valid UTF-8 are no frame at all, and are refused rather than decoded lossily.
  */
 export function frameTextOf(bytes: Uint8Array): string {

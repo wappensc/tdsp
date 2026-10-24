@@ -141,4 +141,51 @@ export const messengerPortContractCases: readonly MessengerPortContractCase[] = 
       }
     },
   },
+  {
+    // Optional (TRN-18): where the transport offers a cursor, an answer after it holds only what
+    // came after it, and a cursor the transport never issued reads as a window that moved on.
+    name: "receiveSince() answers what came after a cursor, and truncated for one it does not hold, where offered",
+    run: async ({ documentId, creatorPort, creatorId, memberPort, memberId }) => {
+      const receiveSince = memberPort.receiveSince?.bind(memberPort);
+      if (receiveSince === undefined) {
+        return;
+      }
+      await creatorPort.createDocument(documentId, creatorId);
+      const first = `{"n":1,"at":${Date.now()}}`;
+      await creatorPort.send(documentId, creatorId, first);
+      const all = await eventually(
+        () => receiveSince(documentId, memberId, undefined),
+        (answer) => answer.deliveries.some((d) => d.payload === first),
+        `${memberId} never received the first delivery through receiveSince()`,
+      );
+      assert.equal(
+        all.truncated,
+        false,
+        "receiveSince() without a cursor said the window moved on",
+      );
+      const cursor = (all.deliveries.find((d) => d.payload === first) as { id: string }).id;
+      const second = `{"n":2,"at":${Date.now()}}`;
+      await creatorPort.send(documentId, creatorId, second);
+      const later = await eventually(
+        () => receiveSince(documentId, memberId, cursor),
+        (answer) => answer.deliveries.some((d) => d.payload === second),
+        `${memberId} never received the second delivery after the cursor`,
+      );
+      assert.ok(
+        !later.deliveries.some((d) => d.id === cursor),
+        "receiveSince() answered the delivery at its cursor again",
+      );
+      assert.equal(
+        later.truncated,
+        false,
+        "receiveSince() said the window moved on although the cursor was held",
+      );
+      const unknown = await receiveSince(documentId, memberId, "never-issued-by-this-transport");
+      assert.equal(
+        unknown.truncated,
+        true,
+        "receiveSince() did not say truncated for a cursor it never issued",
+      );
+    },
+  },
 ];

@@ -7,7 +7,7 @@ import { parseEnvelope } from "./sync-state.ts";
 
 /**
  * The Signal binding's wire, frozen (docs/testing.md, "Wire compatibility";
- * bindings/signal.md §13.2): the group message the bridge sends for a frame — in the body up to
+ * bindings/signal.md, §13.2): the group message the bridge sends for a frame — in the body up to
  * the body limit, as the message's one attachment above it — and how it reads one back. A
  * difference is a wire change only the CI role may accept (tools/wire-lock.ts). Only the CI
  * role may change this file (.github/CODEOWNERS).
@@ -86,6 +86,11 @@ describe("Signal group messages at envelope version 1", () => {
     const envelopes = [...appendix.matchAll(/```json\n([\s\S]*?)\n```/g)]
       .map((match) => match[1] as string)
       .filter((text) => (JSON.parse(text) as { kind: string }).kind === "frame");
-    expect(envelopes).toEqual([WIRE.entries[0]?.message]);
+    // A 2.0 frame inside the envelope, which keeps its version 1 (SPECIFICATION.md §14): the
+    // entry for it was added within the version, beside the 1.x frames (ARC-3).
+    const shown = WIRE.entries.find(
+      (entry) => entry.name === "the §4.5 edit of TDSP 2.0, in the body",
+    );
+    expect(envelopes).toEqual([shown?.message]);
   });
 });

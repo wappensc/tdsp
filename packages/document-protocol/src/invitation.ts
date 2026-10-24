@@ -1,5 +1,4 @@
 import { isProfileId } from "./framing";
-import { decodeSyncPolicyParam } from "./sync-policy";
 
 /**
  * An invitation as a link's query or fragment (SPECIFICATION.md §11.3, INV-8): what an application writes
@@ -12,13 +11,18 @@ import { decodeSyncPolicyParam } from "./sync-policy";
  */
 
 /** The invitation format this module reads and writes: the `tdsp` parameter. */
-export const INVITATION_VERSION = 1;
+/** The draft marker, as for frames (VER-3): a 1.x reader refuses the link as `unsupported-version`. */
+export const INVITATION_VERSION = "de.wappensc.together.tdsp.probe.draft-5";
 
 /** The most participants an email invitation may name, as the email binding bounds them. */
 export const MAX_INVITATION_RECIPIENTS = 64;
 
 const MAX_ID_BYTES = 255;
-const MESSAGE_ID = /^<[A-Za-z0-9._~+-]{1,100}@[A-Za-z0-9.-]{1,100}>$/;
+/** The email binding's `Message-ID`: `<local@domain>`, at most 200 characters, each part from its own characters. */
+const MESSAGE_ID = /^<[A-Za-z0-9._~+-]+@[A-Za-z0-9.-]+>$/;
+const MAX_MESSAGE_ID_LENGTH = 200;
+/** A binding's name (§11.3): lowercase letters, digits, `.` and `-`, 1 to 64 characters, the first a letter or a digit. */
+const BINDING_NAME = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 const ADDRESS = /^[^\s,@]{1,64}@[^\s,@]{1,189}$/;
 
 export interface Invitation {
@@ -35,11 +39,6 @@ export interface Invitation {
   readonly recipients?: readonly string[];
   /** Email: whether the document uses PGP. */
   readonly pgp?: boolean;
-  /**
-   * The creator's policy as policy text (§11.2) — only if it parsed: one that does not is
-   * dropped, and the invitation still opens (INV-4, INV-5).
-   */
-  readonly policy?: string;
 }
 
 export type InvitationProblem =
@@ -65,7 +64,6 @@ const PARAMETERS = [
   "recipients",
   "pgp",
   "profile",
-  "policy",
 ] as const;
 
 function byteLength(value: string): number {
@@ -79,7 +77,7 @@ function isId(value: string): boolean {
 
 /**
  * The invitation as query text, without a leading `?` — `application/x-www-form-urlencoded`
- * as the WHATWG URL standard defines it (what `URLSearchParams` writes), in a fixed order.
+ * as the WHATWG URL standard defines it (what `URLSearchParams` writes, INV-10), in a fixed order.
  * Throws for an invitation that would not read back as itself.
  */
 export function encodeInvitation(invitation: Invitation): string {
@@ -101,9 +99,6 @@ export function encodeInvitation(invitation: Invitation): string {
     params.set("pgp", "1");
   }
   params.set("profile", invitation.profile);
-  if (invitation.policy !== undefined) {
-    params.set("policy", invitation.policy);
-  }
   const text = params.toString();
   const back = parseInvitation(text);
   if (!back.ok) {
@@ -132,9 +127,9 @@ export function invitationFromUrl(link: string | URL): ParsedInvitation {
 
 /**
  * Reads an invitation from a query (with or without its `?`), strictly (§11.3): a parameter
- * this version defines that appears twice, is empty or out of range rejects the invitation;
- * a policy that does not parse is dropped instead (INV-4); a parameter it does not define is
- * ignored.
+ * this version defines that appears twice, is empty or out of range rejects the invitation; a
+ * parameter it does not define is ignored — `policy` of 1.x among them, since the draft shares
+ * no policy (SND-16).
  */
 export function parseInvitation(query: string | URLSearchParams): ParsedInvitation {
   const params = typeof query === "string" ? new URLSearchParams(query) : query;
@@ -177,7 +172,7 @@ export function parseInvitation(query: string | URLSearchParams): ParsedInvitati
       "an invitation needs provider, documentId, creatorMemberId and profile",
     );
   }
-  if (!/^[a-z0-9][a-z0-9.-]{0,63}$/.test(messenger)) {
+  if (!BINDING_NAME.test(messenger)) {
     return fail("invalid-field", `provider ${JSON.stringify(messenger)} is not a binding name`);
   }
   if (!isId(documentId) || !isId(creatorMemberId)) {
@@ -200,7 +195,7 @@ export function parseInvitation(query: string | URLSearchParams): ParsedInvitati
   }
   const threadRoot = value("threadRoot");
   if (threadRoot !== undefined) {
-    if (!MESSAGE_ID.test(threadRoot)) {
+    if (threadRoot.length > MAX_MESSAGE_ID_LENGTH || !MESSAGE_ID.test(threadRoot)) {
       return fail("invalid-field", "threadRoot is not a Message-ID of the email binding's form");
     }
     invitation.threadRoot = threadRoot;
@@ -233,10 +228,6 @@ export function parseInvitation(query: string | URLSearchParams): ParsedInvitati
     }
   } else if (invitation.channelId === undefined) {
     return fail("missing-field", `a ${messenger} invitation needs channelId`);
-  }
-  const policy = value("policy");
-  if (policy !== undefined && decodeSyncPolicyParam(policy) !== undefined) {
-    invitation.policy = policy;
   }
   return { ok: true, invitation };
 }

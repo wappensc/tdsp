@@ -1,5 +1,5 @@
 {
-  "$comment": "The Signal binding's group messages at envelope version 1, frozen (SPECIFICATION.md §13.2): for each entry the bridge must send exactly `message` as the body for `frame`, with `attachments` attachments, and must read `message` back to that frame or attachment reference. Checked by bridges/signal-bridge/src/envelope.wire.test.ts against wire/wire-lock.json. Within a version an entry may be added, never changed or removed.",
+  "$comment": "The Signal binding's group messages at envelope version 1, frozen (bindings/signal.md, §13.2): for each entry the bridge must send exactly `message` as the body for `frame`, with `attachments` attachments, and must read `message` back to that frame or attachment reference. Checked by bridges/signal-bridge/src/envelope.wire.test.ts against wire/wire-lock.json. Within a version an entry may be added, never changed or removed.",
   "version": 1,
   "constants": {
     "BODY_FRAME_LIMIT": 800,
@@ -26,6 +26,13 @@
       "frame": "{\"tdsp\":1,\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}",
       "message": "{\"tdsp\":1,\"kind\":\"frame\",\"documentId\":\"doc-a1b2c3\",\"attachment\":{\"size\":801,\"sha256\":\"112e5b61d6426a1686442166a68872a56b7f7374650621ed64279e8bf085a8da\"}}",
       "attachments": 1
+    },
+    {
+      "name": "the §4.5 edit of TDSP 2.0, in the body",
+      "documentId": "doc-a1b2c3",
+      "frame": "{\"tdsp\":2,\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"due\":30000}",
+      "message": "{\"tdsp\":1,\"kind\":\"frame\",\"documentId\":\"doc-a1b2c3\",\"frame\":\"{\\\"tdsp\\\":2,\\\"kind\\\":\\\"edit\\\",\\\"documentId\\\":\\\"doc-a1b2c3\\\",\\\"update\\\":\\\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\\\",\\\"due\\\":30000}\"}",
+      "attachments": 0
     }
   ]
 }

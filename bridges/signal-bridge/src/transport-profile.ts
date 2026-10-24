@@ -2,8 +2,9 @@ import type { TransportProfile } from "@tdsp/messenger-port";
 import { ATTACHMENT_FRAME_LIMIT } from "./attachment.ts";
 
 /**
- * What this bridge says about its own limits, served at `GET /transport-profile`:
- * the send policies it suggests and the bounds no policy may cross.
+ * What this bridge says about its own limits, served at `GET /transport-profile`
+ * (SPECIFICATION.md §3.5): the bounds no pacing may cross and the pacing it suggests. A
+ * slower pacing for a slow connection is the application's to offer.
  *
  * **The intervals here are estimates**, not measurements: no run has been made to hit
  * Signal's own rate limit on purpose. `signal-cli` surfaces
@@ -21,31 +22,12 @@ import { ATTACHMENT_FRAME_LIMIT } from "./attachment.ts";
 
 export const SIGNAL_PROFILE: TransportProfile = {
   bounds: { minIntervalMs: 500, maxBytes: ATTACHMENT_FRAME_LIMIT },
-  profiles: [
-    {
-      id: "standard",
-      label: "Standard",
-      description: "At most one message every two seconds.",
-      values: {
-        minIntervalMs: 2_000,
-        maxIntervalMs: 20_000,
-        minChars: 0,
-        maxChars: null,
-        expectedLatencyMs: 10_000,
-      },
-    },
-    {
-      id: "constrained",
-      label: "Constrained",
-      description: "At most one message every ten seconds, for a slow connection.",
-      values: {
-        minIntervalMs: 10_000,
-        maxIntervalMs: 60_000,
-        minChars: 0,
-        maxChars: null,
-        expectedLatencyMs: 30_000,
-      },
-    },
-  ],
-  defaultProfile: "standard",
+  // At most one message every two seconds.
+  pacing: {
+    minIntervalMs: 2_000,
+    maxIntervalMs: 20_000,
+    minChars: 0,
+    maxChars: null,
+    expectedLatencyMs: 10_000,
+  },
 };

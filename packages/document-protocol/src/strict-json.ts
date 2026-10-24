@@ -98,3 +98,67 @@ function unpairedSurrogate(value: string): number | undefined {
   }
   return undefined;
 }
+
+/** Where a value stands in a JSON text: the member names and array indices from the outermost value down. */
+export type JsonPath = readonly (string | number)[];
+
+/**
+ * Where `text` writes a number with a fraction or an exponent, or as `-0`: the forms an integer
+ * field must not take (SPECIFICATION.md §1.6), which `JSON.parse` reads as integers all the same.
+ * Run on text `JSON.parse` has already accepted. Linear in the length of the text.
+ */
+export function numbersNotInIntegerForm(text: string): JsonPath[] {
+  const found: JsonPath[] = [];
+  const stack: { readonly object: boolean; key: string; index: number; expectKey: boolean }[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i] as string;
+    if (c === '"') {
+      const top = stack.at(-1);
+      if (top?.object === true && top.expectKey) {
+        const { value, end } = readString(text, i);
+        top.key = value;
+        top.expectKey = false;
+        i = end;
+      } else {
+        i = stringEnd(text, i);
+      }
+      continue;
+    }
+    if (c === "-" || (c >= "0" && c <= "9")) {
+      let end = i + 1;
+      while (end < text.length && "0123456789.eE+-".includes(text[end] as string)) {
+        end += 1;
+      }
+      const token = text.slice(i, end);
+      if (/[.eE]/.test(token) || token === "-0") {
+        found.push(stack.map((frame) => (frame.object ? frame.key : frame.index)));
+      }
+      i = end;
+      continue;
+    }
+    if (c === "{" || c === "[") {
+      stack.push({ object: c === "{", key: "", index: 0, expectKey: c === "{" });
+    } else if (c === "}" || c === "]") {
+      stack.pop();
+    } else if (c === ",") {
+      const top = stack.at(-1);
+      if (top?.object === true) {
+        top.expectKey = true;
+      } else if (top !== undefined) {
+        top.index += 1;
+      }
+    }
+    i += 1;
+  }
+  return found;
+}
+
+/** The index just after the closing quote of the string starting at the quote at `start`. */
+function stringEnd(text: string, start: number): number {
+  let i = start + 1;
+  while (text[i] !== '"') {
+    i += text[i] === "\\" ? 2 : 1;
+  }
+  return i + 1;
+}

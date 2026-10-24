@@ -70,8 +70,20 @@ describe("ResyncGate", () => {
     const before = gate.lastRequestAt;
     gate.begin({ ...ASK, floorMs: 30_000 });
     gate.abort(before);
-    expect(gate.status().state).toBe("idle");
+    expect(gate.status()).toMatchObject({ state: "idle", lastOutcome: "failed" }); // where it shows (SND-10)
     expect(gate.begin({ ...ASK, floorMs: 30_000 })).toEqual({ sent: true });
+  });
+
+  it("counts the expiry and the floor from when the request went out, after it waited for the floor (RSY-3, RSY-4)", () => {
+    const gate = new ResyncGate();
+    gate.begin({ ...ASK, floorMs: 30_000 });
+    vi.advanceTimersByTime(20_000); // waiting in the scheduler
+    gate.sent(60_000);
+    expect(gate.status()).toMatchObject({ requestedAt: T0 + 20_000, expiresAt: T0 + 80_000 });
+    expect(gate.lastRequestAt).toBe(T0 + 20_000);
+    gate.answered();
+    vi.advanceTimersByTime(29_999);
+    expect(gate.begin({ ...ASK, floorMs: 30_000 })).toEqual({ sent: false, reason: "rate-floor" });
   });
 
   it("starts with no outcome to report", () => {

@@ -15,21 +15,8 @@ import {
   transact,
 } from "@tdsp/reconciliation";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  decodeFrame,
-  encodeControlFrame,
-  encodeEditFrame,
-  encodeFragmentFrame,
-  encodeResyncResponseFrame,
-  FrameDecodeError,
-} from "./framing";
-import {
-  ControlFrameRejectedError,
-  DocumentEngine,
-  type DocumentEngineOptions,
-  resolveSyncPolicy,
-  SendRefusedError,
-} from "./index";
+import { decodeFrame, encodeResyncResponseFrame, FrameDecodeError } from "./framing";
+import { DocumentEngine, type DocumentEngineOptions, SendRefusedError } from "./index";
 
 /**
  * Authority over a document beyond its control frames (see control.security.test.ts):
@@ -405,7 +392,7 @@ describe("a creator's answer is checked whole before any of it applies (FRM-6, C
         documentId: DOCUMENT_ID,
         respondsTo: request?.id ?? "0000000000000000",
         update: encodeUpdate(content),
-        control: { profile: "com.example.markdown/1", sequence: 0, closed: false, members: {} },
+        control: { profile: "com.example.markdown/1", vector: {}, targets: {} },
       }),
     );
     await carol.sync();
@@ -446,49 +433,61 @@ describe("a creator's answer is checked whole before any of it applies (FRM-6, C
     return { carol, errors };
   }
 
+  const TAG = "Q0FGRS1jcmVhdG9yLTAwMQ";
   const VALID_SNAPSHOT = {
     profile: "yjs-paragraphs/1",
-    sequence: 4,
-    closed: false,
-    members: { carol: "write" },
-    policy: {
-      minIntervalMs: 30_000,
-      maxIntervalMs: 120_000,
-      minChars: 0,
-      maxChars: null,
-      expectedLatencyMs: 60_000,
+    vector: { [TAG]: 2 },
+    targets: {
+      "member:carol": {
+        seen: { [TAG]: 0 },
+        heads: [{ device: TAG, counter: 1, value: "write", seen: {} }],
+      },
+      pace: { seen: { [TAG]: 1 }, heads: [{ device: TAG, counter: 2, value: 30_000, seen: {} }] },
     },
-    policySequence: 4,
   };
+  const carolsHead = VALID_SNAPSHOT.targets["member:carol"].heads[0] as Record<string, unknown>;
 
   it("a valid snapshot is applied with its content — the control case for the rejections below", async () => {
     const { carol, errors } = await answerCarolWith(VALID_SNAPSHOT);
     expect(errors).toEqual([]);
     expect(getPlainText(carol.fragment)).toBe("the creator's text");
     expect(carol.permissionOf("carol")).toBe("write");
-    expect(carol.syncPolicy.minIntervalMs).toBe(30_000);
   });
 
   it.each<[string, Record<string, unknown>, unknown]>([
+    ["a 1.x field", { ...VALID_SNAPSHOT, sequence: 4 }, null],
+    ["no vector", { ...VALID_SNAPSHOT, vector: undefined }, null],
     [
-      "a policy value that is not a number",
-      { ...VALID_SNAPSHOT, policy: { ...VALID_SNAPSHOT.policy, minIntervalMs: "fast" } },
+      "a vector naming something that is not a device",
+      { ...VALID_SNAPSHOT, vector: { carol: 1 } },
       null,
     ],
     [
-      "null where no limit is not allowed",
-      { ...VALID_SNAPSHOT, policy: { ...VALID_SNAPSHOT.policy, minChars: null } },
+      "an unknown target",
+      { ...VALID_SNAPSHOT, targets: { policy: { seen: {}, heads: [] } } },
       null,
     ],
-    ["a policy without its policySequence", { ...VALID_SNAPSHOT, policySequence: undefined }, null],
     [
-      "a policySequence above the snapshot's sequence",
-      { ...VALID_SNAPSHOT, policySequence: 5 },
+      "an unknown permission",
+      {
+        ...VALID_SNAPSHOT,
+        targets: { "member:carol": { seen: {}, heads: [{ ...carolsHead, value: "admin" }] } },
+      },
       null,
     ],
-    ["an undefined field", { ...VALID_SNAPSHOT, extra: 1 }, null],
-    ["an unknown permission", { ...VALID_SNAPSHOT, members: { carol: "admin" } }, null],
-    ["the creator listed as a member", { ...VALID_SNAPSHOT, members: { alice: "write" } }, null],
+    [
+      "a pace that is not a number",
+      {
+        ...VALID_SNAPSHOT,
+        targets: { pace: { seen: {}, heads: [{ ...carolsHead, value: "fast" }] } },
+      },
+      null,
+    ],
+    [
+      "the creator as a target",
+      { ...VALID_SNAPSHOT, targets: { "member:alice": { seen: {}, heads: [carolsHead] } } },
+      null,
+    ],
     [
       "an overlay whose ranges leave a gap",
       VALID_SNAPSHOT,
@@ -512,97 +511,6 @@ describe("a creator's answer is checked whole before any of it applies (FRM-6, C
       expect(errors[0]).toBeInstanceOf(FrameDecodeError);
       expect(getPlainText(carol.fragment)).toBe("");
       expect(carol.permissionOf("carol")).toBeUndefined();
-      expect(carol.syncPolicy.minIntervalMs).toBe(0);
     },
   );
-});
-
-describe("the sync policy is the creator's alone", () => {
-  onTheSchedulersClock();
-
-  const policyFrame = (sequence: number, minIntervalMs: number): string =>
-    encodeControlFrame({
-      documentId: DOCUMENT_ID,
-      sequence,
-      action: "policy",
-      policy: resolveSyncPolicy({ minIntervalMs, maxIntervalMs: 600_000 }),
-    });
-
-  it("only the creator may change it", async () => {
-    const port = new CountingPort();
-    const { bob } = await pair(port);
-    await expect(bob.setSyncPolicy({ minIntervalMs: 1 })).rejects.toThrow(/not the creator/);
-  });
-
-  it("a policy from anyone but the creator is ignored, and reported", async () => {
-    const port = new CountingPort();
-    const errors: unknown[] = [];
-    const { bob } = await pair(port, {}, {}, (error) => errors.push(error));
-    await port.inner.send(DOCUMENT_ID, "mallory", policyFrame(1, 3_000_000));
-    await bob.sync();
-    expect(bob.syncPolicy.minIntervalMs).toBe(0);
-    expect(errors.some((e) => e instanceof ControlFrameRejectedError)).toBe(true);
-  });
-
-  it("a replayed or older policy is inert: the newest, by the creator's sequence, wins", async () => {
-    const port = new CountingPort();
-    const { alice, bob } = await pair(port);
-    await port.inner.send(DOCUMENT_ID, "alice", policyFrame(5, 50_000)); // arrives first
-    await port.inner.send(DOCUMENT_ID, "alice", policyFrame(5, 51_000)); // a different message under the same number
-    await port.inner.send(DOCUMENT_ID, "alice", policyFrame(3, 3_000)); // an older one, late — last, so a bug shows
-    await bob.sync();
-    expect(bob.syncPolicy.minIntervalMs).toBe(50_000);
-    void alice;
-  });
-});
-
-describe("a fragment cannot smuggle a frame", () => {
-  onTheSchedulersClock();
-
-  it("checks the frame a fragment carried, not only the fragment: one for another document is refused", async () => {
-    const errors: unknown[] = [];
-    const port = new CountingPort();
-    const { bob } = await pair(port, {}, {}, (error) => errors.push(error));
-    const elsewhere = encodeEditFrame("some-other-document", new Uint8Array([0]));
-    await port.inner.send(
-      DOCUMENT_ID,
-      "mallory",
-      encodeFragmentFrame({
-        documentId: DOCUMENT_ID, // the fragment itself claims to be for this document
-        messageId: "0000000000000000",
-        index: 0,
-        total: 1,
-        chunk: new TextEncoder().encode(elsewhere), // what it carries is not
-      }),
-    );
-    await bob.sync();
-    expect(
-      errors.some((e) => e instanceof Error && /routed to the wrong document/.test(e.message)),
-    ).toBe(true);
-  });
-
-  it("refuses a fragment inside a fragment, which nothing here sends", async () => {
-    const errors: unknown[] = [];
-    const port = new CountingPort();
-    const { bob } = await pair(port, {}, {}, (error) => errors.push(error));
-    const inner = encodeFragmentFrame({
-      documentId: DOCUMENT_ID,
-      messageId: "0000000000000000",
-      index: 0,
-      total: 1,
-      chunk: new Uint8Array([1]),
-    });
-    const outer = encodeFragmentFrame({
-      documentId: DOCUMENT_ID,
-      messageId: "0909090909090909",
-      index: 0,
-      total: 1,
-      chunk: new TextEncoder().encode(inner),
-    });
-    await port.inner.send(DOCUMENT_ID, "mallory", outer);
-    await bob.sync();
-    expect(
-      errors.some((e) => e instanceof Error && /fragment carried another/.test(e.message)),
-    ).toBe(true);
-  });
 });
