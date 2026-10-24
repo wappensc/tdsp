@@ -87,7 +87,7 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
   too large. The envelope carries the frame as a JSON string, in which every quote
   and backslash doubles, and in an encrypted room Megolm's Base64 adds a third: a
   frame of 32 000 bytes measured alone could then exceed the event limit, and a
-  frame within `bounds.maxBytes` would be refused as `too-large` (SND-8). Measured
-  as written, 32 000 bytes stay below the limit in either kind of room. Which form a
-  sender chose is its own affair, so two bridges that serialise differently still
-  understand each other.
+  frame within `bounds.maxBytes` would be refused as `too-large` (SND-8, SND-22).
+  Measured as written, 32 000 bytes stay below the limit in either kind of room.
+  Which form a sender chose is its own affair, so two bridges that serialise
+  differently still understand each other.
