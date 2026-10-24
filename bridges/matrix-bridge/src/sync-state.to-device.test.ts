@@ -17,13 +17,11 @@ import { createSyncState } from "./sync-state.ts";
 const ROOM = "!room:homeserver.test";
 const DOC = "doc-1";
 
-const nested = (levels: number): unknown => {
-  let value: unknown = "x";
-  for (let i = 0; i < levels; i += 1) {
-    value = [value];
-  }
-  return value;
-};
+/**
+ * A JSON value nested `levels` deep, as text. Written by hand, not with `JSON.stringify`, which is
+ * the very call that throws on such a value in some Node.js versions.
+ */
+const nestedJson = (levels: number): string => `${"[".repeat(levels)}"x"${"]".repeat(levels)}`;
 
 describe("a to-device event nested deeper than any message needs", () => {
   const passed: unknown[][] = [];
@@ -41,31 +39,32 @@ describe("a to-device event nested deeper than any message needs", () => {
       if (round === 1) {
         return Response.json({ next_batch: "s1" });
       }
-      return Response.json({
-        next_batch: `s${round}`,
-        to_device: {
-          events: [
-            { type: "m.room_key", sender: "@alice:homeserver.test", content: { room_id: ROOM } },
-            { type: "m.dummy", sender: "@mallory:homeserver.test", content: nested(10_000) },
-          ],
-        },
-        rooms: {
-          join: {
-            [ROOM]: {
-              timeline: {
-                events: [
-                  {
-                    type: "de.wappensc.together.tdsp.frame",
-                    event_id: "$frame",
-                    sender: "@alice:homeserver.test",
-                    content: { tdsp: 1, documentId: DOC, frame: "AQID" },
-                  },
-                ],
-              },
+      const roomKey = JSON.stringify({
+        type: "m.room_key",
+        sender: "@alice:homeserver.test",
+        content: { room_id: ROOM },
+      });
+      const deep = `{"type":"m.dummy","sender":"@mallory:homeserver.test","content":${nestedJson(10_000)}}`;
+      const rooms = JSON.stringify({
+        join: {
+          [ROOM]: {
+            timeline: {
+              events: [
+                {
+                  type: "de.wappensc.together.tdsp.frame",
+                  event_id: "$frame",
+                  sender: "@alice:homeserver.test",
+                  content: { tdsp: 1, documentId: DOC, frame: "AQID" },
+                },
+              ],
             },
           },
         },
       });
+      return new Response(
+        `{"next_batch":"s${round}","to_device":{"events":[${roomKey},${deep}]},"rooms":${rooms}}`,
+        { headers: { "content-type": "application/json" } },
+      );
     });
   });
 
