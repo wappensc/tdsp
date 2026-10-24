@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 /**
- * The local `documentId ↔ roomId` bind-store (SPECIFICATION.md §12.2), the
+ * The local `documentId ↔ roomId` bind-store (bindings/bridges.md §12.2), the
  * same mechanism the Signal bridge uses for its `groupId`. The **only** place
  * document metadata is ever persisted for this adapter — never in the Matrix
  * room itself, never as a state event: this implementation never configures
@@ -21,7 +21,7 @@ export interface BindRecord {
    * Whether the bound room already had `m.room.encryption` set at bind
    * time — read-only, checked once, never set by this bridge: end-to-end
    * encryption is inherited from the room the person picked, never forced
-   * (SPECIFICATION.md §13.3). `m.room.encryption` is itself
+   * (bindings/matrix.md §13.3). `m.room.encryption` is itself
    * irreversible at the Matrix protocol level, so this never needs
    * re-checking after bind time.
    */

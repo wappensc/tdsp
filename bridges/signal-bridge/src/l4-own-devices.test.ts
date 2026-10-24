@@ -9,7 +9,7 @@ import { BODY_FRAME_LIMIT } from "./attachment.ts";
  * linked to the same account, already running where `L4_SIGNAL_BRIDGE_A`/`_A2` say
  * (infra/signal-l4/config.ts). What only this can show: that Signal hands a message one device
  * sends to the account's other device as a sync transcript, in the shape this bridge parses, and
- * that the other device delivers it under the id the sending device got (SPECIFICATION.md SIG-3,
+ * that the other device delivers it under the id the sending device got (bindings/signal.md SIG-3,
  * TRN-7) — an attachment frame included, which `signal-cli` must have stored for the transcript.
  *
  * Skipped unless both bridges are configured, reachable and linked. It sends a few real messages

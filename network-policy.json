@@ -29,7 +29,7 @@
       "file": "bridges/matrix-bridge/src/server.ts",
       "zone": "B",
       "destination": "loopback-listener",
-      "reason": "The bridge's own inbound HTTP interface, bound to 127.0.0.1 only, reflecting a CORS origin only when that origin is itself loopback (SPECIFICATION.md LBI-1, LBI-3). Accepts connections; never opens one."
+      "reason": "The bridge's own inbound HTTP interface, bound to 127.0.0.1 only, reflecting a CORS origin only when that origin is itself loopback (bindings/local-bridge-interface.md LBI-1, LBI-3). Accepts connections; never opens one."
     },
     {
       "file": "bridges/matrix-bridge/src/confirm-device-cli.ts",
@@ -41,7 +41,7 @@
       "file": "bridges/signal-bridge/src/server.ts",
       "zone": "B",
       "destination": "loopback-listener",
-      "reason": "The Signal bridge's own inbound HTTP interface, bound to 127.0.0.1 only, reflecting a CORS origin only when that origin is itself loopback (SPECIFICATION.md LBI-1, LBI-3). Accepts connections; never opens one."
+      "reason": "The Signal bridge's own inbound HTTP interface, bound to 127.0.0.1 only, reflecting a CORS origin only when that origin is itself loopback (bindings/local-bridge-interface.md LBI-1, LBI-3). Accepts connections; never opens one."
     },
     {
       "file": "bridges/signal-bridge/src/signal-daemon.ts",
@@ -59,7 +59,7 @@
       "file": "bridges/email-bridge/src/server.ts",
       "zone": "B",
       "destination": "loopback-listener",
-      "reason": "The email bridge's own inbound HTTP interface, bound to 127.0.0.1 only, reflecting a CORS origin only when that origin is itself loopback (SPECIFICATION.md LBI-1, LBI-3). Accepts connections; never opens one."
+      "reason": "The email bridge's own inbound HTTP interface, bound to 127.0.0.1 only, reflecting a CORS origin only when that origin is itself loopback (bindings/local-bridge-interface.md LBI-1, LBI-3). Accepts connections; never opens one."
     },
     {
       "file": "tools/network-guard.ts",

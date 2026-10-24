@@ -63,12 +63,12 @@ be grepped or alerted on.
 | `message-rejected` | warn | email | An inbound message was rejected instead of applied, with one of the integrity-log reasons (SPECIFICATION.md EML-2, EML-3, BRG-12). Fields: `reason`, `documentId`, `messageId`, `sender`. Logged once per message. Also served at `GET /channels/:documentId/integrity-log` — the log is what survives a restart. |
 | `unsupported-envelope-version` | warn | all | A recognisable TDSP envelope of another version (`tdsp` a number other than 1) arrived for a document this bridge has bound; it was not delivered (SPECIFICATION.md BND-2, VER-1). Fields: `documentId`, `version`, and the message's `eventId` (Matrix) or `messageId` (email). The usual cause is a participant running a newer bridge. |
 | `mail-tls` | info | email | At startup, once a mailbox is configured: how the SMTP and IMAP connections are secured (`implicit`, `starttls-required`, or `plaintext-loopback` — the last only ever for a server on this machine). Fields: `smtp`, `imap`. |
-| `invite-rejected` | warn | email | A participant's bridge refused a PGP document's invitation when joining (SPECIFICATION.md EML-5, EML-8). Fields: `reason` (one of the `invite-*` reasons, or `recipient-list-mismatch`), `documentId`, `messageId`, `sender`, `detail`. Nothing is stored for a refused invitation. |
+| `invite-rejected` | warn | email | A participant's bridge refused a PGP document's invitation when joining (bindings/email.md EML-5, EML-8). Fields: `reason` (one of the `invite-*` reasons, or `recipient-list-mismatch`), `documentId`, `messageId`, `sender`, `detail`. Nothing is stored for a refused invitation. |
 | `key-deviation` | warn | email | On joining a PGP document, the user's own keyring holds a *different* key for a participant than the creator's invitation named. Fields: `documentId`, `address`, `creatorSent`, `inYourKeyring`. The document keeps using the creator's key; this is the notice, not a refusal. Also served live at `GET /pgp/keys`. |
 | `creator-key-unverified` | warn | email | On joining, the user's own keyring holds no key for the document's creator, so nothing independent backs the invitation. Fields: `documentId`, `creator`, `fingerprint`. |
-| `sent-copy-failed` | warn | email | A frame mail went out, but its copy could not be put into the account's sent folder (SPECIFICATION.md EML-12), so another device of this address will not see it there; a resync still brings it. The send stands and is not retried. Fields: `documentId`, `messageId`, `error`. |
+| `sent-copy-failed` | warn | email | A frame mail went out, but its copy could not be put into the account's sent folder (bindings/email.md EML-12), so another device of this address will not see it there; a resync still brings it. The send stands and is not retried. Fields: `documentId`, `messageId`, `error`. |
 | `key-comparison-failed` | warn | email | Comparing the creator's keys with the user's keyring failed after a successful join (the join stands). Fields: `documentId`, `error`. |
-| `attachment-unavailable` | warn | matrix, signal | A frame sent as a media file or a Signal attachment (SPECIFICATION.md BRG-14) could not be downloaded, and for a reason that will not pass (the file is gone, forbidden, or the request was refused); the frame is dropped, which loss detection treats as a lost message. Field: `status`. Neither the file's address nor a key is ever logged. |
+| `attachment-unavailable` | warn | matrix, signal | A frame sent as a media file or a Signal attachment (bindings/bridges.md BRG-14) could not be downloaded, and for a reason that will not pass (the file is gone, forbidden, or the request was refused); the frame is dropped, which loss detection treats as a lost message. Field: `status`. Neither the file's address nor a key is ever logged. |
 | `attachment-rejected` | warn | matrix, signal | A downloaded media file was not what its event said and was dropped: `reason` is `too-large`, `size-mismatch`, `hash-mismatch` (altered or swapped) or `malformed` (an unusable key or IV). Field: `reason` (for Signal also `not-one-attachment`, `malformed`). |
 | `attachment-given-up` | warn | matrix | A download that kept failing transiently (rate limit, timeout, server error, network) was abandoned after eight tries. Field: `attempts`. |
 | `attachment-failed` | warn | signal | Reading a received attachment failed in a way nothing anticipated; the frame is dropped. Field: `error`. |
@@ -94,7 +94,7 @@ reader should be assumed to learn.
 ## What this is not
 
 - **Not a user-facing surface.** What an application shows is served by each
-  bridge's `GET /channels/:documentId/integrity-log` (SPECIFICATION.md BRG-15); the
+  bridge's `GET /channels/:documentId/integrity-log` (bindings/bridges.md BRG-15); the
   log is for whoever runs the bridge.
 - **Not tamper-evident.** A plain file, written by the process it describes; a
   compromised bridge or a same-user process can alter it (the same-OS-user

@@ -37,7 +37,7 @@ import { createSyncState, type SyncState } from "./sync-state.ts";
 import { transportProfileFor } from "./transport-profile.ts";
 
 /**
- * The Matrix bridge's local HTTP interface (SPECIFICATION.md §12.6) — a standalone Node
+ * The Matrix bridge's local HTTP interface (bindings/local-bridge-interface.md §12.6) — a standalone Node
  * process, never bundled, that owns the account's access token and the Olm/Megolm crypto
  * store so the browser (through `packages/messenger-matrix`) never has to. Plain
  * `node:http` request/response, no framework dependency and no SSE/WebSocket, like
@@ -55,7 +55,7 @@ import { transportProfileFor } from "./transport-profile.ts";
  * suites exercise the real implementations against a local Synapse.
  */
 /**
- * `id` here is the wire field for the `GET /channels` listing (SPECIFICATION.md §12.6).
+ * `id` here is the wire field for the `GET /channels` listing (bindings/local-bridge-interface.md §12.6).
  * `matrix-api.ts`'s own `getRoomSummary` calls it `roomId`, the Matrix Client-Server API's
  * vocabulary, not this bridge's wire contract; only the boundary remaps the field.
  */
@@ -318,7 +318,7 @@ function deliveryToJson(delivery: Delivery): unknown {
 }
 
 interface BindRequestBody {
-  // channelId, as in every bridge's bind body (SPECIFICATION.md §12.6).
+  // channelId, as in every bridge's bind body (bindings/local-bridge-interface.md §12.6).
   channelId?: unknown;
   creator?: unknown;
   profile?: unknown;
@@ -352,7 +352,7 @@ export function createServer(deps: ServerDependencies): Server {
     // A browser application is served from a different origin (its own port)
     // than this bridge, so every response needs CORS headers or the browser
     // silently discards them — `fetch()` fails with "Failed to fetch" and no
-    // server-side symptom at all (SPECIFICATION.md LBI-3).
+    // server-side symptom at all (bindings/local-bridge-interface.md LBI-3).
     //
     // Not `*`: the bridge has no authentication of its own, which is exactly
     // what makes the origin load-bearing. With `*`, any website the person
@@ -404,7 +404,7 @@ export function createServer(deps: ServerDependencies): Server {
       return;
     }
 
-    // Not part of SPECIFICATION.md §12.6: this bridge's own device and its public Ed25519 key,
+    // Not part of bindings/local-bridge-interface.md §12.6: this bridge's own device and its public Ed25519 key,
     // for confirming the device with the account's cross-signing identity.
     if (method === "GET" && path === "/device") {
       if (deps.ownDevice === undefined) {
@@ -558,7 +558,7 @@ export function createServer(deps: ServerDependencies): Server {
       return;
     }
 
-    // SPECIFICATION.md BRG-15, like bridges/email-bridge's own /integrity-log
+    // bindings/bridges.md BRG-15, like bridges/email-bridge's own /integrity-log
     // route: polls first (a violation only exists once the event that
     // caused it has been fetched and judged), diagnostic, not part of
     // MessengerPort.

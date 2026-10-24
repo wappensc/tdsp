@@ -72,7 +72,7 @@ const KEY_ME = "E".repeat(40);
 
 /**
  * What an accepted invitation leaves behind for a PGP-enabled document
- * (SPECIFICATION.md EML-4): a pin for every participant, the fingerprint this
+ * (bindings/email.md EML-4): a pin for every participant, the fingerprint this
  * bridge signs with, and a keyring of the document's own holding exactly the
  * pinned keys — here a real file, written through the fake.
  */
@@ -743,7 +743,7 @@ describe("bridges/email-bridge server: PGP and identity", () => {
     });
   });
 
-  describe("PGP-enabled thread joining (SPECIFICATION.md EML-4)", () => {
+  describe("PGP-enabled thread joining (bindings/email.md EML-4)", () => {
     /**
      * The whole invitation flow across two fake keyrings: Alice's bridge (a
      * `createInvite` over her own keyring) produces the email, Bob's server
@@ -1109,7 +1109,7 @@ describe("bridges/email-bridge server: PGP and identity", () => {
     });
   });
 
-  describe("GET /pgp/keys (SPECIFICATION.md EML-4)", () => {
+  describe("GET /pgp/keys (bindings/email.md EML-4)", () => {
     let gpg: FakeGpgInvoker;
 
     function bindPgpDoc(overrides: Partial<Parameters<typeof setBindRecord>[2]> = {}) {

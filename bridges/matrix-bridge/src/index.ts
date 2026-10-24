@@ -65,7 +65,7 @@ const server = createServer({
     : { ownDevice: { deviceId: crypto.deviceId, ed25519: crypto.ed25519 } }),
 });
 
-// 127.0.0.1 explicitly (SPECIFICATION.md LBI-1), not the default all-interfaces
+// 127.0.0.1 explicitly (bindings/local-bridge-interface.md LBI-1), not the default all-interfaces
 // bind. This process holds a real Matrix access token and answers
 // unauthenticated requests; without the host argument it would be reachable
 // from every device on the same network. (Verified: no host argument binds

@@ -1,6 +1,6 @@
 /**
  * Is this address this machine? The one check behind the promise that this implementation
- * opens no external network connection (SPECIFICATION.md §12.6, the local bridge
+ * opens no external network connection (bindings/local-bridge-interface.md §12.6, the local bridge
  * interface; docs/network-policy.md): an adapter dials only a bridge on this machine, a bridge lets
  * only a page from this machine read its answers, and the email bridge speaks plaintext
  * only to a mail server on this machine.

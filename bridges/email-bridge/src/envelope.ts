@@ -1,7 +1,7 @@
 import { jsonTextTooDeep } from "@tdsp/messenger-port";
 
 /**
- * The `{tdsp:1, kind, documentId, ...}` JSON envelope (SPECIFICATION.md §13.1,
+ * The `{tdsp:1, kind, documentId, ...}` JSON envelope (bindings/bridges.md §13.1,
  * the same field names as the Matrix and Signal bridges' envelopes) carried as
  * an email's plain-text body, plus the mail-specific framing around it (§13.4):
  * a `Subject` built from the opaque `documentId` only — never a document title —
@@ -19,7 +19,7 @@ import { jsonTextTooDeep } from "@tdsp/messenger-port";
 
 /**
  * One kind, and only one, named `"frame"` because it carries every frame
- * kind, not only edits (SPECIFICATION.md §13.1). Membership changes, the
+ * kind, not only edits (bindings/bridges.md §13.1). Membership changes, the
  * close of a document and resync requests are frames inside this envelope's
  * opaque `frame`, opaque to this bridge like everything else it routes.
  */
@@ -33,7 +33,7 @@ export interface EmailEnvelope {
 }
 
 /**
- * The creator's invitation to a PGP-enabled document (SPECIFICATION.md EML-4),
+ * The creator's invitation to a PGP-enabled document (bindings/email.md EML-4),
  * the plaintext of the one signed-and-encrypted block in the thread's first
  * email. It is *not* an {@link EmailEnvelope}: it is read once, when a
  * participant joins, and never as a protocol message — `decodeEnvelope` does
@@ -203,7 +203,7 @@ export function encodeEnvelope(envelope: EmailEnvelope): string {
  */
 /**
  * A recognisable TDSP envelope of another version in `text` — `tdsp` a number other than 1,
- * `documentId` a string — or `undefined` (SPECIFICATION.md BND-2). Reported for the
+ * `documentId` a string — or `undefined` (bindings/bridges.md BND-2). Reported for the
  * thread's own document and not delivered; anything else that is not an envelope stays silent.
  */
 export function foreignEnvelopeVersion(
@@ -346,7 +346,7 @@ export function canonicalMemberId(address: string): string | undefined {
 }
 
 /**
- * The transport-level recipient check (SPECIFICATION.md EML-2): the sender plus everyone a message was
+ * The transport-level recipient check (bindings/email.md EML-2): the sender plus everyone a message was
  * actually addressed to must together reconstitute exactly `closedSet` —
  * no fewer (someone silently excluded) and no more (someone outside the
  * original participants). PGP/MIME signs the message body, never these
@@ -356,7 +356,7 @@ export function canonicalMemberId(address: string): string | undefined {
  * Addresses are compared case-insensitively (the domain part of an
  * email address always is; the local part technically isn't per RFC
  * 5321; the binding is scoped to providers that treat it as
- * case-insensitive, SPECIFICATION.md EML-10).
+ * case-insensitive, bindings/email.md EML-10).
  */
 export function recipientHeadersMatchClosedSet(
   sender: string,

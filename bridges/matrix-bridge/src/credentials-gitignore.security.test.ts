@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 /**
  * `bridges/signal-bridge/src/credentials-gitignore.security.test.ts`'s pattern:
  * confirms that the access token, the crypto store and the bind-store stay
- * out of git (SPECIFICATION.md §12.1). Runs against paths that
+ * out of git (bindings/bridges.md §12.1). Runs against paths that
  * need not exist on disk — `git check-ignore` only consults
  * `.gitignore`'s patterns.
  */

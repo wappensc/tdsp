@@ -9,7 +9,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
  * **Two shapes of reference**, by whether the room is encrypted, as Matrix specifies for files:
  * - an ordinary room carries the plain file: `{url, size, sha256}` — everything in such a room is
  *   readable by the homeserver anyway, so encrypting the file would protect nothing. `sha256` is
- *   lowercase hex, as in every TDSP binding (SPECIFICATION.md §13); only the encrypted
+ *   lowercase hex, as in every TDSP binding (bindings/bridges.md §13); only the encrypted
  *   file's own `hashes.sha256` below is Matrix's unpadded Base64, because Matrix defines it;
  * - an encrypted room carries an *encrypted file*: the bytes are encrypted here, with AES-256-CTR
  *   under a fresh key, before they leave, and the reference — which holds the key — goes inside the
@@ -249,7 +249,7 @@ export function parseAttachmentRef(raw: unknown): AttachmentRef | undefined {
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /**
- * The frame an attachment carries is the UTF-8 text of a frame (SPECIFICATION.md §13.1);
+ * The frame an attachment carries is the UTF-8 text of a frame (bindings/bridges.md §13.1);
  * bytes that are not valid UTF-8 are no frame at all, and are refused rather than decoded lossily.
  */
 export function frameTextOf(bytes: Uint8Array): string {

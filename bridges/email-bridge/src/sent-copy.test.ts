@@ -11,7 +11,7 @@ import { createServer } from "./server.ts";
 import { createSyncState } from "./sync-state.ts";
 
 /**
- * L2: two bridges on one mailbox, as two devices of one address (SPECIFICATION.md EML-12,
+ * L2: two bridges on one mailbox, as two devices of one address (bindings/email.md EML-12,
  * #31). What one sends, the other receives from the copy in the account's sent folder; the
  * other participants receive the mail unchanged. Against a local Greenmail, which files no
  * sent mail of its own and starts without a sent folder: the bridge appends, and creates the

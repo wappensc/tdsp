@@ -39,7 +39,7 @@ import type { SyncState } from "./sync-state.ts";
 import { transportProfileFor } from "./transport-profile.ts";
 
 /**
- * The email bridge's local HTTP interface (SPECIFICATION.md §12.6) — a standalone Node
+ * The email bridge's local HTTP interface (bindings/local-bridge-interface.md §12.6) — a standalone Node
  * process, never bundled, that owns the configured mailbox's SMTP/IMAP credentials so
  * the browser (through `packages/messenger-email`) never has to. Plain `node:http`
  * request/response, no framework dependency and no SSE/WebSocket, like the Matrix and
@@ -146,7 +146,7 @@ type PgpSendPlan =
  * The body of an outbound protocol message: the envelope's JSON as-is for a
  * PGP-off document; for a PGP-enabled one, that same JSON signed with this
  * bridge's own key and encrypted to every other member, through the
- * document's own keyring (SPECIFICATION.md EML-3, EML-4). The single place
+ * document's own keyring (bindings/email.md EML-3, EML-4). The single place
  * signing and encryption happen, so no send route can forget to.
  */
 async function buildEnvelopeText(envelope: EmailEnvelope, plan: PgpSendReady): Promise<string> {
@@ -158,7 +158,7 @@ async function buildEnvelopeText(envelope: EmailEnvelope, plan: PgpSendReady): P
 }
 
 /**
- * The pre-send guard (SPECIFICATION.md EML-3), shared by every route that sends a
+ * The pre-send guard (bindings/email.md EML-3), shared by every route that sends a
  * protocol message, and the place each recipient's *exact key* is decided:
  * that key is the fingerprint pinned for the member from the creator's
  * invitation, and it must be in the **document's own keyring** — never
@@ -205,7 +205,7 @@ async function preparePgpSend(
   const missing: string[] = [];
   const recipientFingerprints: string[] = [];
   // Encrypted to this address's own key too: another device of it opens the copy in the sent
-  // folder (SPECIFICATION.md EML-12).
+  // folder (bindings/email.md EML-12).
   for (const address of bound.recipients) {
     const pinned = bound.pinnedFingerprints[normalizeAddress(address)];
     // Sequential, not Promise.all: keeps this loop from spawning
@@ -359,7 +359,7 @@ export function createServer(deps: ServerDependencies): Server {
         });
         return;
       }
-      // {id}, as every bridge's /whoami answers (SPECIFICATION.md §12.6);
+      // {id}, as every bridge's /whoami answers (bindings/local-bridge-interface.md §12.6);
       // deps.address stays this bridge's own configuration vocabulary.
       sendJson(res, 200, { id: normalizeAddress(deps.address) });
       return;
@@ -554,7 +554,7 @@ export function createServer(deps: ServerDependencies): Server {
             sendJson(res, 400, { error: "policy must be a short policy text if present" });
             return;
           }
-          // MemberIds in their one canonical form (SPECIFICATION.md EML-10): the
+          // MemberIds in their one canonical form (bindings/email.md EML-10): the
           // engine compares bytes, so Alice@Example.org and alice@example.org must never
           // arrive as two people, nor two participants collapse into one unnoticed.
           // Object.assign, not assignment: it keeps what the checks above established.
@@ -702,7 +702,7 @@ export function createServer(deps: ServerDependencies): Server {
             });
             return;
           }
-          // MemberIds in their one canonical form (SPECIFICATION.md EML-10): the
+          // MemberIds in their one canonical form (bindings/email.md EML-10): the
           // engine compares bytes, so Alice@Example.org and alice@example.org must never
           // arrive as two people, nor two participants collapse into one unnoticed.
           // Object.assign, not assignment: it keeps what the checks above established.

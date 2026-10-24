@@ -21,7 +21,7 @@ import type { IntegrityEntry } from "./integrity.ts";
 
 /**
  * The browser-side half of the Matrix adapter — a thin `fetch()` wrapper against
- * `bridges/matrix-bridge`'s local bridge interface (SPECIFICATION.md §12.6), never a
+ * `bridges/matrix-bridge`'s local bridge interface (bindings/local-bridge-interface.md §12.6), never a
  * Matrix client library itself (no `matrix-js-sdk` or crypto WASM in the browser bundle;
  * that all lives in the bridge process). No `node:*` imports, bundleable like every
  * other package here. Every `MessengerPort` method is verified against a real local
@@ -87,7 +87,7 @@ export class MatrixMessengerPort implements MessengerPort {
    * human types in; for Matrix it's this bridge's own fixed account, not
    * something a caller picks). An application calls this once, before any
    * `bind()`/`DocumentEngine.create()`/`.join()`, to learn its own `MemberId`.
-   * Returns `{ id }`, as every bridge's `/whoami` does (SPECIFICATION.md §12.6).
+   * Returns `{ id }`, as every bridge's `/whoami` does (bindings/local-bridge-interface.md §12.6).
    */
   async whoami(): Promise<{ id: MemberId }> {
     const response = await fetch(`${this.#bridgeUrl}/whoami`);
@@ -228,7 +228,7 @@ export class MatrixMessengerPort implements MessengerPort {
     return (await response.json()) as readonly IntegrityEntry[];
   }
 
-  /** `POST /channels/:documentId/send` — `payload` — the frame's JSON text — rides opaque, exactly as `framing.ts`'s own doc comment requires: this class never parses it, only the bridge's envelope carries `documentId` for routing (SPECIFICATION.md §13.1). */
+  /** `POST /channels/:documentId/send` — `payload` — the frame's JSON text — rides opaque, exactly as `framing.ts`'s own doc comment requires: this class never parses it, only the bridge's envelope carries `documentId` for routing (bindings/bridges.md §13.1). */
   async send(documentId: DocumentId, sender: MemberId, payload: string): Promise<DeliveryId> {
     const response = await fetch(
       `${this.#bridgeUrl}/channels/${encodeURIComponent(documentId)}/send`,

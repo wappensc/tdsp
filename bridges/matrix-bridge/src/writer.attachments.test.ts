@@ -22,7 +22,7 @@ const ROOM = "!room:homeserver.test";
 const DOC = "doc-1";
 
 const bytesOf = (length: number, seed = 1): Uint8Array =>
-  // Printable ASCII: the UTF-8 bytes of a frame's text (SPECIFICATION.md §13.1).
+  // Printable ASCII: the UTF-8 bytes of a frame's text (bindings/bridges.md §13.1).
   Uint8Array.from({ length }, (_, i) => 32 + (((i * 2654435761 + seed * 40503) >>> 24) % 95));
 const textOf = (bytes: Uint8Array): string => new TextDecoder().decode(bytes);
 

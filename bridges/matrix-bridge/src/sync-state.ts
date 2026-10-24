@@ -26,7 +26,7 @@ import {
 } from "./matrix-api.ts";
 
 // The one event type this bridge sends and recognizes: every frame kind,
-// resync requests and responses included, rides it (SPECIFICATION.md §13.3).
+// resync requests and responses included, rides it (bindings/matrix.md §13.3).
 export const FRAME_EVENT_TYPE = "de.wappensc.together.tdsp.frame";
 const ENCRYPTED_EVENT_TYPE = "m.room.encrypted";
 const ENCRYPTION_STATE_EVENT_TYPE = "m.room.encryption";
@@ -90,7 +90,7 @@ function isReplaceRelation(content: unknown): boolean {
 
 /**
  * What a protocol event carries: the frame inline (`frame`, its JSON text as a string), or — for a frame too large
- * for an event body — a reference to a media file holding it (`attachment`, SPECIFICATION.md §13.3).
+ * for an event body — a reference to a media file holding it (`attachment`, bindings/matrix.md §13.3).
  * Exactly one of the two; anything else is not a protocol event.
  */
 type FrameEnvelope =
@@ -99,7 +99,7 @@ type FrameEnvelope =
 
 /**
  * A recognisable TDSP envelope of another version — `tdsp` a number other than 1, `documentId`
- * a string — or `undefined` (SPECIFICATION.md BND-2). Such an envelope for a bound
+ * a string — or `undefined` (bindings/bridges.md BND-2). Such an envelope for a bound
  * document is reported and not delivered; anything else that is not an envelope stays silent.
  */
 function foreignEnvelopeVersion(
@@ -168,7 +168,7 @@ interface LogicalEvent {
  * call"; `document-protocol`'s own `#seenDeliveryIds` already dedups,
  * exactly as it does for the mock and for Signal's own equivalent buffer).
  *
- * **Routes and carries bytes, nothing more** (SPECIFICATION.md §12.5): an
+ * **Routes and carries bytes, nothing more** (bindings/bridges.md §12.5): an
  * event for a bound document becomes a `Delivery` — one stream, since a
  * resync request is an ordinary frame inside `Delivery.payload` — and this
  * module never writes the bind-store. It checks no creator, permission or
@@ -212,7 +212,7 @@ interface LogicalEvent {
 export interface SyncState {
   pollOnce(): Promise<void>;
   getDeliveries(documentId: DocumentId): readonly Delivery[];
-  /** SPECIFICATION.md BRG-12, BRG-15 — every edit/redaction this bridge caught and refused to apply for `documentId`, oldest first. */
+  /** bindings/bridges.md BRG-12, BRG-15 — every edit/redaction this bridge caught and refused to apply for `documentId`, oldest first. */
   getIntegrityLog(documentId: DocumentId): readonly IntegrityEntry[];
 }
 

@@ -57,7 +57,7 @@ let txnCounter = 0;
 
 /**
  * `POST /_matrix/media/v3/upload` — stores `bytes` in the homeserver's media repository and
- * returns its `mxc://` URI (for attachments, SPECIFICATION.md §13.3). Still the current upload endpoint under
+ * returns its `mxc://` URI (for attachments, bindings/matrix.md §13.3). Still the current upload endpoint under
  * authenticated media; only the *download* moved.
  */
 export async function uploadMedia(

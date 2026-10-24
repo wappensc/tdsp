@@ -4,7 +4,7 @@ import { readLinkedAccount } from "./account-store.ts";
 /**
  * Auth/link state, exposed to the browser only as non-secret facts: the browser
  * never reads credentials; it only calls the bridge's local interface and learns
- * non-secret facts (SPECIFICATION.md §12.1).
+ * non-secret facts (bindings/bridges.md §12.1).
  */
 export interface AuthStatus {
   linked: boolean;

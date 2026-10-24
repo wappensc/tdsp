@@ -21,7 +21,7 @@ import type { IntegrityEntry } from "./integrity.ts";
 
 /**
  * The browser-side half of the Signal adapter — a thin `fetch()` wrapper
- * against `bridges/signal-bridge`'s local bridge interface (SPECIFICATION.md §12.6),
+ * against `bridges/signal-bridge`'s local bridge interface (bindings/local-bridge-interface.md §12.6),
  * never `signal-cli` or any Signal library itself (that all lives in the
  * bridge process, behind a Unix socket this package never touches). Zero
  * `node:*` imports, Vite-bundleable like every other `packages/*`,
@@ -78,7 +78,7 @@ export class SignalMessengerPort implements MessengerPort {
    * Adapter-specific, like {@link bind} — this bridge's own `MemberId` is
    * its linked account's ACI, never something a caller picks. Mirrors
    * `MatrixMessengerPort.whoami`, and every bridge's `/whoami` answers the
-   * same shape, `{id}` (SPECIFICATION.md §12.6).
+   * same shape, `{id}` (bindings/local-bridge-interface.md §12.6).
    */
   async whoami(): Promise<{ id: MemberId }> {
     const response = await fetch(`${this.#bridgeUrl}/whoami`);

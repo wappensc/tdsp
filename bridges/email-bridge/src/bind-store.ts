@@ -10,7 +10,7 @@ import { dirname } from "node:path";
  * email has no pre-existing channel to attach to.
  *
  * `recipients` is the document's permanently closed distribution list
- * (the closed participant set, SPECIFICATION.md §13.4) — fixed at
+ * (the closed participant set, bindings/email.md §13.4) — fixed at
  * `startThread` and never mutated afterward, in either direction.
  *
  * No permission, archived or deleted state: membership and the
@@ -31,7 +31,7 @@ export interface BindRecord {
   /**
    * Per-member *primary-key* fingerprint, keyed by normalized address — the
    * identity every message of a PGP-enabled document is checked against
-   * (SPECIFICATION.md EML-3). A valid signature only proves
+   * (bindings/email.md EML-3). A valid signature only proves
    * "some key I have imported signed this"; it says nothing about whether
    * that key belongs to the address in the `From:` header, which anyone can
    * forge. Comparing the verified signer's fingerprint with the one recorded

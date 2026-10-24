@@ -190,7 +190,7 @@ export interface GpgInvoker {
    * address, or a 40-hex-digit fingerprint, which is what a document
    * uses so that it signs with the very key its participants were told about
    * (`--local-user`) — and encrypts it to every key in `recipientFingerprints`
-   * (SPECIFICATION.md EML-3), returning ASCII-armored OpenPGP. Recipients are
+   * (bindings/email.md EML-3), returning ASCII-armored OpenPGP. Recipients are
    * **fingerprints, never addresses**: the caller resolves who a member is
    * (their pinned fingerprint, else exactly one keyring match) so that
    * encryption can never quietly pick a different key that merely carries a

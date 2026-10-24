@@ -20,7 +20,7 @@ import type { IncomingMail, MailReceiver } from "./mail-transport.ts";
 
 /**
  * L0 — the creator's invitation and a participant's acceptance of it
- * (SPECIFICATION.md EML-4), with `FakeGpgInvoker` standing in for `gpg`. The
+ * (bindings/email.md EML-4), with `FakeGpgInvoker` standing in for `gpg`. The
  * real thing — real keys, real armor, a real mailbox — is exercised by
  * `keyring-gpg.security.test.ts` (the keyring mechanics) and `pgp-live.security.test.ts` (the
  * whole flow through Greenmail); what only this level can do is hand a
@@ -55,7 +55,7 @@ class FakeMailReceiver implements MailReceiver {
   }
 }
 
-describe("createInvite / acceptInvite (SPECIFICATION.md EML-4)", () => {
+describe("createInvite / acceptInvite (bindings/email.md EML-4)", () => {
   let tempDir: string;
   let creatorStore: string;
   let joinerStore: string;

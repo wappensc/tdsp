@@ -89,7 +89,7 @@ class FakeSyncState implements SyncState {
 }
 
 /**
- * Which web pages may read the bridge's answers (SPECIFICATION.md LBI-3): only a page served
+ * Which web pages may read the bridge's answers (bindings/local-bridge-interface.md LBI-3): only a page served
  * from this machine. Security tests: only the CI role may change this file
  * (.github/CODEOWNERS, CONTRIBUTING.md).
  */

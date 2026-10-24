@@ -179,7 +179,7 @@ tunnel, never directly.
 #### Two devices of one account
 
 `l4-own-devices.test.ts` checks that what one device of an account sends reaches the
-account's other device (SPECIFICATION.md SIG-3). It needs a second bridge linked to the
+account's other device (bindings/signal.md SIG-3). It needs a second bridge linked to the
 **same** account as `L4_SIGNAL_BRIDGE_A`: start one more bridge with a port and a data
 directory of its own, and link it with `pnpm run signal:link` from the same phone. Then:
 

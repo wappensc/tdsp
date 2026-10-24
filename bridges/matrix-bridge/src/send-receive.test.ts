@@ -104,7 +104,7 @@ describe.skipIf(!available)(
       bobUrl = `http://127.0.0.1:${(bobServer.address() as AddressInfo).port}`;
 
       // Both bind to the same real room, same documentId — this is the
-      // "many documents/members -> one room" model (SPECIFICATION.md §12.2),
+      // "many documents/members -> one room" model (bindings/bridges.md §12.2),
       // exercised for real, not just asserted in prose.
       for (const [url, memberId] of [
         [aliceUrl, accounts.alice.userId],

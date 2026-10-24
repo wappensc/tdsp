@@ -208,7 +208,7 @@ describe("parseTransportProfile (SPECIFICATION.md §3.5, TRN-13)", () => {
   });
 });
 
-describe("retainNewest (SPECIFICATION.md BRG-17)", () => {
+describe("retainNewest (bindings/bridges.md BRG-17)", () => {
   const delivery = (id: string, chars: number): Delivery => ({
     id,
     documentId: "doc-1",

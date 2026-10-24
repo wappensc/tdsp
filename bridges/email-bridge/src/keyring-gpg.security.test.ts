@@ -19,7 +19,7 @@ const CAROL = "carol@example.org";
 const PAYLOAD = JSON.stringify({ tdsp: 1, kind: "invite", documentId: "doc-1" });
 
 /**
- * Real `gpg`: the per-document keyring (SPECIFICATION.md EML-4) (`GpgInvoker.withKeyring`).
+ * Real `gpg`: the per-document keyring (bindings/email.md EML-4) (`GpgInvoker.withKeyring`).
  * What the whole key-distribution design rests on — that a bridge-owned public
  * keyring can be used to sign, encrypt, decrypt and verify with a secret key
  * that lives in the user's home, without ever reading a public key from, or

@@ -19,7 +19,7 @@ import { type MatrixApiConfig, sendEvent, uploadMedia } from "./matrix-api.ts";
 import { createLiveServerDependencies, createServer } from "./server.ts";
 
 /**
- * Attachments (SPECIFICATION.md §13.3), live against a local Synapse: a frame too large for an event body goes
+ * Attachments (bindings/matrix.md §13.3), live against a local Synapse: a frame too large for an event body goes
  * up as a media file and the event carries a reference, and the other bridge downloads it, checks it
  * and hands it on as an ordinary delivery — in an ordinary room and in an encrypted one, where the
  * file is encrypted before it leaves and its key travels only inside the Megolm-encrypted event.

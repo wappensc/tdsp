@@ -7,7 +7,7 @@ import type { CryptoMachine } from "./crypto-machine.ts";
 import { createSyncState, type SyncState } from "./sync-state.ts";
 
 /**
- * SPECIFICATION.md BRG-12: a bridge must never apply, and must record as an
+ * bindings/bridges.md BRG-12: a bridge must never apply, and must record as an
  * integrity violation, a messenger-native edit or withdrawal of an
  * already-delivered message. These are adversarial tests against a fake
  * `/sync` transport, built from what a real local Synapse delivers for

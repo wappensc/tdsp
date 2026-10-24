@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 /**
- * The local `documentId ↔ groupId` bind-store (SPECIFICATION.md §12.2) — the
+ * The local `documentId ↔ groupId` bind-store (bindings/bridges.md §12.2) — the
  * same mechanism `bridges/matrix-bridge/src/bind-store.ts` uses for `roomId`. The **only**
  * place document metadata is ever persisted for this adapter — never
  * inside the Signal group itself, which carries no concept of document

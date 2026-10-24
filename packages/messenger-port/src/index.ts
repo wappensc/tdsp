@@ -39,7 +39,7 @@ export type ResyncRequestId = string;
 export type Permission = "read" | "write" | "creator";
 
 /**
- * Severity for a receive-side integrity-log entry (SPECIFICATION.md BRG-12: a
+ * Severity for a receive-side integrity-log entry (bindings/bridges.md BRG-12: a
  * messenger-native edit or withdrawal of an already-delivered message is recorded, never
  * applied). Shared vocabulary each adapter's own reason union plugs into — `"alert"` for
  * what looks like a deliberate attempt to break the document's rules, `"warning"` for a

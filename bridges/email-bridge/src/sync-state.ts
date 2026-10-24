@@ -19,7 +19,7 @@ import type { IncomingMail, MailReceiver } from "./mail-transport.ts";
 
 /**
  * Why an inbound message was rejected instead of applied. Recorded, never just
- * dropped (SPECIFICATION.md BRG-15): kept in memory, served at
+ * dropped (bindings/bridges.md BRG-15): kept in memory, served at
  * `GET /channels/:documentId/integrity-log` for an application to show, and
  * logged.
  */
@@ -40,7 +40,7 @@ export type RejectionReason =
   | "pgp-unavailable"
   /** A PGP-protected message arrived for a document this bridge has PGP switched off for — a setting mismatch between participants, not something to guess around. */
   | "pgp-disabled-locally"
-  /** A second, distinct message arrived reusing an already-seen `Message-ID` with different text — an attempted messenger-native edit or withdrawal (SPECIFICATION.md BRG-12). Never applied; an identical repeat (an ordinary IMAP re-read) is not this reason. */
+  /** A second, distinct message arrived reusing an already-seen `Message-ID` with different text — an attempted messenger-native edit or withdrawal (bindings/bridges.md BRG-12). Never applied; an identical repeat (an ordinary IMAP re-read) is not this reason. */
   | "message-id-reused"
   /** Larger than the bridge reads (BRG-13, `MAX_INCOMING_MAIL_BYTES`): never parsed, decrypted or applied. */
   | "message-too-large";
@@ -61,7 +61,7 @@ export interface Rejection {
  * document at a time.
  *
  * Every inbound message runs two independent integrity checks before
- * anything is surfaced as a `Delivery` (SPECIFICATION.md EML-2, EML-3). Beyond
+ * anything is surfaced as a `Delivery` (bindings/email.md EML-2, EML-3). Beyond
  * those checks this module only routes: membership, the document's lifecycle and
  * resync requests are frames inside the opaque payload, read and enforced by
  * `document-protocol`, so nothing here writes the bind-store or checks a creator:
@@ -224,7 +224,7 @@ export function createSyncState(
       return; // this bridge never started this thread — silently ignored
     }
 
-    // SPECIFICATION.md BRG-12: IMAP
+    // bindings/bridges.md BRG-12: IMAP
     // re-reads the same mailbox on every poll, so a repeated Message-ID is
     // ordinarily benign — the same bytes, seen again. A repeat carrying
     // *different* text is the resend-under-an-existing-Message-ID case the

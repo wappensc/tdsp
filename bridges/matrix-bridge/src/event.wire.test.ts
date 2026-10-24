@@ -7,7 +7,7 @@ import { FRAME_EVENT_TYPE, readFrameEnvelope } from "./sync-state.ts";
 
 /**
  * The Matrix binding's wire, frozen (docs/testing.md, "Wire compatibility";
- * SPECIFICATION.md §13.3): the room event the bridge sends for a frame — its type, and its
+ * bindings/matrix.md §13.3): the room event the bridge sends for a frame — its type, and its
  * content with the frame inline up to the body limit or as a media file above it — and how it
  * reads that content back. In an encrypted room this same content is what Megolm encrypts. A
  * difference is a wire change only the CI role may accept (tools/wire-lock.ts). Only the CI

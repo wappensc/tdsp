@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 /**
  * Confirms, rather than assumes, that credential and configuration storage
- * stays out of git (SPECIFICATION.md §12.1). Runs against paths that need not
+ * stays out of git (bindings/bridges.md §12.1). Runs against paths that need not
  * exist on disk — `git check-ignore` only consults .gitignore's patterns, so
  * this passes on a fresh clone with no bridges/signal-bridge/.env or
  * credentials/ present.

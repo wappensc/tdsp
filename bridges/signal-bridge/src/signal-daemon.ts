@@ -93,7 +93,7 @@ export class SignalRpcError extends Error {
  * not a separate stream; `#handleLine` hands them to `onNotification` handlers.
  */
 /**
- * The longest JSON-RPC line read from `signal-cli` (SPECIFICATION.md BRG-14): a 4 MiB
+ * The longest JSON-RPC line read from `signal-cli` (bindings/bridges.md BRG-14): a 4 MiB
  * attachment is about 5.6 Mi characters of Base64, and nothing else it sends comes near. The
  * bridge checks an attachment's file size before asking for it; this bounds what it buffers in
  * case the answer is larger anyway, rather than trusting `signal-cli` to keep it small. Checked

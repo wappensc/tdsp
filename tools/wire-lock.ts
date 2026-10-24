@@ -49,8 +49,9 @@ export const WIRE_SECTIONS = [
 ] as const;
 
 /**
- * Documents locked whole: the messenger bindings, once they are documents of their own
- * (SPECIFICATION.md §13). Their requirements are wire as much as a section is.
+ * Documents locked whole: the bridges and the messenger bindings, documents of their own in
+ * bindings/ (the local bridge interface, not stable yet, excepted). Their requirements are wire
+ * as much as a section is.
  */
 export const WIRE_DOCUMENTS: readonly string[] = [
   "bindings/bridges.md",

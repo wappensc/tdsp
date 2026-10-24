@@ -50,13 +50,13 @@ export {
 
 /**
  * The browser-side half of the email adapter — a thin `fetch()` wrapper against
- * `bridges/email-bridge`'s local bridge interface (SPECIFICATION.md §12.6), never an
+ * `bridges/email-bridge`'s local bridge interface (bindings/local-bridge-interface.md §12.6), never an
  * SMTP/IMAP client or `gpg` itself (both live in the bridge process). No `node:*`
  * imports, bundleable like every other package here, and shaped like the Matrix and
  * Signal adapters as far as email's real differences allow.
  *
  * Two structural differences from those adapters, both following from email itself
- * (SPECIFICATION.md §13.4):
+ * (bindings/email.md §13.4):
  *
  * - {@link startThread} *creates* a fresh thread for a set of individually chosen
  *   participants; it never binds to an existing channel the way the Matrix and Signal
@@ -79,7 +79,7 @@ export class EmailMessengerPort implements MessengerPort {
    * {@link startThread} already records this server-side, so
    * `createDocument` needs no further bridge call. Also doubles as this
    * port instance's own record of `documentId`'s permanently closed
-   * recipient list (the closed participant set, SPECIFICATION.md §13.4), though
+   * recipient list (the closed participant set, bindings/email.md §13.4), though
    * the bridge, not this class, is what actually enforces it.
    */
   readonly #createdThreads = new Map<
@@ -166,7 +166,7 @@ export class EmailMessengerPort implements MessengerPort {
    * creator's own `startThread()` call already sent the one invite email).
    *
    * **For a PGP-enabled document this reads and verifies the creator's
-   * invitation** (SPECIFICATION.md EML-4, EML-5, EML-8): the bridge fetches the email named by
+   * invitation** (bindings/email.md EML-4, EML-5, EML-8): the bridge fetches the email named by
    * `threadRootMessageId` from this user's own mailbox, opens the signed and
    * encrypted block in it, and takes the document's participants and every
    * participant's key from *that* — `recipients`, `creator` and
@@ -254,7 +254,7 @@ export class EmailMessengerPort implements MessengerPort {
    * Adapter-specific, like {@link startThread} — this bridge's own
    * `MemberId` is the configured mailbox's own address, never something
    * a caller picks. Returns `{ id }`, as every bridge's `/whoami` does
-   * (SPECIFICATION.md §12.6).
+   * (bindings/local-bridge-interface.md §12.6).
    */
   async whoami(): Promise<{ id: MemberId }> {
     const response = await fetch(`${this.#bridgeUrl}/whoami`);
@@ -289,7 +289,7 @@ export class EmailMessengerPort implements MessengerPort {
 
   /**
    * Adapter-specific — the keys a PGP document uses, and where the user's own
-   * keyring disagrees with them (SPECIFICATION.md EML-4, EML-8). Every participant's
+   * keyring disagrees with them (bindings/email.md EML-4, EML-8). Every participant's
    * fingerprint is the one the *creator's invitation* gave, which is what every
    * message of the document is signed and encrypted with; each comes with how it
    * compares with the key the user's own keyring holds for that address, so a
@@ -363,7 +363,7 @@ export class EmailMessengerPort implements MessengerPort {
   }
 
   /**
-   * **Capability gap, not merely unimplemented** (SPECIFICATION.md §13.4): email
+   * **Capability gap, not merely unimplemented** (bindings/email.md §13.4): email
    * has no listable, pre-existing channel the way a Matrix room or Signal group is —
    * every document creates its own fresh thread ({@link startThread}), so there is
    * nothing for a picker to list. Always empty, and an application should skip the

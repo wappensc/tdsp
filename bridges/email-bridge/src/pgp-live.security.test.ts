@@ -539,7 +539,7 @@ describe.skipIf(!available)("PGP-enabled documents, live (Greenmail + real gpg)"
   /**
    * A difference between the creator's key for someone and the joiner's own keyring is a
    * warning, not a wall — except for the creator's own key, the one independent check a
-   * joiner has on the invitation (SPECIFICATION.md EML-8): then the join is refused. Here Bob's keyring holds only an
+   * joiner has on the invitation (bindings/email.md EML-8): then the join is refused. Here Bob's keyring holds only an
    * impostor's key for Alice's address, and the invitation carries the real one — which Bob
    * cannot tell from the reverse, a forged invitation against his correct key.
    */

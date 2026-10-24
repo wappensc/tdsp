@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SocketRpcClient } from "./signal-daemon.ts";
 
 /**
- * SPECIFICATION.md BRG-14: what the bridge buffers of one answer from `signal-cli` is
+ * bindings/bridges.md BRG-14: what the bridge buffers of one answer from `signal-cli` is
  * bounded, whatever `signal-cli` sends — checked over a real Unix socket with a stand-in daemon.
  */
 describe("SocketRpcClient's bound on one line from signal-cli (BRG-14)", () => {
