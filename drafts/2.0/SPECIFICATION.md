@@ -3243,37 +3243,42 @@ frames it carries, and a change to one document needs no new version of another.
   the person can resolve it, by updating one of the two applications.
 - **VER-5** · *all* — A revision that defines a new value for a member's
   permission or for a right on a layer (VER-2) MUST define the capabilities each
-  value grants — on a layer, for every permission on the document — and a merge
-  of concurrent values (CTL-23, CTL-24) with these properties, for every
-  permission on the document: the merge grants no capability that one of the
-  merged values withholds — exactly the capabilities they all grant, where some
-  value grants exactly those, and otherwise a narrower set the revision names —;
-  it is commutative, associative and idempotent; a decision made in knowledge of
-  another still supersedes it, wider or not (CTL-22), which is no merge; and a
-  permission on the document that is revoked leaves no right on any layer
-  (LAY-5). It MUST keep older implementations from taking the new value for
-  `write` or for inherit: as an incompatible change (VER-1, VER-3), or with a
-  rule by which a creator's device issues the value only once it knows that
-  every participant's engine reads it.
+  value grants — on a layer, for every permission on the document — and a merge of
+  concurrent values (CTL-23, CTL-24) with these properties, for every permission on
+  the document:
+  - the merge grants no capability that one of the merged values withholds —
+    exactly the capabilities they all grant, where some value grants exactly those,
+    and otherwise a narrower set the revision names;
+  - it is commutative, associative and idempotent;
+  - a decision made in knowledge of another still supersedes it, wider or not
+    (CTL-22), which is no merge;
+  - a permission on the document that is revoked leaves no right on any layer
+    (LAY-5).
+
   *Rationale:* of two concurrent decisions of the creator's devices, no more may
-  hold than one of them wanted (CTL-23). Today the values are ordered — revoked,
-  `read`, `write`; `read`, inherit, `write` on a layer —, and the narrowest of
-  them grants exactly what every one grants, whatever the permission on the
-  document. A later right may not fit an order: "comment only" and "edit the text
-  but not comment" each withhold what the other grants, and ranking one below the
-  other would grant one of them more than its device wanted. Capabilities and
-  their intersection say it for any set of rights. An older engine refuses a value
-  it does not know (VER-2, FRM-6) and so takes nothing from it, but it also holds
-  nothing of the decision, which a participant that reads it holds: the two then
-  enforce different rights, unless the value waits until everyone reads it or the
-  version says that they cannot work together.
+  hold than one of them wanted (CTL-23). In this version the values are ordered —
+  revoked, `read`, `write`; `read`, inherit, `write` on a layer —, and the
+  narrowest of them grants exactly what every one grants, whatever the permission
+  on the document. A later right may not fit an order: "comment only" and "edit the
+  text but not comment" each withhold what the other grants, and ranking one below
+  the other would grant one of them more than its device wanted. Capabilities and
+  their intersection say it for any set of rights.
+- **VER-6** · *all* — A revision that defines such a value (VER-5) MUST keep older
+  implementations from taking it for `write` or for inherit: as an incompatible
+  change (VER-1, VER-3), or with a rule by which a creator's device issues the
+  value only once it knows that every participant's engine reads it.
+  *Rationale:* an older engine refuses a value it does not know (VER-2, FRM-6) and
+  so takes nothing from it, but it also holds nothing of the decision, which a
+  participant that reads it holds: the two then enforce different rights, unless
+  the value waits until everyone reads it or the version says that they cannot
+  work together.
 
 A compatible addition — a new frame kind that older engines may reject as
 `unknown-kind` without harm to the document, a new profile, or an extension field
 older engines ignore (FRM-9) — does not increment a version, but needs a revision
 of this specification (or, for a profile or an extension, its own definition,
-FRM-12) that states why older implementations are unaffected. An extension that older
-engines must not ignore is named in `crit` (FRM-10).
+FRM-12) that states why older implementations are unaffected. An extension that
+older engines must not ignore is named in `crit` (FRM-10).
 
 ## 15. Security considerations
 
@@ -3814,7 +3819,8 @@ The changes have six reasons, which the tables below cite by letter:
 | YJS-4 | A receiver applies content YJS-1 forbids, and projects it one way | A CRDT cannot refuse part of the state it converges to, and engines that project it differently disagree about every attribution offset after it. |
 | VER-3 | The draft marker | A draft must never leave frames that a released 2.0 would read as its own. |
 | VER-4 | An application shows whose frames are of another version | VER-1's loud failure reached only the application, and the person saw a silent participant instead. |
-| VER-5 (new) | What a revision that defines a new right must define: capabilities per value, a merge that grants no more than every merged value, commutative, associative and idempotent, decisions in knowledge of others superseding, revocation first, and how older implementations are kept from reading it as `write` or inherit | An outside review of draft 3: a third right was not to be invented now, but the rules any later one must keep were to be laid down; a total order does not fit every model. |
+| VER-5 (new, with VER-6) | What a revision that defines a new right must define: capabilities per value, a merge that grants no more than every merged value, commutative, associative and idempotent, decisions in knowledge of others superseding, revocation first, and how older implementations are kept from reading it as `write` or inherit | An outside review of draft 3: a third right was not to be invented now, but the rules any later one must keep were to be laid down; a total order does not fit every model. |
+| VER-6 | Part of VER-5 as a requirement of its own: keeping older implementations from taking a new value of a permission or a layer right for `write` or for inherit | Readability: it was a part of a longer requirement, and requires what it did there |
 
 **Moved** into [bindings/](bindings/) (F): §12 (BRG-1 to BRG-17), §12.6 (LBI-1 to
 LBI-6, the routes gaining an optional cursor and instance), §13 (BND-1 to BND-3,
