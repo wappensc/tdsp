@@ -823,7 +823,7 @@ digits, chosen at random by an engine each time it starts (LOS-13).
 - **FRM-5** · *engine* — A sender MUST write exactly the fields its frame's kind
   defines — the common ones, every required one, and an optional one only where
   it has a value — and no other field whose name has no `.`. It MAY add extension
-  fields and `crit` (FRM-9 to FRM-12).
+  fields and `crit` (FRM-9 to FRM-12, FRM-15 to FRM-17).
   *Rationale:* a layout with a single reading of its defined fields is what lets
   two independent implementations interoperate; where something new is needed, an
   extension field says so by its name instead of hiding in an undefined one.
@@ -849,7 +849,7 @@ report — and a test — can tell a version mismatch from a malformed message:
 | `unsupported-version` | `tdsp` is missing or is not 2 |
 | `unknown-kind` | `kind` is not one of §4.2 |
 | `missing-field` | A field the kind requires is absent |
-| `invalid-field` | A field has the wrong type or a value the layout forbids — an integer out of range, Base64 that does not decode, an empty `update`, an `update` or `stateVector` the document's profile does not read as exactly one update or state vector (PRF-1, item 9; bytes after a complete one included), a device tag that is not 22 base64url characters, an unknown `target`, a `value` its target cannot take, a control vector with more than 64 entries, an unknown `reason`, an overlong `text`, a `crit` that is not a list of 1 to 16 distinct names of extensions the frame carries, an answer's `pieces` other than its `piece`, or one without the responder's state or that state without it, a snapshot or overlay that breaks its layout (§5.4, §7.5) — or the frame, a snapshot or an overlay has a field whose name has no `.` and that its layout does not define; or an extension the receiver implements and `crit` names has a value its definition forbids (FRM-10) |
+| `invalid-field` | A field has the wrong type or a value the layout forbids — an integer out of range, Base64 that does not decode, an empty `update`, an `update` or `stateVector` the document's profile does not read as exactly one update or state vector (PRF-1, item 9; bytes after a complete one included), a device tag that is not 22 base64url characters, an unknown `target`, a `value` its target cannot take, a control vector with more than 64 entries, an unknown `reason`, an overlong `text`, a `crit` that is not a list of 1 to 16 distinct names of extensions the frame carries, an answer's `pieces` other than its `piece`, or one without the responder's state or that state without it, a snapshot or overlay that breaks its layout (§5.4, §7.5) — or the frame, a snapshot or an overlay has a field whose name has no `.` and that its layout does not define; or an extension the receiver implements and `crit` names has a value its definition forbids (FRM-16) |
 | `unsupported-extension` | `crit` names an extension the receiver does not implement (FRM-10) |
 | `document-mismatch` | The frame's documentId is not the document the delivery was routed to |
 | `profile-mismatch` | A `resync-response`'s control snapshot that counts for the receiver (CTL-25) names a profile other than the document's (CTL-10) |
@@ -861,7 +861,7 @@ report — and a test — can tell a version mismatch from a malformed message:
   state vector by the document's profile (PRF-1, item 9) — before it applies
   anything of it. An optional part may be absent or `null` where its layout says
   so; one that is present and invalid rejects the frame. This holds for every
-  field the layout defines; an extension field is FRM-9's.
+  field the layout defines; an extension field is FRM-9's and FRM-16's.
   *Rationale:* every best-effort parse is a place where two implementations
   disagree about what a message meant; a document that forks silently is worse
   than one that reports an error.
@@ -892,66 +892,79 @@ report — and a test — can tell a version mismatch from a malformed message:
 - **FRM-9** · *engine* — A field whose name contains `.` is an **extension**. A
   receiver MUST ignore an extension it does not implement — in a frame, a control
   snapshot, a snapshot's target entries and operations, and an attribution overlay
-  alike, wherever a layout names its fields — and MUST NOT let it change how it reads
-  any defined field. The keys of an object whose keys are data are not field names:
-  a snapshot's `targets`, a control vector and an overlay's `lastEditBySender` are
-  keyed by targets, device tags and MemberIds, and a target such as
-  `member:@bob:example.org` is a target, not an extension, though it contains `.`.
-  An extension's name SHOULD begin with a reverse domain name its definer controls
-  and end with `/` and its major version, such as `com.example.mood/1`: a change that
-  implementations of the extension would misread takes the next major version, which
-  is another extension, and a sender MAY carry both while receivers move over.
+  alike, wherever a layout names its fields — and MUST NOT let it change how it
+  reads any defined field. The keys of an object whose keys are data are not field
+  names: a snapshot's `targets`, a control vector and an overlay's
+  `lastEditBySender` are keyed by targets, device tags and MemberIds, and a target
+  such as `member:@bob:example.org` is a target, not an extension, though it
+  contains `.`.
   *Rationale:* closed layouts make every addition a wire break, and a protocol that
   can grow only by major version collects wishes until the break is big enough. A
   name with `.` cannot collide with a field this specification defines, which never
-  has one (also for invitations, INV-6); the version in the name lets an extension
-  break with itself without a version field of its own.
+  has one (also for invitations, INV-6).
+- **FRM-15** · *engine* — An extension's name (FRM-9) SHOULD begin with a reverse
+  domain name its definer controls and end with `/` and its major version, such as
+  `com.example.mood/1`: a change that implementations of the extension would
+  misread takes the next major version, which is another extension, and a sender
+  MAY carry both while receivers move over.
+  *Rationale:* the version in the name lets an extension break with itself without
+  a version field of its own.
 - **FRM-10** · *engine* — A frame MAY carry `crit`: a list of 1 to 16 names of
   extensions the frame carries at its top level, each named once, whose meaning a
-  receiver must implement to read the frame. A `crit` that names an extension the
-  frame does not carry, or one twice, MUST be rejected as `invalid-field`, whatever
-  extensions the receiver implements. A sender MUST name in it every extension that
-  changes what a receiver does with the frame's defined fields — that restricts,
-  widens or reinterprets what it applies or permits — and MAY leave out one that
-  only adds to them. A receiver that does not implement a name in it MUST reject
-  the frame as `unsupported-extension`. A receiver that implements an extension
-  MUST check its value as the extension's definition says: a value the definition
-  forbids is ignored as an unknown extension is, unless `crit` names the extension,
-  and then the receiver MUST reject the frame as `invalid-field`. Either rejection
-  applies nothing of the frame (FRM-6), and a receiver MUST NOT act on an extension
-  of a frame it rejects.
+  receiver must implement to read the frame.
+  - A `crit` that names an extension the frame does not carry, or one twice, MUST
+    be rejected as `invalid-field`, whatever extensions the receiver implements.
+  - A sender MUST name in it every extension that changes what a receiver does with
+    the frame's defined fields — that restricts, widens or reinterprets what it
+    applies or permits — and MAY leave out one that only adds to them.
+  - A receiver that does not implement a name in it MUST reject the frame as
+    `unsupported-extension`.
+
   *Rationale:* an extension that changes what a frame means cannot be ignored
-  safely; `crit` lets its sender say so, as JOSE's `crit` header does. An invalid
-  value of an optional extension leaves the frame as a receiver without the
-  extension reads it, so both apply the same; of a critical one, it leaves no
-  reading at all. A name without its field, or a second time, would be read as
-  required by one receiver and as nothing by another; rejected by everyone, it
-  gives the list one reading.
+  safely; `crit` lets its sender say so, as JOSE's `crit` header does. A name
+  without its field, or a second time, would be read as required by one receiver
+  and as nothing by another; rejected by everyone, it gives the list one reading.
+- **FRM-16** · *engine* — A receiver that implements an extension MUST check its
+  value as the extension's definition says: a value the definition forbids is
+  ignored as an unknown extension is (FRM-9), unless `crit` names the extension
+  (FRM-10), and then the receiver MUST reject the frame as `invalid-field`. Every
+  rejection applies nothing of the frame (FRM-6), and a receiver MUST NOT act on an
+  extension of any frame it rejects, for whatever reason.
+  *Rationale:* an invalid value of an optional extension leaves the frame as a
+  receiver without the extension reads it, so both apply the same; of a critical
+  one, it leaves no reading at all.
 - **FRM-11** · *engine* — Extensions MUST count toward `maxBytes` and the nesting
   limit of [§1.6](#16-notation) like any other field, and a sender MUST NOT carry in
   an extension what a defined field carries.
   *Rationale:* the bounds keep what an ignored field can cost a receiver as small
   as what any field can (§1.7, item 11); a defined field's duplicate would give a
   frame two readings again.
-- **FRM-12** · *all* — An extension MUST have a public definition that states its
-  name, the kinds of frame that carry it, the values it may take and what a frame
-  without it means, whether its senders name it in `crit`, and what a receiver does
-  with a value. What an extension carries belongs to the frame that carries it: an
-  engine MUST NOT keep it as document or control state, and MUST NOT write an
-  extension it received into a frame of its own, a snapshot or an overlay; it writes
-  only what its own application gives it. A sender whose extension a joiner should
-  learn writes it into its answers too ([§8.3](#83-who-answers)); and since an answer
-  carries content of edits it did not write, `crit` on an edit keeps that content from
-  a receiver without the extension only while the answers that carry it name the
-  extension in `crit` as well. Below a frame's top level — in a snapshot, its targets
-  and operations, and an overlay — this version defines no place for an extension an
+- **FRM-12** · *all* — An extension MUST have a public definition that states:
+  - its name;
+  - the kinds of frame that carry it;
+  - the values it may take;
+  - what a frame without it means;
+  - whether its senders name it in `crit`;
+  - what a receiver does with a value.
+
+  A sender whose extension a joiner should learn writes it into its answers too
+  ([§8.3](#83-who-answers)); and since an answer carries content of edits it did
+  not write, `crit` on an edit keeps that content from a receiver without the
+  extension only while the answers that carry it name the extension in `crit` as
+  well.
+  *Rationale:* a definition that leaves one of these open gives two
+  implementations two readings of one frame again.
+- **FRM-17** · *engine* — What an extension carries belongs to the frame that
+  carries it: an engine MUST NOT keep it as document or control state, and MUST NOT
+  write an extension it received into a frame of its own, a snapshot or an overlay;
+  it writes only what its own application gives it (FRM-12 says what that means
+  for answers). Below a frame's top level — in a snapshot, its targets and
+  operations, and an overlay — this version defines no place for an extension an
   engine implements; there, every extension is ignored (FRM-9).
-  *Rationale:* a definition that leaves one of these open gives two implementations
-  two readings of one frame again. Ignoring is not passing on: an extension that rode
-  along in state would reach, in a relayed snapshot (CTL-25), receivers that never
-  saw the frame it came with, and a receiver that does not implement it would have
-  dropped it on the way. One frame, one sender, one meaning is what a receiver can
-  check.
+  *Rationale:* ignoring is not passing on: an extension that rode along in state
+  would reach, in a relayed snapshot (CTL-25), receivers that never saw the frame
+  it came with, and a receiver that does not implement it would have dropped it on
+  the way. One frame, one sender, one meaning is what a receiver can check.
 
 ### 4.5 Example
 
@@ -3389,7 +3402,7 @@ The reference implementation uses all five.
   already could in a `decline`'s text; they count against `maxBytes` and the
   nesting limit (FRM-11), and nothing an extension carries is applied by an engine
   that does not implement it. An engine that does keeps nothing of it and passes
-  nothing on (FRM-12), so a forged extension misleads at most the receivers of the
+  nothing on (FRM-17), so a forged extension misleads at most the receivers of the
   one frame, and only as far as the extension's definition lets it.
 - **A forged heartbeat** can cost one unnecessary resync request per floor, never
   more (RSY-3, LOS-6).
@@ -3693,7 +3706,8 @@ The changes have six reasons, which the tables below cite by letter:
   SND-14; the pace, SND-15); everything else is each participant's own (SND-16).
 - **C — Closed layouts.** In 1.x every new field broke the wire, so the protocol
   could grow only by major version. 2.0 lets a field whose name contains `.` be
-  ignored when unknown, unless its sender marks it critical (FRM-9 to FRM-12).
+  ignored when unknown, unless its sender marks it critical (FRM-9 to FRM-12,
+  FRM-15 to FRM-17).
 - **D — Fragments.** A message too large for the messenger travelled as
   fragments that a receiver buffered and reassembled; one lost fragment lost the
   whole message, and the buffers needed bounds in memory and time of their own. 2.0
@@ -3774,7 +3788,8 @@ The changes have six reasons, which the tables below cite by letter:
 |---|---|---|
 | FRM-14 | No entry of 0 in a control vector; one received is read as absent | The control digest is computed over the vectors a participant holds; two spellings of one state would make equal states look diverged. |
 | FRM-13 | Which reason a frame with several faults is rejected for: the version before the kind, the kind before the fields | A frame of another version is judged by its version alone, which is what an application shows a person (VER-4). |
-| FRM-9 to FRM-12 | Extension fields, `crit`, their bounds and what a definition states; an extension is not passed on | C; wappensc/tdsp#71 V3: ignoring an extension is not passing it on. |
+| FRM-9 to FRM-12 (with FRM-15 to FRM-17) | Extension fields, `crit`, their bounds and what a definition states; an extension is not passed on | C; wappensc/tdsp#71 V3: ignoring an extension is not passing it on. |
+| FRM-15 to FRM-17 | Parts of FRM-9, FRM-10 and FRM-12 as requirements of their own: an extension's name (FRM-15), checking the value of an extension one implements (FRM-16), what an engine keeps and passes on of an extension (FRM-17) | Readability: each was a part of a longer requirement, and requires what it did there |
 | ARC-5 | An application may carry a document between one person's devices through another service, and tells the person | ARC-1 concerns participants; it said nothing about one person's devices, which a messenger without history cannot bring up to date. |
 | INV-9 | Joining on another device of the person without asking again, when the confirmation travels from where the person gave it | INV-3 protects the creator's identity; the service that carries it is trusted as the person's machine. |
 | TRN-20 | A send refused as `needs-person` is kept, shown, and tried again when the application says the person acted, or after the longest back-off | The person can lift the refusal and waiting cannot; without its own handling it would spin or be dropped. |
