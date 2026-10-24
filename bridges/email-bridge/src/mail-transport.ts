@@ -377,9 +377,10 @@ export function createImapReceiver(config: ImapConfig): MailReceiver {
       try {
         // A document's messages can arrive in more than one mailbox — a
         // provider's own spam filter routes some there regardless of
-        // whether they are ever actually spam. seenMessageIds (sync-state.ts) already dedups
-        // by Message-ID across every poll, so merging both mailboxes'
-        // results needs no ordering care here.
+        // whether they are ever actually spam. sync-state.ts already drops a mail it
+        // processed before, and compares by frame another one under a delivered
+        // Message-ID, across every poll, so merging both mailboxes' results needs no
+        // ordering care here.
         const maxBytes = config.maxMessageBytes ?? MAX_INCOMING_MAIL_BYTES;
         const inbox = await fetchDocumentMessages(client, "INBOX", documentId, maxBytes);
         const junk = await junkMailboxPath(client);

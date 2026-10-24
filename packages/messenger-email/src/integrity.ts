@@ -36,6 +36,10 @@ export interface PgpStatus {
  * produces it (`bridges/email-bridge/src/sync-state.ts`'s `RejectionReason`); a
  * compile-time check in the bridge's own tests fails if the two ever drift.
  *
+ * The reasons bindings/bridges.md BRG-12 names are spelled as it spells them, the same for
+ * every bridge (`"message-replaced"`); the others are the email binding's own (BRG-12 lets a
+ * binding name reasons for refusals only it defines).
+ *
  * Membership and the document's close are control frames inside the payload, so the
  * *bridge* never sees a control message and cannot reject one: a control frame from
  * anyone but the creator is rejected one layer up, by `document-protocol`, which reports
@@ -50,7 +54,7 @@ export type IntegrityReason =
   | "pgp-identity-changed"
   | "pgp-unavailable"
   | "pgp-disabled-locally"
-  | "message-id-reused"
+  | "message-replaced"
   | "message-too-large";
 
 export interface IntegrityEntry {
@@ -120,10 +124,10 @@ export function describeIntegrityEntry(entry: IntegrityEntry): {
         severity: "warning",
         text: `A message from ${who} was larger than this bridge reads, so it was neither opened nor applied. A resync recovers what it carried.`,
       };
-    case "message-id-reused":
+    case "message-replaced":
       return {
         severity: "alert",
-        text: `A message claiming to be from ${who} reused the Message-ID of an earlier one but carried different content — an attempt to edit or withdraw an already-delivered message, which cannot be honoured. It was not applied.`,
+        text: `A message claiming to be from ${who} arrived under the Message-ID of one already delivered, with different content — an attempt to replace an already-delivered message, which cannot be honoured. It was not applied.`,
       };
   }
 }

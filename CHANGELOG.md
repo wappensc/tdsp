@@ -307,6 +307,11 @@ Bridges and bindings:
   default profile had — for a server on the same machine the engine's defaults — and the adapters
   refuse the 1.x form.
 - `transportSendErrorFromHttp` maps `409` to `needs-person` instead of `rejected` (LBI-6).
+- `@tdsp/messenger-email`'s `IntegrityReason` names a replaced message `message-replaced`, as
+  every bridge does, instead of `message-id-reused`; the email bridge records it only for a
+  Message-ID it delivered, compared by the frame, and no longer for the thread's root or a mail
+  it refused. `@tdsp/messenger-matrix`'s gains `message-replaced`: another event under a
+  delivered event id is recorded, not delivered again (BRG-11, BRG-12).
 - `AttributionRange.authorId` is `string | null`, and `AttributionTracker.recordInsert` and
   `recordDelete` take `null` for an unattributed change; the engine no longer invents the
   MemberId `__tdsp:unattributed__` (ATR-2).

@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { TransportSendError } from "@tdsp/messenger-port";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MatrixMessengerPort, matrixMessengerProvider } from "./index.ts";
+import { describeMatrixIntegrityEntry, type IntegrityReason } from "./integrity.ts";
 
 /**
  * A minimal, local stand-in for `bridges/matrix-bridge`'s own HTTP API —
@@ -142,6 +143,29 @@ describe("matrixMessengerProvider", () => {
     const port = await matrixMessengerProvider.createPort();
     expect(port).toBeInstanceOf(MatrixMessengerPort);
   });
+});
+
+describe("describeMatrixIntegrityEntry", () => {
+  // Every reason the bridge can record (BRG-12), each named once: a reason with no wording would
+  // reach the application as an entry it cannot show (BRG-15).
+  const reasons = {
+    "message-edited": true,
+    "message-redacted": true,
+    "message-replaced": true,
+  } satisfies Record<IntegrityReason, true>;
+
+  it.each(Object.keys(reasons) as IntegrityReason[])(
+    "words %s as an alert naming its sender",
+    (reason) => {
+      const described = describeMatrixIntegrityEntry({
+        eventId: "$e",
+        sender: "@alice:hs",
+        reason,
+      });
+      expect(described.severity).toBe("alert");
+      expect(described.text).toContain("@alice:hs");
+    },
+  );
 });
 
 describe("MatrixMessengerPort", () => {

@@ -210,7 +210,7 @@ export class MatrixMessengerPort implements MessengerPort {
   }
 
   /**
-   * `GET /channels/:documentId/integrity-log` — every edit/redaction the
+   * `GET /channels/:documentId/integrity-log` — every edit, redaction and replacement the
    * bridge caught and refused to apply for `documentId` (SPECIFICATION.md
    * BRG-12, BRG-15), mirroring `EmailMessengerPort.integrityLog()` exactly.
    * Diagnostic, not part of `MessengerPort` — in-memory on the bridge, so

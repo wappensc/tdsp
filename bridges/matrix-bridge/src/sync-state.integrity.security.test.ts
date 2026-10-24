@@ -160,6 +160,29 @@ describe("a receiver's handling of a messenger-native edit or withdrawal", () =>
     ]);
   });
 
+  it("drops silently the same event presented again, with the same content: delivered once, nothing recorded (BRG-11)", async () => {
+    await poll(
+      [originalEditEvent("$orig")],
+      [originalEditEvent("$orig"), originalEditEvent("$orig")],
+    );
+    expect(state.getDeliveries(DOC).map((delivery) => delivery.id)).toEqual(["$orig"]);
+    expect(state.getIntegrityLog(DOC)).toEqual([]);
+  });
+
+  it("never delivers another event with other content under a delivered event's id, and records it as message-replaced", async () => {
+    const replacement: TimelineEvent = {
+      ...originalEditEvent("$orig"),
+      content: { tdsp: 1, documentId: DOC, frame: "dGFtcGVyZWQ=" },
+    };
+    await poll([originalEditEvent("$orig")], [replacement]);
+    expect(state.getDeliveries(DOC)).toEqual([
+      { id: "$orig", documentId: DOC, sender: ALICE, payload: "b3JpZ2luYWw=" },
+    ]);
+    expect(state.getIntegrityLog(DOC)).toEqual([
+      { eventId: "$orig", sender: ALICE, reason: "message-replaced" },
+    ]);
+  });
+
   it("does not crash or misapply an event whose content already arrived redacted, though it cannot attribute it to a document", async () => {
     await poll([alreadyRedactedEvent("$stripped")]);
     expect(state.getDeliveries(DOC)).toEqual([]);
