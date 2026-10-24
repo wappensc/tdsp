@@ -77,7 +77,9 @@ an approval for that one package, under that exact license, with the reason, to
 
 When `tools/wire-lock.wire.test.ts` fails, the wire changed: the bytes a frame, an
 invitation or a binding's message would have, a constant sender and receiver agree on, or
-the text of a normative wire section of the specification. The report names the kind:
+the text of a normative wire section of the specification or of a binding document — a
+section or document the lock newly covers, or no longer covers, included. The report names
+the kind:
 
 | Kind | What changed | The specification's version | Accept with |
 | --- | --- | --- | --- |
