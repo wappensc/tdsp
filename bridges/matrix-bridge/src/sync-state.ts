@@ -40,7 +40,7 @@ const REDACTION_EVENT_TYPE = "m.room.redaction";
  * bridge may not import that package in production source, only in tests:
  * a bridge and an adapter stay independent).
  */
-export type IntegrityReason = "message-edited" | "message-redacted";
+export type IntegrityReason = "message-edited" | "message-redacted" | "message-replaced";
 
 export interface IntegrityEntry {
   readonly eventId: string;
