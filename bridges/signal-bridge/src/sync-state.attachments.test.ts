@@ -208,7 +208,7 @@ describe("a receiver's handling of attachments", () => {
       expect(existsSync(file)).toBe(false);
     });
 
-    it("is given up on after the tries there are (three), the frame dropped and the file left where it is", async () => {
+    it("is given up on after the tries there are (three), the frame dropped and its file deleted", async () => {
       const frame = bytesOf(3000, 4);
       const file = join(attachmentsDir, "att1");
       writeFileSync(file, frame);
@@ -220,7 +220,9 @@ describe("a receiver's handling of attachments", () => {
       expect(sync.getDeliveries(DOC)).toEqual([]);
       expect(rpc.fetched).toEqual(["att1", "att1", "att1"]);
       expect(events()).toContain("attachment-unavailable");
-      expect(existsSync(file)).toBe(true); // not read, so not deleted: a later poll of the directory can still see it
+      // Nothing comes back for it: the bridge reads an attachment only when its message arrives, and
+      // the frame's plaintext must not outlive the message (SIG-1).
+      expect(existsSync(file)).toBe(false);
     });
 
     it("counts a read that never answers as failed, after the time allowed", async () => {
@@ -271,9 +273,9 @@ describe("a receiver's handling of attachments", () => {
       expect(reasons()).toContain("size-mismatch");
     });
 
-    it("is not read at all when signal-cli's own size for the attachment is not the envelope's", async () => {
+    it("is not read at all when signal-cli's own size for the attachment is not the envelope's, and its file is deleted", async () => {
       const frame = bytesOf(2000, 11);
-      received("att1", frame);
+      const file = received("att1", frame);
       rpc.emit(
         notification({
           body: { tdsp: 1, kind: "frame", documentId: DOC, attachment: refFor(frame) },
@@ -284,6 +286,7 @@ describe("a receiver's handling of attachments", () => {
       expect(rpc.calls).toEqual([]);
       expect(sync.getDeliveries(DOC)).toEqual([]);
       expect(reasons()).toContain("size-mismatch");
+      expect(existsSync(file)).toBe(false);
     });
 
     it("is not read when the file on disk is over the bound, and the file is deleted", async () => {
@@ -380,7 +383,9 @@ describe("a receiver's handling of attachments", () => {
       expect(sync.getDeliveries(DOC)).toEqual([]);
     });
 
-    it("comes with no attachment, or with two", async () => {
+    it("comes with no attachment, or with two, whose files are both deleted", async () => {
+      const second = join(attachmentsDir, "att2");
+      writeFileSync(second, frame);
       const body = { tdsp: 1, kind: "frame", documentId: DOC, attachment: refFor(frame) };
       rpc.emit(notification({ body }));
       rpc.emit(
@@ -399,6 +404,8 @@ describe("a receiver's handling of attachments", () => {
       expect(rpc.calls).toEqual([]);
       expect(sync.getDeliveries(DOC)).toEqual([]);
       expect(reasons().filter((reason) => reason === "not-one-attachment")).toHaveLength(2);
+      expect(existsSync(join(attachmentsDir, "att1"))).toBe(false);
+      expect(existsSync(second)).toBe(false);
     });
 
     it("names an attachment by an id that could leave the attachments directory", async () => {
@@ -412,17 +419,82 @@ describe("a receiver's handling of attachments", () => {
           }),
         );
       }
+      // Beside an ordinary one, in a message refused for carrying two: only the ordinary one's file
+      // is deleted.
+      rpc.emit(
+        notification({
+          timestamp: 1700000000001,
+          body: { tdsp: 1, kind: "frame", documentId: DOC, attachment: refFor(frame) },
+          attachments: [
+            { id: "att1", size: frame.length },
+            { id: "../victim", size: frame.length },
+          ],
+        }),
+      );
       await settle();
       expect(rpc.calls).toEqual([]);
       expect(existsSync(victim)).toBe(true);
+      expect(existsSync(join(attachmentsDir, "att1"))).toBe(false);
     });
 
-    it("arrives before the account is linked", async () => {
+    it("arrives before the account is linked, and its file is deleted", async () => {
       account = undefined;
       rpc.emit(attachmentUpdate(frame));
       await settle();
       expect(rpc.calls).toEqual([]);
       expect(sync.getDeliveries(DOC)).toEqual([]);
+      expect(existsSync(join(attachmentsDir, "att1"))).toBe(false);
+    });
+  });
+
+  describe("a message presented again (BRG-11)", () => {
+    it("is not delivered twice, and the file signal-cli wrote for it again is deleted", async () => {
+      const frame = bytesOf(2000, 40);
+      const file = received("att1", frame);
+      rpc.emit(attachmentUpdate(frame));
+      await settle();
+      expect(existsSync(file)).toBe(false);
+      // signal-cli names the file by the attachment's remote id, so it is written again under the
+      // same name.
+      writeFileSync(file, frame);
+      rpc.emit(attachmentUpdate(frame));
+      await settle();
+      expect(sync.getDeliveries(DOC)).toHaveLength(1);
+      expect(rpc.fetched).toEqual(["att1"]);
+      expect(existsSync(file)).toBe(false);
+    });
+
+    it("does not delete the file while the first one is still being read back", async () => {
+      const frame = bytesOf(2000, 41);
+      const file = join(attachmentsDir, "att1");
+      writeFileSync(file, frame);
+      let answer: (value: unknown) => void = () => {};
+      rpc.onGetAttachment = () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        });
+      rpc.emit(attachmentUpdate(frame));
+      rpc.emit(attachmentUpdate(frame)); // the same message again, while the first is being read
+      expect(existsSync(file)).toBe(true);
+      answer(toBase64(frame));
+      await settle();
+      expect(sync.getDeliveries(DOC)).toHaveLength(1);
+      expect(existsSync(file)).toBe(false);
+    });
+
+    it("deletes the file of another message under a delivered id, which is recorded and not read (BRG-12)", async () => {
+      const frame = bytesOf(2000, 42);
+      const other = bytesOf(2000, 43);
+      received("att1", frame);
+      rpc.emit(attachmentUpdate(frame));
+      await settle();
+      const replacing = join(attachmentsDir, "att9");
+      writeFileSync(replacing, other);
+      rpc.emit(attachmentUpdate(other, "att9"));
+      await settle();
+      expect(rpc.fetched).toEqual(["att1"]);
+      expect(sync.getIntegrityLog(DOC).map((entry) => entry.reason)).toEqual(["message-replaced"]);
+      expect(existsSync(replacing)).toBe(false);
     });
   });
 
