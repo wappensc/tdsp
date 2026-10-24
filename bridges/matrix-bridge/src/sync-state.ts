@@ -323,7 +323,21 @@ export function createSyncState(
     recordedEventDocument.set(event.eventId, documentId);
   }
 
-  async function processLogicalEvent(event: LogicalEvent, bindStore: BindStoreData): Promise<void> {
+  /**
+   * Whether `documentId` is bound to `roomId`: an event counts for a document only in the room it
+   * is bound to (BRG-10). The account is usually in other rooms too, with other people; a frame from
+   * one of them would let someone outside the document's room write into it, and an edit or a
+   * redaction from there would fill its integrity log with records nobody in the room caused.
+   */
+  function boundHere(documentId: string, roomId: string, bindStore: BindStoreData): boolean {
+    return bindStore[documentId]?.roomId === roomId;
+  }
+
+  async function processLogicalEvent(
+    event: LogicalEvent,
+    roomId: string,
+    bindStore: BindStoreData,
+  ): Promise<void> {
     if (event.type === REDACTION_EVENT_TYPE) {
       const target = extractRedactsTarget(event.content);
       if (target === undefined) {
@@ -338,7 +352,7 @@ export function createSyncState(
         logger.warn("redaction-unattributed", { redacts: target, sender: event.sender });
         return;
       }
-      if (!bindStore[documentId]) {
+      if (!boundHere(documentId, roomId, bindStore)) {
         return;
       }
       reject(documentId, target, event.sender, "message-redacted");
@@ -349,7 +363,7 @@ export function createSyncState(
     }
     if (isReplaceRelation(event.content)) {
       const documentId = readDocumentIdHint(event.content);
-      if (documentId !== undefined && bindStore[documentId]) {
+      if (documentId !== undefined && boundHere(documentId, roomId, bindStore)) {
         reject(documentId, event.eventId, event.sender, "message-edited");
       } else {
         logger.warn("edit-unattributed", { eventId: event.eventId, sender: event.sender });
@@ -375,7 +389,7 @@ export function createSyncState(
     if (envelope === undefined) {
       return;
     }
-    if (!bindStore[envelope.documentId]) {
+    if (!boundHere(envelope.documentId, roomId, bindStore)) {
       return;
     }
     if (envelope.attachment !== undefined) {
@@ -467,7 +481,7 @@ export function createSyncState(
       for (const event of events) {
         const logical = await resolveLogicalEvent(event, roomId);
         if (logical) {
-          await processLogicalEvent(logical, bindStore);
+          await processLogicalEvent(logical, roomId, bindStore);
         }
       }
     }
