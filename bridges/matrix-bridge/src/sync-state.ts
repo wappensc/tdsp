@@ -438,8 +438,21 @@ export function createSyncState(
     // shares among them) are not room "history" in the sense the
     // timeline discard below cares about; see this module's own doc
     // comment.
+    //
+    // Any Matrix user can send this device a to-device event, nested as deep as they like. The
+    // crypto machine takes them as one JSON text, which some Node.js versions cannot write for a
+    // deep enough value; this round's position has moved on already, so its frames would be lost
+    // for good (TRN-7). No to-device event the bridge needs nests more than a few levels, so one
+    // deeper than any message this specification defines (§1.6) is left out.
+    const toDeviceEvents = result.toDeviceEvents.filter((event) => {
+      if (!jsonValueTooDeep(event)) {
+        return true;
+      }
+      logger.warn("to-device-event-too-deep", { type: event.type });
+      return false;
+    });
     await crypto.receiveSync(
-      result.toDeviceEvents,
+      toDeviceEvents,
       result.deviceListsChanged,
       result.deviceListsLeft,
       result.oneTimeKeyCounts,
