@@ -15,8 +15,21 @@ import type { IntegrityReason } from "./sync-state.ts";
 type Equal<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 const sameVocabulary: Equal<IntegrityReason, BrowserIntegrityReason> = true;
 
+/**
+ * The reasons bindings/bridges.md BRG-12's table gives for what a Matrix homeserver can present:
+ * an `m.replace` edit, a redaction, and another event with other content under a delivered event's
+ * id. The binding names no reasons of its own, so the list is exactly these; a reason missing here
+ * would leave that case recorded under another reason's name, or not at all.
+ */
+type Brg12MatrixReason = "message-edited" | "message-redacted" | "message-replaced";
+const brg12Vocabulary: Equal<IntegrityReason, Brg12MatrixReason> = true;
+
 describe("matrix-bridge integrity-log vocabulary", () => {
   it("is the same list in the bridge and in the browser-side package", () => {
     expect(sameVocabulary).toBe(true);
+  });
+
+  it("is BRG-12's reasons for what Matrix can present, message-replaced among them", () => {
+    expect(brg12Vocabulary).toBe(true);
   });
 });

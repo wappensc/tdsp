@@ -20,8 +20,12 @@ export type { IntegritySeverity };
  * an event id this bridge has already recorded as a delivery, or the
  * redacted event's own `unsigned.redacted_because` shows it never carried
  * real content by the time this bridge first saw it.
+ * `"message-replaced"`: `/sync` presents an event, with other content, under
+ * the id of an event this bridge already delivered — compared by the frame's
+ * bytes, for an attachment by the hash its envelope names. The same content
+ * again is only the event presented again, and recorded as nothing (BRG-11).
  */
-export type IntegrityReason = "message-edited" | "message-redacted";
+export type IntegrityReason = "message-edited" | "message-redacted" | "message-replaced";
 
 export interface IntegrityEntry {
   readonly eventId: string;
@@ -44,6 +48,11 @@ export function describeMatrixIntegrityEntry(entry: IntegrityEntry): {
       return {
         severity: "alert",
         text: `A message from ${who} was redacted (deleted) after it was sent. If it was already applied here, that cannot be undone; if a peer had not yet seen it, they never will through this event — check with them directly.`,
+      };
+    case "message-replaced":
+      return {
+        severity: "alert",
+        text: `A message from ${who} arrived again with other content under the id of one already delivered. The new content was not applied — an already-delivered document update cannot be retracted or silently replaced.`,
       };
   }
 }
