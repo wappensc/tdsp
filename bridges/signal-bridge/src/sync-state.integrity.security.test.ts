@@ -7,7 +7,7 @@ import type { SignalRpc } from "./signal-api.ts";
 import { createSyncState } from "./sync-state.ts";
 
 /**
- * SPECIFICATION.md BRG-12: a bridge must never apply, and must record as an
+ * bindings/bridges.md BRG-12: a bridge must never apply, and must record as an
  * integrity violation, a messenger-native edit or withdrawal of an
  * already-delivered message. The fixtures below mirror what a real
  * `signal-cli receive --output=json` produced for two real linked accounts

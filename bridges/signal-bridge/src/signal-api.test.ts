@@ -12,7 +12,7 @@ import {
  * L0 — a fake `SignalRpc` stands in for `signal-cli`'s daemon entirely, no
  * real binary involved (docs/testing.md). The shapes here (`listGroups`'
  * `id`/`name`, a group `dataMessage`'s `groupInfo.groupId`) follow
- * SPECIFICATION.md §13.2 and the real `signal-cli` responses; these tests pin
+ * bindings/signal.md §13.2 and the real `signal-cli` responses; these tests pin
  * down this module's own parsing logic, while the L4 tests check it against a
  * real `signal-cli`.
  */

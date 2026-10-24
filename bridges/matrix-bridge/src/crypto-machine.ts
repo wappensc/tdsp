@@ -48,7 +48,7 @@ export interface CryptoMachine {
    * once, since a newly-bound room or a member who joined since the
    * last share otherwise never receives the key (this is *why* a
    * message sent before a member joins stays permanently undecryptable
-   * to them — the Megolm history caveat (SPECIFICATION.md §13.3), tested live in
+   * to them — the Megolm history caveat (bindings/matrix.md §13.3), tested live in
    * `crypto.security.test.ts`, and unrelated to Matrix's own transport history:
    * even with full transport history, no Megolm key was ever shared
    * with a device that didn't exist as a share target yet).

@@ -25,7 +25,7 @@ import { createSyncState, type SyncState } from "./sync-state.ts";
 import { SIGNAL_PROFILE } from "./transport-profile.ts";
 
 /**
- * The bridge's local HTTP interface (SPECIFICATION.md §12.6) — a standalone Node process,
+ * The bridge's local HTTP interface (bindings/local-bridge-interface.md §12.6) — a standalone Node process,
  * never bundled, that owns `signal-cli` and its credentials so the browser (through
  * `packages/messenger-signal`) never has to. Plain `node:http` request/response, no
  * framework dependency and no SSE/WebSocket: `DocumentEngine.sync()` drives everything
@@ -35,7 +35,7 @@ import { SIGNAL_PROFILE } from "./transport-profile.ts";
  * transport mapping proper — `GET /channels`, `POST /channels/:documentId/bind`,
  * `send`/`receive`. Membership, the document's lifecycle and resync requests are **not**
  * bridge concerns: they are frames, carried here as opaque payloads like any other
- * (SPECIFICATION.md §12.5). Shaped like `bridges/matrix-bridge/src/server.ts` as far as
+ * (bindings/bridges.md §12.5). Shaped like `bridges/matrix-bridge/src/server.ts` as far as
  * the two messengers' real differences allow (no crypto layer, no room-encryption flag,
  * a push- rather than poll-driven `SyncState`).
  *
@@ -54,7 +54,7 @@ export interface AuthStatusSource {
 }
 
 /**
- * `id` here is the wire field for the `GET /channels` listing (SPECIFICATION.md §12.6).
+ * `id` here is the wire field for the `GET /channels` listing (bindings/local-bridge-interface.md §12.6).
  * `signal-api.ts`'s own `GroupSummary` calls it `groupId` internally — the bridge's
  * `signal-cli`-facing vocabulary, not the wire contract; only the boundary remaps it.
  */
@@ -115,7 +115,7 @@ export interface GroupWriter {
   /**
    * Sends `{tdsp:1, kind:"frame", documentId, frame}` — `frame` the frame's JSON text as a
    * string — as a group text message:
-   * the envelope's one kind, `"frame"` (SPECIFICATION.md §13.1),
+   * the envelope's one kind, `"frame"` (bindings/bridges.md §13.1),
    * as in `bridges/email-bridge`. Returns the new `DeliveryId`. A payload
    * over `BODY_FRAME_LIMIT` goes as an attachment instead, and the
    * envelope carries `attachment:{size, sha256}` in place of `frame`
@@ -263,7 +263,7 @@ function deliveryToJson(delivery: Delivery): unknown {
 }
 
 interface BindRequestBody {
-  // channelId, as in every bridge's bind body (SPECIFICATION.md §12.6).
+  // channelId, as in every bridge's bind body (bindings/local-bridge-interface.md §12.6).
   channelId?: unknown;
   creator?: unknown;
   profile?: unknown;
@@ -323,7 +323,7 @@ export function createServer(deps: ServerDependencies): Server {
         sendJson(res, 409, { error: "not linked yet — no Signal account id available" });
         return;
       }
-      // {id}, as every bridge's /whoami answers (SPECIFICATION.md §12.6).
+      // {id}, as every bridge's /whoami answers (bindings/local-bridge-interface.md §12.6).
       sendJson(res, 200, { id: accountId });
       return;
     }
@@ -464,7 +464,7 @@ export function createServer(deps: ServerDependencies): Server {
       return;
     }
 
-    // SPECIFICATION.md BRG-15, like the email and Matrix bridges' own
+    // bindings/bridges.md BRG-15, like the email and Matrix bridges' own
     // /integrity-log route. Diagnostic, not part of MessengerPort.
     if (method === "GET" && path?.startsWith("/channels/") && path.endsWith("/integrity-log")) {
       const documentId = decodeURIComponent(

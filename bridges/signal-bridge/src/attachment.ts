@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 /**
  * A frame too large to ride in a message body is sent as a Signal attachment, and the message body
- * carries an envelope that says how big it is and what its SHA-256 is (SPECIFICATION.md §13.2,
+ * carries an envelope that says how big it is and what its SHA-256 is (bindings/signal.md §13.2,
  * BRG-14). This is the bridge's own business:
  * `document-protocol` sees only a larger `maxBytes` and hands the bridge one opaque frame. Pure
  * functions, no network: the RPC calls are in `signal-api.ts`.
@@ -131,7 +131,7 @@ export function isPlainAttachmentId(id: string): boolean {
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /**
- * The frame an attachment carries is the UTF-8 text of a frame (SPECIFICATION.md §13.1);
+ * The frame an attachment carries is the UTF-8 text of a frame (bindings/bridges.md §13.1);
  * bytes that are not valid UTF-8 are no frame at all, and are refused rather than decoded lossily.
  */
 export function frameTextOf(bytes: Uint8Array): string {

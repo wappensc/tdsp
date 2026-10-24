@@ -49,10 +49,10 @@ export interface IntegrityEntry {
 /**
  * What a protocol message carries: the frame inline (`frame`, its JSON text as a string), or — for a frame too large
  * for a message body — the size and SHA-256 of one sent as an attachment (`attachment`,
- * SPECIFICATION.md §13.2). Exactly one of the two; anything else is not a protocol message.
+ * bindings/signal.md §13.2). Exactly one of the two; anything else is not a protocol message.
  *
  * `kind` is always `"frame"`: the envelope carries every frame kind `document-protocol`
- * produces, and this bridge must not tell them apart (SPECIFICATION.md §13.1).
+ * produces, and this bridge must not tell them apart (bindings/bridges.md §13.1).
  */
 interface Envelope {
   readonly tdsp: number;
@@ -64,7 +64,7 @@ interface Envelope {
 
 /**
  * A recognisable TDSP envelope of another version — `tdsp` a number other than 1, `documentId`
- * a string — or `undefined` (SPECIFICATION.md BND-2). Such an envelope for a bound
+ * a string — or `undefined` (bindings/bridges.md BND-2). Such an envelope for a bound
  * document is reported and not delivered; anything else that is not an envelope stays silent.
  */
 function foreignEnvelopeVersion(
@@ -164,7 +164,7 @@ export interface SyncStateOptions {
  * Signal client). Nothing in this bridge ever sees Signal Protocol
  * ciphertext.
  *
- * **Routes and carries bytes, nothing more** (SPECIFICATION.md §12.5). An
+ * **Routes and carries bytes, nothing more** (bindings/bridges.md §12.5). An
  * envelope for a bound document becomes a `Delivery` — one stream, since a
  * resync request is an ordinary frame inside `Delivery.payload` like every
  * other kind. This bridge checks no creator, permission or lifecycle state:
@@ -184,7 +184,7 @@ export interface SyncStateOptions {
 export interface SyncState {
   pollOnce(): Promise<void>;
   getDeliveries(documentId: DocumentId): readonly Delivery[];
-  /** SPECIFICATION.md BRG-12, BRG-15 — every edit/remote-delete this bridge caught and refused to apply for `documentId`, oldest first. */
+  /** bindings/bridges.md BRG-12, BRG-15 — every edit/remote-delete this bridge caught and refused to apply for `documentId`, oldest first. */
   getIntegrityLog(documentId: DocumentId): readonly IntegrityEntry[];
 }
 
@@ -227,7 +227,7 @@ export function createSyncState(
 
   function isBound(documentId: string): boolean {
     const bindStore: BindStoreData = loadBindStore(bindStorePath);
-    return bindStore[documentId] !== undefined; // someone else's document sharing this group otherwise — silently ignored (SPECIFICATION.md §12.5, BRG-13)
+    return bindStore[documentId] !== undefined; // someone else's document sharing this group otherwise — silently ignored (bindings/bridges.md §12.5, BRG-13)
   }
 
   /**

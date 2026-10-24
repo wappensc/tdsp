@@ -22,7 +22,7 @@ import { createLiveServerDependencies, createServer } from "./server.ts";
 
 /**
  * Live tests of the two properties of end-to-end encryption in a Matrix room
- * that matter to this bridge (SPECIFICATION.md §13.3):
+ * that matter to this bridge (bindings/matrix.md §13.3):
  *
  * 1. The history caveat ("a newly joined member cannot decrypt Megolm-
  *    encrypted messages sent before they joined") — a real third
@@ -157,7 +157,7 @@ describe.skipIf(!available)(
     });
 
     /**
-     * A frame up to 32 000 bytes rides in the event body (SPECIFICATION.md §13.3). In an *encrypted* room the
+     * A frame up to 32 000 bytes rides in the event body (bindings/matrix.md §13.3). In an *encrypted* room the
      * frame is Base64-encoded into the event, the event is Megolm-encrypted, and the ciphertext is
      * Base64-encoded again — Synapse refuses an event over 65 536 bytes, so 32 000 is the number
      * that has to hold. This sends a frame of exactly that, to see the margin for real rather than

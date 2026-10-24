@@ -11,7 +11,7 @@
  * in-memory fake in this module's L0 tests and `server.test.ts`. Signal has no local
  * server to run these against, so the level above the fakes is L4, against two real
  * linked accounts (`l4-contract.test.ts`, `l4-attachments.test.ts`; docs/testing.md).
- * Field names follow SPECIFICATION.md §13.2 (`listGroups` → base64 `id` + display
+ * Field names follow bindings/signal.md §13.2 (`listGroups` → base64 `id` + display
  * `name`; a received envelope's `dataMessage.groupInfo.groupId`) and were confirmed
  * against real `signal-cli` responses, as were the attachment calls (`send`'s
  * `attachments` data URIs, a received message's `attachments` list, `getAttachment`).
@@ -26,7 +26,7 @@ export interface GroupSummary {
   readonly groupId: string;
   readonly name: string;
   /**
-   * The group's members by ACI (their `MemberId`, SPECIFICATION.md SIG-2), as `signal-cli`
+   * The group's members by ACI (their `MemberId`, bindings/signal.md SIG-2), as `signal-cli`
    * lists them now: `members[].uuid` — the members, not the invited or requesting ones.
    * Verified against signal-cli's source (0.14.9, `ListGroupsCommand`), not a captured response.
    */
@@ -215,7 +215,7 @@ export function parseIncomingGroupMessage(
   const { dataMessage } = messageParts(envelope, ownAci);
   // The ACI only, never the phone number (`source`): the ACI is what `/whoami` answers and
   // the creator is compared against, so a delivery attributed to anything else could never
-  // match — or match a different spelling of the same person (SPECIFICATION.md SIG-2).
+  // match — or match a different spelling of the same person (bindings/signal.md SIG-2).
   const sender = sourceUuid;
   if (typeof sender !== "string" || typeof dataMessage !== "object" || dataMessage === null) {
     return null;
@@ -239,7 +239,7 @@ export function parseIncomingGroupMessage(
 /**
  * Everything about a real Signal edit or remote-delete this bridge needs to
  * reject it and, where possible, attribute the rejection to a document
- * (SPECIFICATION.md BRG-12). Both shapes were confirmed against real linked
+ * (bindings/bridges.md BRG-12). Both shapes were confirmed against real linked
  * accounts: an edit arrives as a sibling `envelope.editMessage` field, not a
  * `dataMessage` at all, so {@link parseIncomingGroupMessage}'s `dataMessage` guard
  * rejects it like an ordinary receipt; a remote-delete passes that guard but fails

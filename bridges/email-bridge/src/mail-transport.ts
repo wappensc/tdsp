@@ -60,7 +60,7 @@ export interface ImapConfig {
 }
 
 /**
- * The most of one incoming mail this bridge reads (SPECIFICATION.md BRG-13): above the
+ * The most of one incoming mail this bridge reads (bindings/bridges.md BRG-13): above the
  * largest mail a frame within this binding's 4 MiB bound becomes (about 7.6 MiB, Appendix B),
  * below what a provider commonly accepts. Read with a partial IMAP fetch, so the server sends no
  * more than this; the MIME parser and `gpg` see only what fits, since decoding a body never
@@ -200,7 +200,7 @@ function mailOptions(from: string, mail: OutgoingMail) {
 
 /**
  * Who puts a copy of every frame mail this bridge sends into the account's sent folder, where
- * this address's other devices find it (SPECIFICATION.md EML-12): `append`, the bridge itself;
+ * this address's other devices find it (bindings/email.md EML-12): `append`, the bridge itself;
  * `provider`, the mail provider, which files mail sent through it there on its own. `append`
  * unless `EMAIL_SENT_COPY` says otherwise: a missing copy fails another device silently, a
  * second one only fills the folder twice.

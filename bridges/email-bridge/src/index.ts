@@ -95,7 +95,7 @@ const deps: ServerDependencies = {
 };
 const server = createServer(deps);
 
-// 127.0.0.1 explicitly (SPECIFICATION.md LBI-1), not the default all-interfaces
+// 127.0.0.1 explicitly (bindings/local-bridge-interface.md LBI-1), not the default all-interfaces
 // bind — same reasoning bridges/matrix-bridge's/bridges/signal-bridge's own
 // index.ts already documents: this process answers unauthenticated
 // requests and (once configured) holds real mailbox credentials.

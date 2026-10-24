@@ -28,7 +28,7 @@ async function main(): Promise<void> {
     ...createLiveServerDependencies(daemon, auth, bindStorePath, join(dataDir, "attachments")),
   });
 
-  // 127.0.0.1 explicitly (SPECIFICATION.md LBI-1) — see bridges/matrix-bridge/src/index.ts.
+  // 127.0.0.1 explicitly (bindings/local-bridge-interface.md LBI-1) — see bridges/matrix-bridge/src/index.ts.
   // signal-cli's own socket is already closed to other OS users (signal-daemon.ts);
   // the bridge's HTTP interface on all interfaces would leave the wider door open
   // next to the locked one.

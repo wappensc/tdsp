@@ -8,7 +8,7 @@ import { createSyncState, type SyncState } from "./sync-state.ts";
 
 /**
  * In an encrypted room the carrier of a frame is a Megolm-encrypted `m.room.encrypted` event
- * (SPECIFICATION.md §13.3), and the sender Megolm vouches for is what makes the document's
+ * (bindings/matrix.md §13.3), and the sender Megolm vouches for is what makes the document's
  * creator check mean anything there (BND-1, §15.1). A homeserver can place an unencrypted event
  * in any room under any member's name; delivered, it would let the homeserver write a frame as the
  * creator. These tests pin that such an event is never delivered, in a room bound as encrypted

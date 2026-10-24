@@ -4,7 +4,7 @@ export type { IntegritySeverity };
 
 /**
  * Everything `bridges/signal-bridge` can reject an incoming group message for
- * after routing (SPECIFICATION.md BRG-12, BRG-15). Both shapes were
+ * after routing (bindings/bridges.md BRG-12, BRG-15). Both shapes were
  * confirmed against real linked accounts: a Signal edit arrives as a sibling
  * `envelope.editMessage` field, not a `dataMessage` at all — otherwise
  * indistinguishable from an ordinary receipt or typing indicator; a

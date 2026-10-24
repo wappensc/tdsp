@@ -1540,7 +1540,7 @@ describe("join-time bootstrap against a history-less transport", () => {
 
 /**
  * A transport whose bridge keeps only the newest `window` deliveries of the document
- * (SPECIFICATION.md BRG-17) — what every real bridge now does, at a size far larger.
+ * (bindings/bridges.md BRG-17) — what every real bridge now does, at a size far larger.
  */
 class WindowedPort implements MessengerPort {
   readonly inner = new InMemoryMessengerPort();

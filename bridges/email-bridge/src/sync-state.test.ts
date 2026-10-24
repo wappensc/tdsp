@@ -133,7 +133,7 @@ describe("createSyncState", () => {
   });
 
   /**
-   * The transport-level check (SPECIFICATION.md EML-2): a signature only
+   * The transport-level check (bindings/email.md EML-2): a signature only
    * ever covers the body, never these outer
    * headers — a message whose actual `To`/`Cc` doesn't reconstitute the
    * exact closed set (here: mallory received a copy nobody invited her

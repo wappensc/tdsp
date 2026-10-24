@@ -18,7 +18,7 @@ import type { MailReceiver } from "./mail-transport.ts";
 
 /**
  * The creator's invitation to a PGP-enabled document, and a participant's
- * acceptance of it (SPECIFICATION.md EML-4).
+ * acceptance of it (bindings/email.md EML-4).
  *
  * **The design in one paragraph.** The creator resolves every participant's
  * key from her own keyring, once, strictly (a missing or ambiguous key refuses
@@ -64,7 +64,7 @@ export type InviteRejectionReason =
   | "invite-signer-not-creator"
   /**
    * The user's own keyring holds a key for the creator's address, and it is not the key the
-   * invitation names for the creator (SPECIFICATION.md EML-8): the one independent check
+   * invitation names for the creator (bindings/email.md EML-8): the one independent check
    * a joiner has, and it failed — a forged invitation, or one side holding a wrong key.
    */
   | "invite-creator-key-differs";

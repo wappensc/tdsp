@@ -132,7 +132,7 @@ export function describeIntegrityEntry(entry: IntegrityEntry): {
  * How an application words a document's PGP state. `"blocked"` is the state in
  * which an application should not let the person type: a message that could not be
  * sent should be stopped at the keyboard, with the reason, not discovered as a
- * failed send afterwards (the bridge's pre-send guard, SPECIFICATION.md EML-3).
+ * failed send afterwards (the bridge's pre-send guard, bindings/email.md EML-3).
  */
 export function describePgpStatus(status: PgpStatus): {
   readonly state: "off" | "ready" | "blocked";
@@ -188,7 +188,7 @@ export function summarizeIntegrity(
 
 /**
  * Why a participant's bridge refused a PGP document's invitation when they tried
- * to join (SPECIFICATION.md EML-5, EML-8) — the creator's signed and encrypted block in
+ * to join (bindings/email.md EML-5, EML-8) — the creator's signed and encrypted block in
  * the thread's first email. Written down twice, like {@link IntegrityReason}, and
  * kept identical to `bridges/email-bridge/src/invite.ts`'s `InviteRejectionReason`
  * by `integrity-vocabulary.security.test.ts`.

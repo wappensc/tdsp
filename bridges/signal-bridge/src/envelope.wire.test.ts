@@ -7,7 +7,7 @@ import { parseEnvelope } from "./sync-state.ts";
 
 /**
  * The Signal binding's wire, frozen (docs/testing.md, "Wire compatibility";
- * SPECIFICATION.md §13.2): the group message the bridge sends for a frame — in the body up to
+ * bindings/signal.md §13.2): the group message the bridge sends for a frame — in the body up to
  * the body limit, as the message's one attachment above it — and how it reads one back. A
  * difference is a wire change only the CI role may accept (tools/wire-lock.ts). Only the CI
  * role may change this file (.github/CODEOWNERS).

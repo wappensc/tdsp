@@ -4,7 +4,7 @@ export type { IntegritySeverity };
 
 /**
  * Everything `bridges/matrix-bridge` can reject a `.tdsp.frame` timeline event
- * for after it already routed to a bound document (SPECIFICATION.md BRG-12,
+ * for after it already routed to a bound document (bindings/bridges.md BRG-12,
  * BRG-15: a messenger-native edit or withdrawal of an already-delivered
  * message is never applied, never re-parsed as a new message, and is
  * recorded as an integrity violation). Both shapes were confirmed against a

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 /**
- * The Matrix and Signal bridges' identical pattern (SPECIFICATION.md §12.1). Runs against paths that need
+ * The Matrix and Signal bridges' identical pattern (bindings/bridges.md §12.1). Runs against paths that need
  * not exist on disk — `git check-ignore` only consults `.gitignore`'s
  * patterns.
  */

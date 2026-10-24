@@ -7,7 +7,7 @@ import type { IncomingMail, MailReceiver } from "./mail-transport.ts";
 import { createSyncState } from "./sync-state.ts";
 
 /**
- * SPECIFICATION.md BRG-12: a bridge must never apply, and must record as an
+ * bindings/bridges.md BRG-12: a bridge must never apply, and must record as an
  * integrity violation, a messenger-native edit or withdrawal of an
  * already-delivered message. For email that is a second, distinct message
  * reusing an already-seen `Message-ID` — verified against a real Greenmail

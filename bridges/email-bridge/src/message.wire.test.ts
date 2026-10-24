@@ -9,7 +9,7 @@ import { createServer } from "./server.ts";
 
 /**
  * The email binding's wire, frozen (docs/testing.md, "Wire compatibility";
- * SPECIFICATION.md §13.4): for a document without PGP, exactly what the bridge hands its mail
+ * bindings/email.md §13.4): for a document without PGP, exactly what the bridge hands its mail
  * library when it starts a thread and when it sends a frame — addresses, subject, the
  * document header, the thread references and the body — and how it reads a frame's body back.
  * The same bridge routes as in use, over the real sender, with only the SMTP connection

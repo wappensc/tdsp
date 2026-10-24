@@ -18,7 +18,7 @@ import { createLiveServerDependencies, createServer } from "./server.ts";
 
 /**
  * L2: two devices of one Matrix account, each a bridge of its own, in an encrypted room
- * (SPECIFICATION.md §13.3, #31). What one device sends, the other receives as the account's
+ * (bindings/matrix.md §13.3, #31). What one device sends, the other receives as the account's
  * own message: the bridge shares each room key with every device of every member, its own
  * account's other devices included, and filters no sender. Skips cleanly without the test
  * server.
