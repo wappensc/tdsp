@@ -293,6 +293,12 @@ Bridges and bindings:
   default profile had — for a server on the same machine the engine's defaults — and the adapters
   refuse the 1.x form.
 - `transportSendErrorFromHttp` maps `409` to `needs-person` instead of `rejected` (LBI-6).
+- The Signal bridge: a group message nobody got fails as SIG-4 says — `rejected` when every
+  member is unregistered, `needs-person` when the others are identities to trust, `rate-limited`
+  with the longest wait when one was rate-limited — where all-unregistered was `unavailable`; an
+  invitation nobody got fails too. It deletes an attachment's plaintext file on every path, and
+  records an edit or deletion, and compares another message, only under an id it delivered
+  (SIG-1, SIG-4, BRG-12).
 - The bridges answer `409` to every document operation while they are not provisioned, and
   `503` to `/transport-profile`, where a send was refused as `rejected` or `unavailable` before
   (BRG-1). A send refused for what only a person can lift is `409` too: Signal's untrusted
