@@ -43,6 +43,10 @@ jobs:
       - name: Network-egress policy (netcheck)
         run: node --experimental-strip-types tools/netcheck-cli.ts
 
+      # Same reasoning as netcheck; tools/requirement-ids-wiring.test.ts asserts both.
+      - name: Every cited requirement ID is defined
+        run: node --experimental-strip-types tools/requirement-ids-cli.ts
+
       # Same reasoning as netcheck; tools/license-check-wiring.test.ts asserts both.
       - name: Third-party license check
         run: node --experimental-strip-types tools/license-check-cli.ts

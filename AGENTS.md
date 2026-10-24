@@ -163,7 +163,8 @@ guarantee regressed.
 Run from the repo root:
 
 - `pnpm install` — install and link the workspace.
-- `pnpm run ci` — lint, dependency rules, network policy, licenses, type check and tests.
+- `pnpm run ci` — lint, dependency rules, network policy, requirement IDs, licenses, type
+  check and tests.
   GitHub's CI runs the same checks as separate steps, calling each tool directly.
 - `pnpm run lint` / `pnpm run lint:fix` — Biome check / check and fix.
 - `pnpm run depcruise` — the dependency rules in `.dependency-cruiser.cjs`: the engine,
