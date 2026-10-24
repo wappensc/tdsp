@@ -8,7 +8,7 @@ import type {
 } from "@tdsp/messenger-port";
 import { TransportSendError } from "@tdsp/messenger-port";
 import { getPlainText, insertPlainText } from "@tdsp/reconciliation";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ControlState } from "./control-state";
 import { encodeControlFrame, encodeResyncResponseFrame } from "./framing";
 import {
@@ -178,6 +178,18 @@ describe("authority: only the creator's operations count (CTL-5)", () => {
     await bob.sync();
     expect(bob.permissionOf("mallory")).toBeUndefined();
     expect(applyErrors).toEqual([expect.objectContaining({ reason: "not-from-creator" })]);
+  });
+
+  it("a pace from anyone but the creator is ignored, and reported; the creator's holds (SND-15)", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { bob, applyErrors } = await pair(messenger);
+    await messenger.send(DOCUMENT_ID, "mallory", op(1, "pace", 3_600_000));
+    await bob.sync();
+    expect(bob.pace).toBeUndefined();
+    expect(applyErrors).toEqual([expect.objectContaining({ reason: "not-from-creator" })]);
+    await messenger.send(DOCUMENT_ID, "alice", op(1, "pace", 60_000));
+    await bob.sync();
+    expect(bob.pace).toBe(60_000);
   });
 
   it("an operation that names the creator is ignored, and reported", async () => {
@@ -489,6 +501,170 @@ describe("persistence and decisions offline (CTL-26)", () => {
     });
     expect(bob.permissionOf("bob")).toBeUndefined();
   });
+});
+
+describe("a decision is never lost on its way out (CTL-26)", () => {
+  /** A transport that notes, at each control frame's send, what the device had persisted then. */
+  class WatchingPort extends InMemoryMessengerPort {
+    persisted: PersistedControlState | undefined;
+    persistedAtSend: (PersistedControlState | undefined)[] = [];
+
+    override async send(
+      documentId: DocumentId,
+      sender: MemberId,
+      payload: string,
+    ): Promise<string> {
+      if ((JSON.parse(payload) as { kind?: string }).kind === "control") {
+        this.persistedAtSend.push(this.persisted);
+      }
+      return super.send(documentId, sender, payload);
+    }
+  }
+
+  const unsentFor = (state: PersistedControlState | undefined, target: string): boolean =>
+    state?.unsent?.some((frame) => frame.includes(`"target":"${target}"`)) ?? false;
+
+  it("is persisted as unsent when the messenger is handed it, as the transport sees at the send", async () => {
+    const messenger = new WatchingPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      onControlStateChange: (state) => {
+        messenger.persisted = structuredClone(state);
+      },
+    });
+    await alice.setMembership("bob", "write");
+    expect(messenger.persistedAtSend).toHaveLength(1);
+    expect(unsentFor(messenger.persistedAtSend[0], "member:bob")).toBe(true);
+    expect(messenger.persistedAtSend[0]?.counter).toBe(1);
+    // Taken by the messenger, it is no longer owed.
+    expect(messenger.persisted?.unsent).toBeUndefined();
+    expect(messenger.persisted?.counter).toBe(1);
+  });
+
+  it("made offline, stays unsent in every state persisted while it is retried and after dispose(); a restart sends it", async () => {
+    vi.useFakeTimers();
+    try {
+      await madeOffline();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  async function madeOffline(): Promise<void> {
+    const messenger = new InMemoryMessengerPort();
+    const persisted: PersistedControlState[] = [];
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      onControlStateChange: (state) => {
+        persisted.push(structuredClone(state));
+      },
+    });
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await alice.sync();
+    await bob.sync();
+    messenger.disconnect("alice");
+    const decided = alice.setMembership("bob", "read").catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(alice.permissionOf("bob")).toBe("read"); // it holds at once (CTL-21)
+    await vi.advanceTimersByTimeAsync(10_000); // retried, the messenger still away
+    expect(alice.sendStatus.state).toBe("retrying");
+    const first = persisted.findIndex((state) => unsentFor(state, "member:bob"));
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(persisted.slice(first).every((state) => unsentFor(state, "member:bob"))).toBe(true);
+
+    alice.dispose();
+    await vi.advanceTimersByTimeAsync(10_000); // its last attempt fails too
+    expect(await decided).toBeInstanceOf(Error); // this engine gave up...
+    const last = persisted.at(-1) as PersistedControlState;
+    expect(unsentFor(last, "member:bob")).toBe(true); // ...the decision did not
+
+    messenger.reconnect("alice");
+    const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      controlState: last,
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await bob.sync();
+    expect(bob.permissionOf("bob")).toBe("read");
+    restarted.dispose();
+  }
+
+  it("restored as unsent, stays owed when persisting fails, and goes out before the next decision", async () => {
+    const messenger = new InMemoryMessengerPort();
+    let saved: PersistedControlState | undefined;
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      onControlStateChange: (state) => {
+        saved = structuredClone(state);
+      },
+    });
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await alice.setMembership("bob", "write"); // counter 1
+    await settle(alice, bob);
+    const tag = alice.deviceTag as string;
+    // Persisted as unsent when the application stopped, before the messenger took it.
+    const pending = encodeControlFrame({
+      documentId: DOCUMENT_ID,
+      device: tag,
+      counter: 2,
+      target: "member:carol",
+      value: "read",
+      seen: {},
+    });
+    alice.dispose();
+    messenger.disconnect("alice");
+    let storageFull = true;
+    const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      controlState: { ...(saved as PersistedControlState), unsent: [pending] },
+      onControlStateChange: () => {
+        if (storageFull) throw new Error("storage is full");
+      },
+    });
+    await expect(restarted.setMembership("dave", "write")).rejects.toThrow("storage is full");
+    expect(restarted.permissionOf("dave")).toBeUndefined(); // not issued (CTL-26)
+    expect(restarted.permissionOf("carol")).toBe("read"); // the restored one still holds
+
+    storageFull = false;
+    messenger.reconnect("alice");
+    await restarted.setMembership("dave", "write");
+    await settle(restarted, bob);
+    expect(bob.permissionOf("carol")).toBe("read");
+    expect(bob.permissionOf("dave")).toBe("write");
+    expect(restarted.controlVector[tag]).toBe(3);
+    const controlFrames = (await messenger.receive(DOCUMENT_ID, "bob"))
+      .filter((d) => d.sender === "alice" && JSON.parse(d.payload).kind === "control")
+      .map((d) => JSON.parse(d.payload) as { counter: number });
+    const two = controlFrames.findIndex((frame) => frame.counter === 2);
+    const three = controlFrames.findIndex((frame) => frame.counter === 3);
+    expect(two).toBeGreaterThanOrEqual(0);
+    expect(two).toBeLessThan(three);
+  });
+});
+
+describe("two operations under one device and counter, at a receiver (CTL-24)", () => {
+  it.each([
+    ["write first", "write", "read"],
+    ["read first", "read", "write"],
+  ])(
+    "merge into the narrower, whichever arrives first (%s), and the receiver says so",
+    async (_name, firstValue, secondValue) => {
+      const messenger = new InMemoryMessengerPort();
+      const { bob, applyErrors } = await pair(messenger);
+      await settle(bob);
+      await messenger.send(DOCUMENT_ID, "alice", op(1, "member:carol", firstValue));
+      await bob.sync();
+      await messenger.send(DOCUMENT_ID, "alice", op(1, "member:carol", secondValue));
+      await bob.sync();
+      expect(bob.permissionOf("carol")).toBe("read");
+      expect(bob.controlAnomalies).toEqual([{ device: TAG, counter: 1 }]);
+      expect(
+        applyErrors.some(
+          (error) => error instanceof ControlFrameRejectedError && error.reason === "anomaly",
+        ),
+      ).toBe(true);
+    },
+  );
 });
 
 describe("a device restored from an older backup (CTL-24)", () => {
