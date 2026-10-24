@@ -123,7 +123,7 @@ Keep metadata accurate when the document changes.
   `invitation.ts` (§11.3).
 - The three bridges share one layout: `index.ts` (environment, bind to 127.0.0.1),
   `server.ts` (the local bridge interface, §12.6), `bind-store.ts` (`documentId` ↔
-  channel, §12.2), `sync-state.ts` (receiving), `send-failure.ts` (§3.4) and
+  channel, §12.2; both in `bindings/`), `sync-state.ts` (receiving), `send-failure.ts` (§3.4) and
   `transport-profile.ts` (§3.5). Each adapter (`packages/messenger-*`) is an HTTP client
   of its bridge.
 - Every transport runs the conformance suite from `@tdsp/messenger-port/contract` in its
@@ -134,9 +134,10 @@ Keep metadata accurate when the document changes.
   Greenmail or a real account must be added to the L2 or L4 list there, or it runs in L0
   and skips itself. In CI, `tools/test-run-check.ts` fails a job when the security, wire,
   or Matrix and email groups skipped instead of ran.
-- `wire/wire-lock.json` hashes the specification's wire sections (§4, §5, §7, §11, §13,
-  Appendices A and B) as well as the wire files, so a change of wording in those sections,
-  even an editorial one, fails `tools/wire-lock.wire.test.ts`.
+- `wire/wire-lock.json` hashes the specification's wire sections (§4, §5, §7, §11,
+  Appendices A and B), the binding documents in `bindings/` but the local bridge interface,
+  and the wire files, so a change of wording in any of them, even an editorial one, fails
+  `tools/wire-lock.wire.test.ts`.
 
 ## Repository conventions
 

@@ -2,10 +2,10 @@
 
 [![CI](https://github.com/wappensc/tdsp/actions/workflows/ci.yml/badge.svg)](https://github.com/wappensc/tdsp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Spec: TDSP 1.4](https://img.shields.io/badge/spec-TDSP%201.4-informational)](SPECIFICATION.md)
+[![Spec: TDSP 1.4.1](https://img.shields.io/badge/spec-TDSP%201.4.1-informational)](SPECIFICATION.md)
 [![Node.js ≥ 22.6](https://img.shields.io/badge/node-%E2%89%A5%2022.6-brightgreen)](package.json)
 [![TypeScript: strict](https://img.shields.io/badge/TypeScript-strict-3178c6)](tsconfig.base.json)
-[![Messengers: Signal · Matrix · Email](https://img.shields.io/badge/messengers-Signal%20%C2%B7%20Matrix%20%C2%B7%20Email-8a2be2)](SPECIFICATION.md#13-messenger-bindings)
+[![Messengers: Signal · Matrix · Email](https://img.shields.io/badge/messengers-Signal%20%C2%B7%20Matrix%20%C2%B7%20Email-8a2be2)](bindings/bridges.md#13-messenger-bindings)
 
 TDSP synchronises a collaboratively edited document between a small group of people by
 carrying CRDT updates inside ordinary messages of a messenger they already use — a Signal
@@ -19,10 +19,11 @@ of its own; it inherits the messenger's.
 
 This repository contains
 
-- **[SPECIFICATION.md](SPECIFICATION.md)** — the protocol, TDSP 1.4: the transport
+- **[SPECIFICATION.md](SPECIFICATION.md)** — the protocol, TDSP 1.4.1: the transport
   contract, the payload frame, document profiles, control state, bootstrap and resync,
-  send scheduling, loss detection, invitations, bridges, and the Signal, Matrix and email
-  bindings, as numbered requirements with their rationale;
+  send scheduling, loss detection and invitations, as numbered requirements with their
+  rationale; the bridges and the Signal, Matrix and email bindings are documents of their
+  own in **[bindings/](bindings/)**;
 - **a reference implementation** in TypeScript of every conformance class the
   specification defines;
 - **[CONFORMANCE.md](CONFORMANCE.md)** — what of the specification that implementation

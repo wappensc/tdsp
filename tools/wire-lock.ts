@@ -38,13 +38,12 @@ export const WIRE_FILES = [
   "bridges/email-bridge/test-vectors/member-ids-v1.json",
 ] as const;
 
-/** The specification's normative wire sections, by heading: frame, profiles, control state, invitations, bindings, values. */
+/** The specification's normative wire sections, by heading: frame, profiles, control state, invitations, values. */
 export const WIRE_SECTIONS = [
   "## 4. The payload frame",
   "## 5. Document profiles",
   "## 7. Control state",
   "## 11. Invitations",
-  "## 13. Messenger bindings",
   "## Appendix A. Profile `yjs-paragraphs/1`",
   "## Appendix B. Recommended values",
 ] as const;
@@ -53,7 +52,12 @@ export const WIRE_SECTIONS = [
  * Documents locked whole: the messenger bindings, once they are documents of their own
  * (SPECIFICATION.md §13). Their requirements are wire as much as a section is.
  */
-export const WIRE_DOCUMENTS: readonly string[] = [];
+export const WIRE_DOCUMENTS: readonly string[] = [
+  "bindings/bridges.md",
+  "bindings/signal.md",
+  "bindings/matrix.md",
+  "bindings/email.md",
+];
 
 export const LOCK_FILE = "wire/wire-lock.json";
 

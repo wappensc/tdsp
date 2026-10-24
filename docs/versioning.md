@@ -43,7 +43,7 @@ Within one major version, nothing in the following breaks:
   major wrote can be read again.
 
 Not covered yet: the bridges' local interface and configuration, because
-SPECIFICATION.md §12.6 is not yet stable ([CONFORMANCE.md](../CONFORMANCE.md), "Known
+the local bridge interface (`bindings/local-bridge-interface.md`, §12.6) is not yet stable ([CONFORMANCE.md](../CONFORMANCE.md), "Known
 gaps"), and `@tdsp/bridge-log` and `@tdsp/loopback`, which exist for the adapters and
 bridges in this repository.
 
