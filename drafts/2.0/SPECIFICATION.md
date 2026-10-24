@@ -307,13 +307,16 @@ Permissions are a policy. A message size limit is a fact.
   place, the engine; a bridge that interprets frames is a second, divergent
   implementation of the protocol, and the transport stops being replaceable.
 - **ARC-4** · *application, adapter, bridge* — Messenger credentials (keys,
-  tokens, passwords, linked-device state, keyrings) SHOULD be held by a component
-  separated from the one that renders document content — a separate process, an
-  XPC service or an equivalent operating-system boundary — and MUST NOT be passed
-  to the engine or to any component that renders document content or anything
-  else received through the channel. A sign-in form of the application MAY take a
-  password the person types and hand it to the bridge, when the form runs outside
-  such a component and keeps nothing of it.
+  tokens, passwords, linked-device state, keyrings):
+  - SHOULD be held by a component separated from the one that renders document
+    content — a separate process, an XPC service or an equivalent
+    operating-system boundary;
+  - MUST NOT be passed to the engine or to any component that renders document
+    content or anything else received through the channel.
+
+  A sign-in form of the application MAY take a password the person types and hand
+  it to the bridge, when the form runs outside such a component and keeps nothing
+  of it.
   *Rationale:* the component that renders untrusted content should not be able to
   speak as the user on the messenger; a process boundary makes that a property
   of the system rather than of the code's discipline. It is a SHOULD because a
@@ -3536,12 +3539,16 @@ interoperates, whichever Yjs release — or independent implementation — it us
   every peer keeps it (LAY-1) whether or not it shows it.
 - **YJS-4** · *engine* — A receiver MUST NOT reject an update because what it
   holds breaks YJS-1, and MUST apply it like any other. It MUST project such
-  content as it projects paragraphs: each child of `content`, whatever its name and
-  attributes, is one paragraph whose text is that of the `Y.XmlText`s it holds
-  directly, in order, without formatting or embeds; a `Y.XmlText` that is itself a
-  child of `content` is a paragraph of its own text, and anything nested deeper
-  adds nothing. A top-level type beside `content` that no layer id names is not in
-  the projection, and a change of it is a change of the content (LAY-7).
+  content as it projects paragraphs:
+  - each child of `content`, whatever its name and attributes, is one paragraph
+    whose text is that of the `Y.XmlText`s it holds directly, in order, without
+    formatting or embeds;
+  - a `Y.XmlText` that is itself a child of `content` is a paragraph of its own
+    text;
+  - anything nested deeper adds nothing.
+
+  A top-level type beside `content` that no layer id names is not in the
+  projection, and a change of it is a change of the content (LAY-7).
   *Rationale:* a CRDT cannot refuse part of the state it converges to: a receiver
   that rejected such an update would fall behind everyone who applied it, and every
   later update of its writer would wait for it. Projected one way everywhere, the
