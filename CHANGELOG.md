@@ -64,6 +64,11 @@ No byte on the wire changes; the new requirements are why this is a minor versio
   wait Signal stated, or 502 (TRN-6). Members that are not registered, or whose identity the
   account does not trust, still do not hold a frame back, nor does any member an invitation
   (#73).
+- The Matrix bridge no longer delivers an unencrypted frame from an encrypted room. In such a
+  room the carrier is `m.room.encrypted` (§13.3), and a homeserver can place an unencrypted
+  event there under any member's name — the creator's included. A room counts as encrypted
+  when it was bound so, or once the bridge saw its encryption turned on or an encrypted event
+  in it (#74).
 
 ## v1.4.0 — 2026-10-13 · implements TDSP 1.3
 
