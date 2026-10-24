@@ -530,4 +530,60 @@ describe("a receiver's handling of attachments", () => {
     expect(payloads()).toEqual([textOf(frame)]);
     expect(homeserver.mediaRequests).toEqual([]);
   });
+
+  describe("an attachment under the id of an event already delivered (BRG-11, BRG-12)", () => {
+    const ALICE = "@alice:homeserver.test";
+    const inBody = (eventId: string, frame: Uint8Array): TimelineEvent => ({
+      type: EDIT,
+      event_id: eventId,
+      sender: ALICE,
+      content: { tdsp: 1, documentId: DOC, frame: textOf(frame) },
+    });
+
+    it("is dropped silently when it is the same one again, and not fetched again", async () => {
+      const frame = bytesOf(1000, 41);
+      homeserver.serve("a", frame);
+      await poll([plainEvent("$1", "a", frame)], [plainEvent("$1", "a", frame)]);
+      expect(payloads()).toEqual([textOf(frame)]);
+      expect(homeserver.mediaRequests).toEqual(["a"]);
+      expect(state.getIntegrityLog(DOC)).toEqual([]);
+    });
+
+    it("is the same content as the frame delivered in the body, when its hash is that frame's", async () => {
+      const frame = bytesOf(1000, 42);
+      homeserver.serve("a", frame);
+      await poll([inBody("$1", frame)], [plainEvent("$1", "a", frame)]);
+      expect(payloads()).toEqual([textOf(frame)]);
+      expect(homeserver.mediaRequests).toEqual([]);
+      expect(state.getIntegrityLog(DOC)).toEqual([]);
+    });
+
+    it("is recorded as message-replaced when it names another hash, compared before anything is fetched", async () => {
+      const frame = bytesOf(1000, 43);
+      const other = bytesOf(1000, 44);
+      homeserver.serve("a", frame);
+      homeserver.serve("b", other);
+      await poll([plainEvent("$1", "a", frame)], [plainEvent("$1", "b", other)]);
+      expect(payloads()).toEqual([textOf(frame)]);
+      expect(homeserver.mediaRequests).toEqual(["a"]);
+      expect(state.getIntegrityLog(DOC)).toEqual([
+        { eventId: "$1", sender: ALICE, reason: "message-replaced" },
+      ]);
+    });
+
+    it("is compared, while it waits to be fetched again, with what was delivered under its id meanwhile", async () => {
+      const waiting = bytesOf(1000, 45);
+      const delivered = bytesOf(500, 46);
+      homeserver.failWith("w", 503);
+      await poll([plainEvent("$1", "w", waiting)], [inBody("$1", delivered)]);
+      homeserver.serve("w", waiting);
+      advance(3_600_000);
+      await state.pollOnce();
+      expect(payloads()).toEqual([textOf(delivered)]);
+      expect(homeserver.mediaRequests).toEqual(["w"]);
+      expect(state.getIntegrityLog(DOC)).toEqual([
+        { eventId: "$1", sender: ALICE, reason: "message-replaced" },
+      ]);
+    });
+  });
 });

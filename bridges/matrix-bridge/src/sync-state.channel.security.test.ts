@@ -142,6 +142,24 @@ describe("an event for a document from a room it is not bound to (BRG-10)", () =
     expect(state.getIntegrityLog(DOC)).toEqual([]);
   });
 
+  it("leaves no record when it replaces a delivered message under its id, and is not delivered", async () => {
+    await pollRounds(
+      { [BOUND]: [frame("$original", ALICE, "b3JpZ2luYWw=")] },
+      { [OTHER]: [frame("$original", "@mallory:homeserver.test", "dGFtcGVyZWQ=")] },
+    );
+    expect(frames()).toEqual(["b3JpZ2luYWw="]);
+    expect(state.getIntegrityLog(DOC)).toEqual([]);
+  });
+
+  it("never enters what a later event under its id is compared by: the bound room's is delivered", async () => {
+    await pollRounds(
+      { [OTHER]: [frame("$id", "@mallory:homeserver.test", "Zm9yZWlnbg==")] },
+      { [BOUND]: [frame("$id", ALICE, "Ym91bmQ=")] },
+    );
+    expect(frames()).toEqual(["Ym91bmQ="]);
+    expect(state.getIntegrityLog(DOC)).toEqual([]);
+  });
+
   it("still records an edit and a redaction from the bound room", async () => {
     await pollRounds(
       { [BOUND]: [frame("$original", ALICE, "b3JpZ2luYWw=")] },
