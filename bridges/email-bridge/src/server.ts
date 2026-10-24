@@ -62,7 +62,7 @@ export interface ServerDependencies {
   readonly address: string | undefined;
   readonly sender: MailSender | undefined;
   readonly sync: SyncState | undefined;
-  /** `undefined` when no `gpg` binary was found at bridge startup (`hasGpgAvailable()`) — `/pgp/status` then reports `gpgAvailable: false`; a PGP-enabled document can then neither send (503) nor verify what it receives (rejected as `pgp-unavailable`), while PGP-off documents are unaffected. */
+  /** `undefined` when no `gpg` binary was found at bridge startup (`hasGpgAvailable()`) — `/pgp/status` then reports `gpgAvailable: false`; a PGP-enabled document can then neither send (409, needs-person) nor verify what it receives (rejected as `pgp-unavailable`), while PGP-off documents are unaffected. */
   readonly gpg: GpgInvoker | undefined;
   readonly bindStorePath: string;
   /** Reads the invitation a participant joins from. `undefined` while the mailbox is unconfigured. */
@@ -206,14 +206,21 @@ async function preparePgpSend(
   if (!bound.pgpEnabled) {
     return {};
   }
+  // For PGP the account includes gpg and the person's own secret key (bindings/email.md,
+  // "Account"). Each refusal below that only the person lifts is needs-person, 409 (TRN-11):
+  // gpg is found once, when the bridge starts, so only the person installing it (or setting
+  // GPG_PATH) and restarting the bridge ends its absence — never waiting, as a 503 implied.
   if (deps.gpg === undefined || deps.address === undefined) {
     return {
       blocked: {
-        status: 503,
-        error: `${documentId} has PGP enabled, but this bridge has no gpg binary configured`,
+        status: 409,
+        error: `${documentId} has PGP enabled, but this bridge has no gpg binary configured — install gpg or set GPG_PATH, then restart the bridge`,
       },
     };
   }
+  // A document's own keyring that is missing, or lacks a pinned key, stays rejected, 422: its
+  // keys came from the creator's signed invitation (EML-4), which nothing the person imports
+  // into their own keyring replaces.
   if (bound.keyringPath === undefined || bound.ownFingerprint === undefined) {
     return {
       blocked: {
@@ -222,10 +229,12 @@ async function preparePgpSend(
       },
     };
   }
+  // The key the document pins for this address, missing from the person's keyring: importing
+  // it lifts the refusal, so it is not rejected — that would drop the change for good.
   if (!(await deps.gpg.hasSecretKey(bound.ownFingerprint))) {
     return {
       blocked: {
-        status: 422,
+        status: 409,
         error: `no PGP secret key ${bound.ownFingerprint} for ${deps.address} in this bridge's keyring — cannot sign for ${documentId}, refusing to send`,
       },
     };

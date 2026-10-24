@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { type Delivery, parseTransportProfile } from "@tdsp/messenger-port";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getBindRecord, setBindRecord } from "./bind-store.ts";
+import { FakeGpgInvoker } from "./fake-gpg.ts";
+import { keyringPathFor } from "./keyring-store.ts";
 import {
   createNodemailerSender,
   type IncomingMail,
@@ -750,6 +752,65 @@ describe("bridges/email-bridge server", () => {
         body: JSON.stringify({ sender: sender.address, payload: "AQID" }),
       });
       expect(response.status).toBe(404);
+    });
+
+    describe("a PGP document's setup that only the person can complete is needs-person, 409 (EML-3, TRN-11)", () => {
+      const OWN_KEY = "A".repeat(40);
+      const BOB_KEY = "B".repeat(40);
+
+      /** Restarts the bridge with `gpg` and makes doc-1 a PGP document signed with OWN_KEY. */
+      async function restartPgp(gpg: FakeGpgInvoker | undefined) {
+        server.close();
+        start({ gpg });
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const address = server.address();
+        const url =
+          typeof address === "object" && address ? `http://127.0.0.1:${address.port}` : "";
+        const keyringPath = keyringPathFor(bindStorePath, "doc-1");
+        const bound = getBindRecord(bindStorePath, "doc-1");
+        if (bound) {
+          setBindRecord(bindStorePath, "doc-1", {
+            ...bound,
+            recipients: ["me@example.org", "bob@example.org"],
+            pgpEnabled: true,
+            keyringPath,
+            ownFingerprint: OWN_KEY,
+            pinnedFingerprints: { "me@example.org": OWN_KEY, "bob@example.org": BOB_KEY },
+          });
+        }
+        const send = () =>
+          fetch(`${url}/channels/doc-1/send`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ sender: sender.address, payload: "AQID" }),
+          });
+        return { keyringPath, send };
+      }
+
+      it("no secret key of its own to sign with — and sends once the person imported it", async () => {
+        const gpg = new FakeGpgInvoker();
+        const { keyringPath, send } = await restartPgp(gpg);
+        const ring = gpg.withKeyring(keyringPath);
+        ring.seedKey("me@example.org", { fingerprint: OWN_KEY, userIds: ["me@example.org"] });
+        ring.seedKey("bob@example.org", { fingerprint: BOB_KEY, userIds: ["bob@example.org"] });
+
+        const refused = await send();
+        expect(refused.status).toBe(409);
+        expect(((await readJson(refused)) as { error: string }).error).toContain("secret key");
+        expect(sender.sent).toEqual([]);
+
+        gpg.seedSecretKey("me@example.org", OWN_KEY);
+        expect((await send()).status).toBe(200);
+        expect(sender.sent).toHaveLength(1);
+      });
+
+      it("no gpg at all, which the person installs", async () => {
+        const { send } = await restartPgp(undefined);
+        const response = await send();
+        expect(response.status).toBe(409);
+        expect(((await readJson(response)) as { error: string }).error).toContain("gpg");
+        expect(sender.sent).toEqual([]);
+      });
     });
   });
 
