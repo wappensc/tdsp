@@ -177,7 +177,7 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
   answer, and the bridge's memory, grow without end. An engine polls far more
   often than a sensible window fills, and one that falls behind anyway loses
   messages it recovers by resync where loss detection notices them (LOS-8, with the
-  limits of [§10](../SPECIFICATION.md#10-loss-detection)) — so the simpler rule is to let loss
+  limits of [§10.6](../SPECIFICATION.md#106-what-loss-detection-cannot-notice)) — so the simpler rule is to let loss
   detection do its job rather than add an acknowledgement protocol. Forbidding
   re-offering altogether would be a promise no bridge that keeps its state in
   memory can keep across a restart, and an engine that treats every frame
