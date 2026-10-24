@@ -19,7 +19,13 @@ import {
 } from "./attachment.ts";
 import type { AuthStatus } from "./auth.ts";
 import { type BindRecord, getBindRecord, setBindRecord } from "./bind-store.ts";
-import { classifySendFailure, PartialSendError } from "./send-failure.ts";
+import {
+  classifySendFailure,
+  NobodyGotItError,
+  NotProvisionedError,
+  nobodyGotIt,
+  PartialSendError,
+} from "./send-failure.ts";
 import { listGroups as listGroupsApi, type SignalRpc, sendGroupMessage } from "./signal-api.ts";
 import { createSyncState, type SyncState } from "./sync-state.ts";
 import { SIGNAL_PROFILE } from "./transport-profile.ts";
@@ -78,7 +84,7 @@ export interface GroupReader {
 function requirePhoneNumber(auth: AuthStatusSource): string {
   const { phoneNumber } = auth;
   if (!phoneNumber) {
-    throw new Error("not linked yet — no Signal phone number available");
+    throw new NotProvisionedError();
   }
   return phoneNumber;
 }
@@ -87,7 +93,7 @@ function requirePhoneNumber(auth: AuthStatusSource): string {
 function requireAccountId(auth: AuthStatusSource): string {
   const { accountId } = auth.status;
   if (!accountId) {
-    throw new Error("not linked yet — no Signal account id available");
+    throw new NotProvisionedError();
   }
   return accountId;
 }
@@ -135,6 +141,17 @@ export interface GroupWriter {
   sendInviteMessage(groupId: string, text: string): Promise<string>;
 }
 
+/**
+ * Refuses a send whose results say no recipient got it (SIG-4, TRN-6): `signal-cli` raises an error
+ * for that itself, and an answer saying the same is no more a sent message. See `nobodyGotIt`.
+ */
+function throwIfNobodyGotIt(results: unknown): void {
+  const failure = nobodyGotIt(results);
+  if (failure !== undefined) {
+    throw new NobodyGotItError(failure);
+  }
+}
+
 /** The real implementation, backed by `signal-api.ts`'s live `send` JSON-RPC call. */
 export function createGroupWriter(rpc: SignalRpc, auth: AuthStatusSource): GroupWriter {
   async function sendEnvelope(
@@ -142,13 +159,14 @@ export function createGroupWriter(rpc: SignalRpc, auth: AuthStatusSource): Group
     envelope: Record<string, unknown>,
     attachments?: readonly string[],
   ): Promise<string> {
-    const { timestamp, missed } = await sendGroupMessage(
+    const { timestamp, missed, results } = await sendGroupMessage(
       rpc,
       requirePhoneNumber(auth),
       groupId,
       JSON.stringify(envelope),
       attachments,
     );
+    throwIfNobodyGotIt(results);
     // A frame some members missed for now is not accepted for every member (TRN-6): it fails, and
     // the engine keeps it for a retry. See `PartialSendError`.
     if (missed.rateLimited > 0 || missed.unreachable > 0) {
@@ -178,7 +196,14 @@ export function createGroupWriter(rpc: SignalRpc, auth: AuthStatusSource): Group
       );
     },
     async sendInviteMessage(groupId, text) {
-      const { timestamp } = await sendGroupMessage(rpc, requirePhoneNumber(auth), groupId, text);
+      const { timestamp, results } = await sendGroupMessage(
+        rpc,
+        requirePhoneNumber(auth),
+        groupId,
+        text,
+      );
+      // Sent once one member got it (SIG-4), so not when none did.
+      throwIfNobodyGotIt(results);
       return `${requireAccountId(auth)}:${timestamp}`;
     },
   };
@@ -213,6 +238,30 @@ export function createLiveServerDependencies(
       attachmentsDir,
     }),
   };
+}
+
+/**
+ * Whether the bridge has an account to act as (BRG-1): the ACI it names itself by and the number
+ * `signal-cli` selects it by, both of which exist only once a device link completed.
+ */
+function isProvisioned(auth: AuthStatusSource): boolean {
+  return auth.status.linked && Boolean(auth.status.accountId) && Boolean(auth.phoneNumber);
+}
+
+/**
+ * Refuses a document operation while the bridge is not provisioned, and says so: a 409, which the
+ * adapter reads as `needs-person` (BRG-1, LBI-6), so the engine keeps the change and the
+ * application asks the person to link the bridge (TRN-20, TRN-22). Checked before anything else
+ * the route checks, as no answer about the request means anything without an account: a sender
+ * compared with no account would otherwise be `rejected` (BRG-16), and the change dropped.
+ * Returns whether it refused.
+ */
+function refusedUnprovisioned(res: ServerResponse, auth: AuthStatusSource): boolean {
+  if (isProvisioned(auth)) {
+    return false;
+  }
+  sendJson(res, 409, { error: new NotProvisionedError().message });
+  return true;
 }
 
 function sendJson(
@@ -330,12 +379,26 @@ export function createServer(deps: ServerDependencies): Server {
 
     if (method === "GET" && path === "/transport-profile") {
       // The send policies and hard bounds a client should use with this bridge
-      // (SPECIFICATION.md §3.5).
+      // (SPECIFICATION.md §3.5); 503 while unprovisioned (bindings/local-bridge-interface.md §12.6):
+      // the account the profile is for, its one dependency, is not configured yet, and a client
+      // that read a profile would take the bridge for one it can send through.
+      if (!isProvisioned(deps.auth)) {
+        sendJson(res, 503, { error: new NotProvisionedError().message });
+        return;
+      }
       sendJson(res, 200, SIGNAL_PROFILE);
       return;
     }
 
+    // Every route from here on that the bridge serves is a document operation in BRG-1's sense:
+    // it reads or writes the account's channels or the documents bound to them, and each refuses
+    // first while there is no account. `/health`, `/auth/*` and `/whoami` above are not: they are
+    // how the person and the application find out about the account, and set it up.
+
     if (method === "GET" && path === "/channels") {
+      if (refusedUnprovisioned(res, deps.auth)) {
+        return;
+      }
       deps.groups
         .listGroups()
         .then((groups) => sendJson(res, 200, groups))
@@ -348,6 +411,9 @@ export function createServer(deps: ServerDependencies): Server {
     // Not under /channels/:documentId: a channel's members are asked by its channel id, also
     // before any document is bound to it (SPECIFICATION.md §12.6, TRN-17).
     if (method === "GET" && path === "/members") {
+      if (refusedUnprovisioned(res, deps.auth)) {
+        return;
+      }
       const channelId = new URLSearchParams(query).get("channelId");
       const members = deps.groups.members;
       if (channelId === null || channelId === "") {
@@ -373,6 +439,9 @@ export function createServer(deps: ServerDependencies): Server {
 
     const bindMatch = method === "POST" ? /^\/channels\/([^/]+)\/bind$/.exec(path ?? "") : null;
     if (bindMatch) {
+      if (refusedUnprovisioned(res, deps.auth)) {
+        return;
+      }
       const documentId = decodeURIComponent(bindMatch[1] as string);
       readJsonBody(req)
         .then(async (rawBody) => {
@@ -421,6 +490,9 @@ export function createServer(deps: ServerDependencies): Server {
 
     const sendMatch = method === "POST" ? /^\/channels\/([^/]+)\/send$/.exec(path ?? "") : null;
     if (sendMatch) {
+      if (refusedUnprovisioned(res, deps.auth)) {
+        return;
+      }
       const documentId = decodeURIComponent(sendMatch[1] as string);
       readJsonBody(req)
         .then(async (rawBody) => {
@@ -454,6 +526,10 @@ export function createServer(deps: ServerDependencies): Server {
     }
 
     if (method === "GET" && path?.startsWith("/channels/") && path.endsWith("/deliveries")) {
+      // An empty list would read as "nothing arrived" rather than "nothing can arrive" (BRG-1).
+      if (refusedUnprovisioned(res, deps.auth)) {
+        return;
+      }
       const documentId = decodeURIComponent(path.slice("/channels/".length, -"/deliveries".length));
       deps.sync
         .pollOnce()
@@ -467,6 +543,9 @@ export function createServer(deps: ServerDependencies): Server {
     // bindings/bridges.md BRG-15, like the email and Matrix bridges' own
     // /integrity-log route. Diagnostic, not part of MessengerPort.
     if (method === "GET" && path?.startsWith("/channels/") && path.endsWith("/integrity-log")) {
+      if (refusedUnprovisioned(res, deps.auth)) {
+        return;
+      }
       const documentId = decodeURIComponent(
         path.slice("/channels/".length, -"/integrity-log".length),
       );
@@ -481,6 +560,9 @@ export function createServer(deps: ServerDependencies): Server {
 
     const inviteMatch = method === "POST" ? /^\/channels\/([^/]+)\/invite$/.exec(path ?? "") : null;
     if (inviteMatch) {
+      if (refusedUnprovisioned(res, deps.auth)) {
+        return;
+      }
       const documentId = decodeURIComponent(inviteMatch[1] as string);
       readJsonBody(req)
         .then(async (rawBody) => {

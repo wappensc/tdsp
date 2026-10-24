@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifySendFailure, PartialSendError } from "./send-failure.ts";
+import { classifySendFailure, NobodyGotItError, PartialSendError } from "./send-failure.ts";
 import { type AuthStatusSource, createGroupWriter } from "./server.ts";
 import type { SignalRpc } from "./signal-api.ts";
 
@@ -91,11 +91,69 @@ describe("a frame that did not reach every member of the group", () => {
     ).toBe("alice-aci:1700000000001");
   });
 
+  describe("an answer whose results say nobody got it (SIG-4) is not sent", () => {
+    // signal-cli 0.14.9 raises an error for this itself (`SendMessageResultUtils.outputResult`);
+    // the same results arriving as an answer must not count as sent either (TRN-6).
+    it("is rejected when every recipient is not registered", async () => {
+      const refusal = await sendFrameWith(
+        result("UNREGISTERED_FAILURE"),
+        result("UNREGISTERED_FAILURE"),
+      );
+      expect(classifySendFailure(refusal)).toEqual({ status: 422 });
+    });
+
+    it("waits for the person when the others are identities this account does not trust", async () => {
+      const refusal = await sendFrameWith(
+        result("UNREGISTERED_FAILURE"),
+        result("IDENTITY_FAILURE"),
+      );
+      expect(classifySendFailure(refusal)).toEqual({ status: 409 });
+    });
+
+    it("is unavailable otherwise", async () => {
+      const refusal = await sendFrameWith(
+        result("IDENTITY_FAILURE"),
+        result("INVALID_PRE_KEY_FAILURE"),
+      );
+      expect(refusal).toBeInstanceOf(NobodyGotItError);
+      expect(classifySendFailure(refusal)).toEqual({ status: 502 });
+    });
+
+    it("holds back an invitation nobody got: it counts as sent once one member got it", async () => {
+      const rpc = new FakeRpc();
+      rpc.results = [result("UNREGISTERED_FAILURE"), result("IDENTITY_FAILURE")];
+      const refusal = await createGroupWriter(rpc, auth)
+        .sendInviteMessage("g1", "hello")
+        .catch((error: unknown) => error);
+      expect(classifySendFailure(refusal)).toEqual({ status: 409 });
+    });
+
+    it("sends into a group with no other member, for which signal-cli has no result at all", async () => {
+      expect(await sendFrameWith()).toBe("alice-aci:1700000000001");
+    });
+  });
+
   it("does not hold back an invitation that some members missed: people read it, and a retry would show it twice", async () => {
     const rpc = new FakeRpc();
     rpc.results = [result("SUCCESS"), result("RATE_LIMIT_FAILURE", 30)];
     await expect(createGroupWriter(rpc, auth).sendInviteMessage("g1", "hello")).resolves.toBe(
       "alice-aci:1700000000001",
     );
+  });
+});
+
+describe("a frame the writer is asked to send without a linked account", () => {
+  it("is refused as needs-person, not sent with no account to send as (BRG-1)", async () => {
+    const unlinked: AuthStatusSource = {
+      ...auth,
+      status: { linked: false },
+      phoneNumber: undefined,
+    };
+    const rpc = new FakeRpc();
+    rpc.results = [result("SUCCESS")];
+    const refusal = await createGroupWriter(rpc, unlinked)
+      .sendEdit("g1", "doc-1", '{"tdsp":1}')
+      .catch((error: unknown) => error);
+    expect(classifySendFailure(refusal)).toEqual({ status: 409 });
   });
 });

@@ -3,7 +3,11 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Delivery, parseTransportProfile } from "@tdsp/messenger-port";
+import {
+  type Delivery,
+  parseTransportProfile,
+  transportSendErrorFromHttp,
+} from "@tdsp/messenger-port";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { BindStoreData } from "./bind-store.ts";
 import { MatrixApiError } from "./matrix-api.ts";
@@ -77,6 +81,10 @@ class FakeMatrixRoomWriter implements MatrixRoomWriter {
     return `$fake-invite-${this.#nextId}`;
   }
 }
+
+/** The reason an adapter reads from a refused send's status (LBI-6). */
+const reasonOf = (status: number, body: string) =>
+  transportSendErrorFromHttp("send", status, body).reason;
 
 class FakeSyncState implements SyncState {
   deliveries = new Map<string, Delivery[]>();
@@ -375,6 +383,81 @@ describe("matrix-bridge HTTP API", () => {
     expect((await sendFailingWith(new Error("socket hang up"))).status).toBe(502);
   });
 
+  it("POST /channels/:documentId/send answers 409, needs-person, for a refusal only a person can lift (BRG-8, TRN-11)", async () => {
+    rooms.joinedRoomIds.add("!plain:example.org");
+    await fetch(`${baseUrl}/channels/doc-1/bind`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        channelId: "!plain:example.org",
+        creator: "alice",
+        profile: "yjs-paragraphs/1",
+      }),
+    });
+    const sendRefusedWith = async (status: number, errcode: string) => {
+      writer.sendEdit = async () => {
+        throw new MatrixApiError(
+          status,
+          `send x into !r failed: ${status} {"errcode":"${errcode}"}`,
+        );
+      };
+      const response = await fetch(`${baseUrl}/channels/doc-1/send`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sender: "alice", payload: "hello" }),
+      });
+      const body = await response.text();
+      return { status: response.status, reason: reasonOf(response.status, body) };
+    };
+
+    // A signed-out account, and a homeserver that waits for the user's consent.
+    expect(await sendRefusedWith(401, "M_UNKNOWN_TOKEN")).toEqual({
+      status: 409,
+      reason: "needs-person",
+    });
+    expect(await sendRefusedWith(403, "M_CONSENT_NOT_GIVEN")).toEqual({
+      status: 409,
+      reason: "needs-person",
+    });
+    // A room that forbids this account stays a refusal for good.
+    expect(await sendRefusedWith(403, "M_FORBIDDEN")).toEqual({ status: 403, reason: "rejected" });
+  });
+
+  it("a signed-out account reads as needs-person on a send even before the send, when the bridge asks who it is", async () => {
+    rooms.joinedRoomIds.add("!plain:example.org");
+    await fetch(`${baseUrl}/channels/doc-1/bind`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        channelId: "!plain:example.org",
+        creator: "alice",
+        profile: "yjs-paragraphs/1",
+      }),
+    });
+    const signedOut = new MatrixApiError(
+      401,
+      'whoami failed: 401 {"errcode":"M_UNKNOWN_TOKEN","error":"Invalid access token passed.","soft_logout":false}',
+    );
+    rooms.whoami = async () => {
+      throw signedOut;
+    };
+    rooms.listJoinedRoomSummaries = async () => {
+      throw signedOut;
+    };
+
+    const send = await fetch(`${baseUrl}/channels/doc-1/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sender: "alice", payload: "hello" }),
+    });
+    expect(reasonOf(send.status, await send.text())).toBe("needs-person");
+    expect(send.status).toBe(409);
+    expect(writer.sentEdits).toHaveLength(0);
+    // Every other route says so too, rather than a failure the person cannot act on.
+    expect((await fetch(`${baseUrl}/whoami`)).status).toBe(409);
+    expect((await fetch(`${baseUrl}/channels`)).status).toBe(409);
+  });
+
   it("GET /channels/:documentId/deliveries polls once and returns the buffered deliveries", async () => {
     sync.deliveries.set("doc-1", [
       { id: "$1", documentId: "doc-1", sender: "alice", payload: "hi" },
@@ -505,5 +588,101 @@ describe("matrix-bridge HTTP API", () => {
     expect(response.status).toBe(404);
     const body = (await response.json()) as { error: string };
     expect(body.error).toContain("GET /nonexistent");
+  });
+});
+
+describe("matrix-bridge with no account provisioned (BRG-1)", () => {
+  let server: Server;
+  let baseUrl: string;
+  let bindStoreDir: string;
+  let touched: string[];
+
+  beforeEach(async () => {
+    // Stand-ins that record being reached: an unprovisioned bridge must refuse before any.
+    touched = [];
+    const reached = (name: string) => (): Promise<never> => {
+      touched.push(name);
+      return Promise.reject(new Error("MATRIX_ACCESS_TOKEN is not configured"));
+    };
+    bindStoreDir = mkdtempSync(join(tmpdir(), "matrix-bridge-unprovisioned-"));
+    server = createServer({
+      homeserverUrl: "https://matrix.example.org",
+      accessToken: undefined,
+      rooms: {
+        listJoinedRoomSummaries: reached("listJoinedRoomSummaries"),
+        isJoinedMember: reached("isJoinedMember"),
+        isEncrypted: reached("isEncrypted"),
+        whoami: reached("whoami"),
+        joinedMembers: reached("joinedMembers"),
+      },
+      writer: { sendEdit: reached("sendEdit"), sendInviteMessage: reached("sendInviteMessage") },
+      sync: { pollOnce: reached("pollOnce"), getDeliveries: () => [], getIntegrityLog: () => [] },
+      bindStorePath: join(bindStoreDir, "tdsp-channels.json"),
+    });
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const { port } = server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    rmSync(bindStoreDir, { recursive: true, force: true });
+  });
+
+  const post = (path: string, body: unknown) =>
+    fetch(`${baseUrl}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("refuses a send as needs-person, 409, whatever the request says", async () => {
+    for (const body of [
+      { sender: "@alice:example.org", payload: "hello" },
+      { sender: "@bob:example.org", payload: "hello" },
+      {},
+    ]) {
+      const response = await post("/channels/doc-1/send", body);
+      expect(response.status).toBe(409);
+      expect(reasonOf(response.status, await response.text())).toBe("needs-person");
+    }
+    expect(touched).toEqual([]);
+  });
+
+  it("refuses every other document operation with 409 too, so each reads as not provisioned", async () => {
+    const answers = await Promise.all([
+      fetch(`${baseUrl}/whoami`),
+      fetch(`${baseUrl}/channels`),
+      fetch(`${baseUrl}/members?channelId=${encodeURIComponent("!r:example.org")}`),
+      fetch(`${baseUrl}/channels/doc-1/deliveries`),
+      fetch(`${baseUrl}/channels/doc-1/integrity-log`),
+      post("/channels/doc-1/bind", {
+        channelId: "!r:example.org",
+        creator: "@alice:example.org",
+        profile: "yjs-paragraphs/1",
+      }),
+      post("/channels/doc-1/invite", { actor: "@alice:example.org", text: "join" }),
+    ]);
+    for (const response of answers) {
+      expect(response.status, response.url).toBe(409);
+      await response.text();
+    }
+    expect(touched).toEqual([]);
+  });
+
+  it("serves no transport profile (503), and still answers /health and unknown routes", async () => {
+    const profile = await fetch(`${baseUrl}/transport-profile`);
+    expect(profile.status).toBe(503);
+    await profile.text();
+
+    const health = await fetch(`${baseUrl}/health`);
+    expect(health.status).toBe(200);
+    await expect(health.json()).resolves.toMatchObject({ status: "ok", configured: false });
+
+    const unknown = await fetch(`${baseUrl}/nonexistent`);
+    expect(unknown.status).toBe(404);
+    await unknown.text();
   });
 });
