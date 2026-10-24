@@ -1034,7 +1034,7 @@ describe("capacity: a union within the bytes converges, one beyond them is a nam
     ).toEqual([A, B]);
   });
 
-  it("issues a new target only up to 1 MiB, and the close and changes of held targets up to the bytes it holds (KZ-16)", {
+  it("issues a new target only up to 1 MiB, and the close and changes of held targets up to the bytes it holds (CTL-37)", {
     timeout: 60_000,
   }, () => {
     const op = (counter: number, target: string, value: unknown): ControlOperation => ({

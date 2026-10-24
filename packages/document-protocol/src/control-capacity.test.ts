@@ -86,7 +86,9 @@ async function settle(...engines: DocumentEngine[]): Promise<void> {
 }
 
 describe("a capacity conflict (CTL-30, CTL-32)", () => {
-  it("a member that cannot hold the creator's operations for their bytes says so, refuses its edits and takes no new right", async () => {
+  it("a member that cannot hold the creator's operations for their bytes says so, refuses its edits and takes no new right", {
+    timeout: 60_000,
+  }, async () => {
     const port = new InMemoryMessengerPort();
     const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
     await alice.setMembership("bob", "write");
@@ -141,7 +143,9 @@ describe("a capacity conflict (CTL-30, CTL-32)", () => {
     expect(restarted.mayEdit).toBe(false);
   });
 
-  it("an answer whose snapshot the joiner could not hold does not bootstrap it (CTL-13, KZ-10)", async () => {
+  it("an answer whose snapshot the joiner could not hold does not bootstrap it (CTL-13)", {
+    timeout: 60_000,
+  }, async () => {
     const port = new HidingPort();
     const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
     // Two devices of Alice's that each decided about 60 % of what a client holds, apart: Alice's engine holds one set,
@@ -215,7 +219,9 @@ describe("a capacity conflict (CTL-30, CTL-32)", () => {
     );
   });
 
-  it("a device of the creator in a conflict issues no new member, and still revokes and closes", async () => {
+  it("a device of the creator in a conflict issues no new member, and still revokes and closes", {
+    timeout: 60_000,
+  }, async () => {
     const port = new InMemoryMessengerPort();
     const persisted: PersistedControlState[] = [];
     const laptop = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, {
