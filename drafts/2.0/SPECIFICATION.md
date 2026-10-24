@@ -1700,9 +1700,9 @@ anyway, or over 64 devices in a target's `seen`, is in a capacity conflict (CTL-
   - at most 3 MiB (3 145 728 bytes), measured as CTL-34 says.
 
   It MUST refuse and report an operation beyond a bound, except as CTL-35 and CTL-36
-  say, and MUST NOT let it change the control state. An operation or a snapshot that would bring it over the bytes,
-  or a target's `seen` over 64 devices, it MUST refuse as a whole: that is a
-  capacity conflict (CTL-32). It MUST NOT refuse, for the bound on counters above a
+  say, and MUST NOT let it change the control state. An operation or a snapshot
+  that would bring it over the bytes, or a target's `seen` over 64 devices, it
+  MUST refuse as a whole: that is a capacity conflict (CTL-32). It MUST NOT refuse, for the bound on counters above a
   hole, the operation that fills the lowest hole of its device: the next counter
   after the highest one it holds without a gap.
   *Rationale:* the creator's account can name device tags and targets at will;
@@ -1721,9 +1721,11 @@ anyway, or over 64 devices in a target's `seen`, is in a capacity conflict (CTL-
   devices name only devices they hold, at most 64; only creator devices beyond 64
   that do not agree on which they hold reach it. 3 MiB, and the close beside it, fit
   the 4 MiB of every binding with room for the rest of the frame — an answer's
-  update goes in pieces of its own beside it (SND-17). A target takes about 110
-  bytes at the least, so more than 5 002 targets would not fit in what one device
-  issues.
+  update goes in pieces of its own beside it (SND-17). 5 000 members are far more
+  than the small group TDSP serves (§1.1); a bound on their number keeps what a
+  receiver walks through, and every snapshot carries, fixed whatever their size.
+  The bytes alone would allow more: a target takes about 110 bytes at the least,
+  so 1 MiB holds some 9 000.
 - **CTL-34** · *engine* — The bytes of CTL-30 and CTL-37 MUST be measured in the control
   digest's form (LOS-12), without the close: the UTF-8 of the RFC 8785
   serialisation of the object holding exactly the receiver's snapshot's `vector`,
@@ -2259,8 +2261,9 @@ and the answer is a targeted diff.
   can give it back. A member may run several devices under one MemberId; one of
   them can bring another up to date while the creator is offline, and only for
   that device's own member.
-- **RSY-17** · *engine* — A responder MUST answer a request only if one of these
-  holds, and then MUST answer it, even with nothing to add:
+- **RSY-17** · *engine* — A responder that RSY-6 lets answer a request MUST answer
+  it only if one of these holds, and then MUST answer it, even with nothing to
+  add:
   - it holds content the requester's state vector lacks;
   - it would carry a control snapshot (RSY-8) holding operations the requester's
     control vector lacks;
@@ -3055,7 +3058,7 @@ evidence nothing can end:
   devices sent it (LOS-16). So when one device's final message and its heartbeat
   are both lost while another device of that member, which did get the frame
   before, sends a heartbeat, the loss shows only through a gap (LOS-2), that
-  device's next message or its restart (SND-8).
+  device's next message, or the request it sends when it restarts (RSY-1, LOS-4).
 - **Deletions.** An update that only deleted is held by every state vector, so a
   heartbeat ends its expectation always.
 - **A report that crossed a deletion.** A report that crossed a deletion the
