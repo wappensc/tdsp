@@ -3113,16 +3113,19 @@ control snapshot, and everything else about pacing is the joiner's own
 - **INV-3** · *application* — Before joining, an application MUST show the person
   the document, the channel and the creator the invitation names, and MUST join
   only after the person confirms. It MUST show the creator so that the person can
-  tell them from anyone else: by an identifier the messenger keeps unique — the
-  MemberId, or a phone number, user name or address the messenger binds to it —
-  or by a name the person gave that identity themselves, never only by a name the
-  creator chose, such as the display name of a profile.
+  tell them from anyone else, never only by a name the creator chose, such as the
+  display name of a profile:
+  - by an identifier the messenger keeps unique — the MemberId, or a phone number,
+    user name or address the messenger binds to it;
+  - or by a name the person gave that identity themselves.
+
   *Rationale:* the creator named in the invitation becomes the one identity whose
   control frames the engine obeys (CTL-5); a forged invitation naming someone else
   as creator is the one way to hand that authority to the wrong person, and the
   person is the only one who can recognise it. A name the creator chose is exactly
   what a forger copies: shown alone, it asks the person to confirm without letting
   them tell.
+
 ### 11.2 Policy text (withdrawn)
 
 TDSP 1.x carried the creator's sync policy in the invitation as a text with a
@@ -3131,11 +3134,12 @@ number stays so that references to §11.3 keep their meaning.
 
 ### 11.3 Invitation as a link
 
-An application that expresses an invitation as a URL query — or as a URL
-fragment (INV-8) — MUST use this form, so that one application can open
-another's invitations. The query is
-`application/x-www-form-urlencoded` as the WHATWG URL standard defines it (what
-`URLSearchParams` reads and writes), and every value is UTF-8.
+- **INV-10** · *application* — An application that expresses an invitation as a
+  URL query — or as a URL fragment (INV-8) — MUST use this form: the query or
+  fragment is `application/x-www-form-urlencoded` as the WHATWG URL standard
+  defines it (what `URLSearchParams` reads and writes), every value is UTF-8, and
+  it carries the invitation in the parameters of the table below.
+  *Rationale:* so that one application can open another's invitations.
 
 | Parameter | Field | Required | Value |
 |---|---|---|---|
@@ -3157,11 +3161,12 @@ from every later addition, as a profile or layer id from outside this
 specification is kept apart ([§5.5](#55-profiles-defined-outside-this-specification),
 [§5.6](#56-layers)).
 
-- **INV-6** · *application* — A reader MUST refuse an invitation in which a
-  parameter of the table above appears more than once, a required one is missing
-  or empty, or a value is outside its range; MUST ignore parameters the table does
-  not define — 1.x's `policy` among them; and MUST treat a missing or other `tdsp`
-  as an invitation it cannot read.
+- **INV-6** · *application* — A reader:
+  - MUST refuse an invitation in which a parameter of the table above appears more
+    than once, a required one is missing or empty, or a value is outside its range;
+  - MUST ignore parameters the table does not define — 1.x's `policy` among them;
+  - MUST treat a missing or other `tdsp` as an invitation it cannot read.
+
   *Rationale:* one reading for every link. A parameter named twice is exactly the
   place where two parsers pick different values; an unknown parameter is
   ignored because the same query also carries an application's own settings (a
@@ -3843,6 +3848,7 @@ The changes have six reasons, which the tables below cite by letter:
 | FRM-15 to FRM-17 | Parts of FRM-9, FRM-10 and FRM-12 as requirements of their own: an extension's name (FRM-15), checking the value of an extension one implements (FRM-16), what an engine keeps and passes on of an extension (FRM-17) | Readability: each was a part of a longer requirement, and requires what it did there |
 | ARC-5 | An application may carry a document between one person's devices through another service, and tells the person; a device of the creator that takes over carried control state continues under a new tag, and the state gives it a basis only if it was one (with CTL-25, CTL-28, RSY-14) | ARC-1 concerns participants; it said nothing about one person's devices, which a messenger without history cannot bring up to date. Two devices under one tag would notice only once one received what the other issued (CTL-24). |
 | INV-9 | Joining on another device of the person without asking again, when the confirmation travels from where the person gave it | INV-3 protects the creator's identity; the service that carries it is trusted as the person's machine. |
+| INV-10 | The MUST of §11.3's opening, to use the link's form, as a requirement of its own | A MUST without an ID, which §1.3 left informative although it was meant to bind; the content is unchanged |
 | TRN-20 (with TRN-22) | A send refused as `needs-person` is kept, shown, and tried again when the application says the person acted, or after the longest back-off | The person can lift the refusal and waiting cannot; without its own handling it would spin or be dropped. |
 | TRN-18 (with TRN-21), TRN-19 | An optional cursor with `truncated`, answered in the window's order, and truncated also behind what the bridge passed over; a bridge instance id, the epoch of the window, that changes whenever the bridge may have lost something | E: the engine continues after the last delivery an answer held; a gap the bridge skipped, or a loss in a restart, is what it cannot see by itself. |
 | TRN-21, TRN-22 | Parts of TRN-18 and TRN-20 as requirements of their own: the order of a `receiveSince` answer (TRN-21), what the application shows while sending waits for the person (TRN-22) | Readability: each was a part of a longer requirement, and requires what it did there |
