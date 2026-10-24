@@ -74,6 +74,7 @@ describe("sendGroupMessage", () => {
     expect(result).toEqual({
       timestamp: 1700000000000,
       missed: { rateLimited: 0, retryAfterSeconds: undefined, unreachable: 0 },
+      results: [],
     });
     expect(rpc.calls[0]).toEqual({
       method: "send",

@@ -118,8 +118,8 @@ export function longestRetryAfterSeconds(results: unknown): number | undefined {
  * `eventId` for the same purpose) — signal-cli's own `send` result
  * shape carries a `timestamp` field (this account's own send timestamp
  * doubles as Signal's own message identifier within a conversation) —
- * and the recipients it missed for now (`missedRecipients`), which the
- * caller decides about.
+ * the recipients it missed for now (`missedRecipients`), and its result per
+ * recipient as it came (`results`), which the caller decides about.
  */
 export async function sendGroupMessage(
   rpc: SignalRpc,
@@ -127,7 +127,7 @@ export async function sendGroupMessage(
   groupId: string,
   message: string,
   attachments?: readonly string[],
-): Promise<{ timestamp: number; missed: MissedRecipients }> {
+): Promise<{ timestamp: number; missed: MissedRecipients; results: unknown }> {
   const result = await rpc.callRpc<{ timestamp?: number; results?: readonly unknown[] }>("send", {
     account,
     groupId,
@@ -137,7 +137,11 @@ export async function sendGroupMessage(
   if (typeof result.timestamp !== "number") {
     throw new Error(`signal-cli send did not return a timestamp: ${JSON.stringify(result)}`);
   }
-  return { timestamp: result.timestamp, missed: missedRecipients(result.results) };
+  return {
+    timestamp: result.timestamp,
+    missed: missedRecipients(result.results),
+    results: result.results,
+  };
 }
 
 /**

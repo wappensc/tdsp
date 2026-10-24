@@ -19,7 +19,13 @@ import {
 } from "./attachment.ts";
 import type { AuthStatus } from "./auth.ts";
 import { type BindRecord, getBindRecord, setBindRecord } from "./bind-store.ts";
-import { classifySendFailure, NotProvisionedError, PartialSendError } from "./send-failure.ts";
+import {
+  classifySendFailure,
+  NobodyGotItError,
+  NotProvisionedError,
+  nobodyGotIt,
+  PartialSendError,
+} from "./send-failure.ts";
 import { listGroups as listGroupsApi, type SignalRpc, sendGroupMessage } from "./signal-api.ts";
 import { createSyncState, type SyncState } from "./sync-state.ts";
 import { SIGNAL_PROFILE } from "./transport-profile.ts";
@@ -135,6 +141,17 @@ export interface GroupWriter {
   sendInviteMessage(groupId: string, text: string): Promise<string>;
 }
 
+/**
+ * Refuses a send whose results say no recipient got it (SIG-4, TRN-6): `signal-cli` raises an error
+ * for that itself, and an answer saying the same is no more a sent message. See `nobodyGotIt`.
+ */
+function throwIfNobodyGotIt(results: unknown): void {
+  const failure = nobodyGotIt(results);
+  if (failure !== undefined) {
+    throw new NobodyGotItError(failure);
+  }
+}
+
 /** The real implementation, backed by `signal-api.ts`'s live `send` JSON-RPC call. */
 export function createGroupWriter(rpc: SignalRpc, auth: AuthStatusSource): GroupWriter {
   async function sendEnvelope(
@@ -142,13 +159,14 @@ export function createGroupWriter(rpc: SignalRpc, auth: AuthStatusSource): Group
     envelope: Record<string, unknown>,
     attachments?: readonly string[],
   ): Promise<string> {
-    const { timestamp, missed } = await sendGroupMessage(
+    const { timestamp, missed, results } = await sendGroupMessage(
       rpc,
       requirePhoneNumber(auth),
       groupId,
       JSON.stringify(envelope),
       attachments,
     );
+    throwIfNobodyGotIt(results);
     // A frame some members missed for now is not accepted for every member (TRN-6): it fails, and
     // the engine keeps it for a retry. See `PartialSendError`.
     if (missed.rateLimited > 0 || missed.unreachable > 0) {
@@ -178,7 +196,14 @@ export function createGroupWriter(rpc: SignalRpc, auth: AuthStatusSource): Group
       );
     },
     async sendInviteMessage(groupId, text) {
-      const { timestamp } = await sendGroupMessage(rpc, requirePhoneNumber(auth), groupId, text);
+      const { timestamp, results } = await sendGroupMessage(
+        rpc,
+        requirePhoneNumber(auth),
+        groupId,
+        text,
+      );
+      // Sent once one member got it (SIG-4), so not when none did.
+      throwIfNobodyGotIt(results);
       return `${requireAccountId(auth)}:${timestamp}`;
     },
   };
