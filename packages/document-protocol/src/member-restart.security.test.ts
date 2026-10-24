@@ -119,7 +119,7 @@ describe("a member restarted with its persisted control state (CTL-13, CTL-39, C
 
     bob.edit((fragment) => insertPlainText(fragment, 4, " B"));
     await settle(bob);
-    expect(refusals).toEqual([]);
+    expect(refusals).toStrictEqual([]);
     // What left as edits is the content with Bob's change: his restored state, then the change.
     const received = createDocument();
     for (const delivery of await editsOfBob(port, from)) {
@@ -145,8 +145,8 @@ describe("a member restarted with its persisted control state (CTL-13, CTL-39, C
     expect(bob.mayEdit).toBe(false);
     bob.edit((fragment) => insertPlainText(fragment, 4, " B"));
     await settle(bob);
-    expect(refusals).not.toEqual([]);
-    expect(await editsOfBob(port, from)).toEqual([]);
+    expect([...new Set(refusals)]).toStrictEqual(["read-only"]);
+    expect(await editsOfBob(port, from)).toStrictEqual([]);
   });
 
   it("waits for the creator when its cursor has left the window, and nothing it types leaves", async () => {
@@ -167,8 +167,8 @@ describe("a member restarted with its persisted control state (CTL-13, CTL-39, C
     expect(bob.mayEdit).toBe(false);
     bob.edit((fragment) => insertPlainText(fragment, 0, "B: "));
     await settle(bob);
-    expect(refusals).not.toEqual([]);
-    expect(await editsOfBob(port, from)).toEqual([]);
+    expect([...new Set(refusals)]).toStrictEqual(["awaiting-bootstrap"]);
+    expect(await editsOfBob(port, from)).toStrictEqual([]);
 
     // The creator's answer bootstraps it, as on a first join.
     port.reconnect("alice");
@@ -198,8 +198,8 @@ describe("a member restarted with its persisted control state (CTL-13, CTL-39, C
     expect(bob.mayEdit).toBe(false);
     bob.edit((fragment) => insertPlainText(fragment, 0, "B: "));
     await settle(bob);
-    expect(refusals).not.toEqual([]);
-    expect(await editsOfBob(port, from)).toEqual([]);
+    expect([...new Set(refusals)]).toStrictEqual(["awaiting-bootstrap"]);
+    expect(await editsOfBob(port, from)).toStrictEqual([]);
   });
 
   it("waits for the creator when a creator device's counters have a hole (LOS-10)", async () => {
@@ -228,7 +228,7 @@ describe("a member restarted with its persisted control state (CTL-13, CTL-39, C
     expect(bob.mayEdit).toBe(false);
     bob.edit((fragment) => insertPlainText(fragment, 0, "B: "));
     await settle(bob);
-    expect(await editsOfBob(port, from)).toEqual([]);
+    expect(await editsOfBob(port, from)).toStrictEqual([]);
     port.reconnect("alice");
     await settle(alice, bob);
     expect(bob.mayEdit).toBe(true);

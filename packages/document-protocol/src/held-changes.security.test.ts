@@ -144,7 +144,7 @@ describe("a change the engine refuses (CTL-13, CTL-42)", () => {
       const { carol, refusals, creatorRestarts } = await membersResumeWhileTheCreatorIsAway();
       carol.edit((fragment) => insertPlainText(fragment, 4, " (Carol)"));
       await settle(carol);
-      expect(refusals.carol).not.toEqual([]); // never sent as an edit
+      expect(refusals.carol).not.toStrictEqual([]); // never sent as an edit
 
       const alice = await creatorRestarts(false);
       await settle(carol, alice);
@@ -159,7 +159,7 @@ describe("a change the engine refuses (CTL-13, CTL-42)", () => {
       );
       bob.edit((fragment) => insertPlainText(fragment, 4, " am Freitag"));
       await settle(bob);
-      expect(refusals.bob).not.toEqual([]);
+      expect(refusals.bob).not.toStrictEqual([]);
 
       const alice = await creatorRestarts(true);
       await settle(bob, alice);
@@ -175,7 +175,7 @@ describe("a change the engine refuses (CTL-13, CTL-42)", () => {
       bob.edit((fragment) => insertPlainText(fragment, 4, " am Freitag"));
       await settle(bob);
       // `read-only` already: the in-memory transport shows Bob the demotion from its history.
-      expect(refusals.bob).toEqual(["read-only"]);
+      expect(refusals.bob).toStrictEqual(["read-only"]);
 
       // Alice answers one request a minute, Carol's first: Bob waits for his bootstrap.
       const alice = await creatorRestarts(false, { resyncResponseThrottleMs: 60_000 });

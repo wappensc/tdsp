@@ -158,6 +158,15 @@ behind a claim elsewhere in the specification.
 - **The bridges and 2.0's bindings.** The bridges carry 2.0's frames unchanged and serve its
   transport profile, but implement of what the bindings changed or added only what v1.5.0
   brought (the rows above), and offer neither the cursor nor the instance (TRN-18, TRN-19).
+- **Restored control state is not checked at runtime.** What an application restores
+  (`PersistedControlState`) is taken as given; a broken one changes only what this device
+  refuses or answers, since it is the device's own (CTL-26).
+- **A sibling's answer with a hole bootstraps.** An answer from another device of one's own
+  member bootstraps whatever holes its control state has (CTL-13), as the creator's does; the
+  hole stays evidence (LOS-10), and the creator heals it. After a restart, a hole keeps a member
+  from bootstrapping itself (CTL-41).
+- **The bound on control state's bytes is checked after applying**, and rolled back: an operation
+  over it costs a receiver the work of applying it once (CTL-30, CTL-32).
 - **Carried control state** (ARC-5, CTL-25): the engine offers no way yet to merge a snapshot
   an application carried from another device of the creator; an application that carries a
   document between one person's devices carries its content, and the device decides as a new

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { strictJsonProblem } from "./strict-json";
+import { numbersNotInIntegerForm, strictJsonProblem } from "./strict-json";
 
 describe("strictJsonProblem (I-JSON, RFC 7493)", () => {
   it.each([
@@ -24,5 +24,28 @@ describe("strictJsonProblem (I-JSON, RFC 7493)", () => {
     [`{"t":"${String.fromCharCode(0xd800)}"}`, "unpaired surrogate"], // a raw one, in the text itself
   ])("refuses %s", (text, problem) => {
     expect(strictJsonProblem(text)).toContain(problem);
+  });
+});
+
+describe("numbersNotInIntegerForm (§1.6: an integer field has no fraction or exponent)", () => {
+  it.each([
+    ['{"due":0,"counter":12,"seen":{"x":-3}}'],
+    ['{"text":"1.5 and 1e3 and -0 inside a string","n":7}'],
+    ['{"a\\"1.0":2}'],
+    ["[0,1,-1,4294967295]"],
+  ])("finds nothing in %s", (text) => {
+    expect(numbersNotInIntegerForm(text)).toStrictEqual([]);
+  });
+
+  it.each([
+    ['{"due":1.0}', [["due"]]],
+    ['{"due":1e3}', [["due"]]],
+    ['{"due":1E+3}', [["due"]]],
+    ['{"due":-0}', [["due"]]],
+    ['{"counter":2,"seen":{"tag":1.5}}', [["seen", "tag"]]],
+    ['{"pieces":[1,2.0,3]}', [["pieces", 1]]],
+    ['{"a":{"b":[0,{"c":-0}]},"d":0.5}', [["a", "b", 1, "c"], ["d"]]],
+  ])("finds %s at its path", (text, paths) => {
+    expect(numbersNotInIntegerForm(text)).toStrictEqual(paths);
   });
 });
