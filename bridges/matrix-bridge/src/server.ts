@@ -32,7 +32,7 @@ import {
   uploadMedia,
   whoami,
 } from "./matrix-api.ts";
-import { classifySendFailure } from "./send-failure.ts";
+import { classifySendFailure, needsPerson } from "./send-failure.ts";
 import { createSyncState, type SyncState } from "./sync-state.ts";
 import { transportProfileFor } from "./transport-profile.ts";
 
@@ -298,6 +298,34 @@ function sendSendFailure(res: ServerResponse, error: unknown): void {
   );
 }
 
+/**
+ * Answers a failure of any route but `send`: 409 for a refusal only a person can lift, such
+ * as a signed-out account, which bindings/local-bridge-interface.md gives the 409 of a
+ * bridge not provisioned (BRG-1); 502 for everything else.
+ */
+function sendRouteFailure(res: ServerResponse, error: unknown): void {
+  sendJson(res, needsPerson(error) ? 409 : 502, {
+    error: error instanceof Error ? error.message : String(error),
+  });
+}
+
+/**
+ * The routes of the local bridge interface that serve a document or the account behind it
+ * (bindings/local-bridge-interface.md, "Routes"): what BRG-1 refuses while no account is
+ * provisioned. `/health`, `/transport-profile` and `/device` are not among them.
+ */
+function isDocumentOperation(method: string | undefined, path: string): boolean {
+  if (method === "GET") {
+    return (
+      path === "/whoami" ||
+      path === "/channels" ||
+      path === "/members" ||
+      /^\/channels\/.+\/(?:deliveries|integrity-log)$/.test(path)
+    );
+  }
+  return method === "POST" && /^\/channels\/[^/]+\/(?:bind|send|invite)$/.test(path);
+}
+
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -394,13 +422,21 @@ export function createServer(deps: ServerDependencies): Server {
       return;
     }
 
+    // Without an access token there is no account to serve a document with: every document
+    // operation is refused as 409, before its request is read, so that a send reads as
+    // needs-person and the application can ask the person to finish the setup (BRG-1, LBI-6).
+    if (deps.accessToken === undefined && isDocumentOperation(method, path ?? "")) {
+      sendJson(res, 409, {
+        error: "no Matrix account is provisioned: MATRIX_ACCESS_TOKEN is not configured",
+      });
+      return;
+    }
+
     if (method === "GET" && path === "/whoami") {
       deps.rooms
         .whoami()
         .then((identity) => sendJson(res, 200, identity))
-        .catch((error: unknown) => {
-          sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
-        });
+        .catch((error: unknown) => sendRouteFailure(res, error));
       return;
     }
 
@@ -417,7 +453,12 @@ export function createServer(deps: ServerDependencies): Server {
 
     if (method === "GET" && path === "/transport-profile") {
       // SPECIFICATION.md §3.5: the send policies and hard bounds a client should use with
-      // this bridge — a local test homeserver does not throttle, a real one does.
+      // this bridge — a local test homeserver does not throttle, a real one does. None while
+      // no account is provisioned: the local bridge interface answers 503 then ("Routes").
+      if (deps.accessToken === undefined) {
+        sendJson(res, 503, { error: "MATRIX_ACCESS_TOKEN is not configured" });
+        return;
+      }
       sendJson(res, 200, transportProfileFor(isLoopbackUrl(deps.homeserverUrl)));
       return;
     }
@@ -426,9 +467,7 @@ export function createServer(deps: ServerDependencies): Server {
       deps.rooms
         .listJoinedRoomSummaries()
         .then((rooms) => sendJson(res, 200, rooms))
-        .catch((error: unknown) => {
-          sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
-        });
+        .catch((error: unknown) => sendRouteFailure(res, error));
       return;
     }
 
@@ -452,9 +491,7 @@ export function createServer(deps: ServerDependencies): Server {
             ? sendJson(res, 404, { error: `this account is not in ${channelId}` })
             : sendJson(res, 200, members),
         )
-        .catch((error: unknown) => {
-          sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
-        });
+        .catch((error: unknown) => sendRouteFailure(res, error));
       return;
     }
 
@@ -503,9 +540,7 @@ export function createServer(deps: ServerDependencies): Server {
           setBindRecord(deps.bindStorePath, documentId, record);
           sendJson(res, 200, { documentId, ...record });
         })
-        .catch((error: unknown) => {
-          sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
-        });
+        .catch((error: unknown) => sendRouteFailure(res, error));
       return;
     }
 
@@ -552,9 +587,7 @@ export function createServer(deps: ServerDependencies): Server {
       deps.sync
         .pollOnce()
         .then(() => sendJson(res, 200, deps.sync.getDeliveries(documentId).map(deliveryToJson)))
-        .catch((error: unknown) => {
-          sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
-        });
+        .catch((error: unknown) => sendRouteFailure(res, error));
       return;
     }
 
@@ -569,9 +602,7 @@ export function createServer(deps: ServerDependencies): Server {
       deps.sync
         .pollOnce()
         .then(() => sendJson(res, 200, deps.sync.getIntegrityLog(documentId)))
-        .catch((error: unknown) => {
-          sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
-        });
+        .catch((error: unknown) => sendRouteFailure(res, error));
       return;
     }
 
@@ -613,9 +644,7 @@ export function createServer(deps: ServerDependencies): Server {
           );
           sendJson(res, 200, { deliveryId: eventId });
         })
-        .catch((error: unknown) => {
-          sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
-        });
+        .catch((error: unknown) => sendRouteFailure(res, error));
       return;
     }
 

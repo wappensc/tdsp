@@ -99,3 +99,19 @@ describe("a frame that did not reach every member of the group", () => {
     );
   });
 });
+
+describe("a frame the writer is asked to send without a linked account", () => {
+  it("is refused as needs-person, not sent with no account to send as (BRG-1)", async () => {
+    const unlinked: AuthStatusSource = {
+      ...auth,
+      status: { linked: false },
+      phoneNumber: undefined,
+    };
+    const rpc = new FakeRpc();
+    rpc.results = [result("SUCCESS")];
+    const refusal = await createGroupWriter(rpc, unlinked)
+      .sendEdit("g1", "doc-1", '{"tdsp":1}')
+      .catch((error: unknown) => error);
+    expect(classifySendFailure(refusal)).toEqual({ status: 409 });
+  });
+});

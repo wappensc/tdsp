@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MatrixApiError, sendEvent, uploadMedia } from "./matrix-api";
-import { classifySendFailure } from "./send-failure";
+import { classifySendFailure, needsPerson } from "./send-failure";
 
 const homeserver = (status: number, body: string) =>
   new MatrixApiError(
@@ -33,6 +33,42 @@ describe("classifySendFailure", () => {
     expect(classifySendFailure(homeserver(403, '{"errcode":"M_FORBIDDEN"}'))).toEqual({
       status: 403,
     });
+  });
+
+  it.each([
+    [401, "M_UNKNOWN_TOKEN"],
+    [401, "M_MISSING_TOKEN"],
+    [401, "M_USER_LOCKED"],
+    [403, "M_USER_SUSPENDED"],
+    [403, "M_CONSENT_NOT_GIVEN"],
+    [403, "M_RESOURCE_LIMIT_EXCEEDED"],
+    [429, "M_RESOURCE_LIMIT_EXCEEDED"],
+  ])(
+    "reads a %i %s as needs-person: neither waiting nor dropping the change helps, a person does (BRG-8, TRN-11)",
+    (status, errcode) => {
+      const failure = homeserver(status, `{"errcode":"${errcode}","error":"refused"}`);
+      expect(classifySendFailure(failure)).toEqual({ status: 409 });
+      expect(needsPerson(failure)).toBe(true);
+    },
+  );
+
+  it("reads a signed-out account as needs-person also when the homeserver offers a soft logout", () => {
+    expect(
+      classifySendFailure(
+        homeserver(401, '{"errcode": "M_UNKNOWN_TOKEN", "error": "expired", "soft_logout": true}'),
+      ),
+    ).toEqual({ status: 409 });
+  });
+
+  it("keeps a deactivated account with its status: a deactivation is not reversed", () => {
+    expect(classifySendFailure(homeserver(403, '{"errcode":"M_USER_DEACTIVATED"}'))).toEqual({
+      status: 403,
+    });
+  });
+
+  it("does not take a needs-person errcode from anything but a homeserver reply", () => {
+    expect(needsPerson(new Error('{"errcode":"M_UNKNOWN_TOKEN"}'))).toBe(false);
+    expect(classifySendFailure(new Error('{"errcode":"M_UNKNOWN_TOKEN"}')).status).toBe(502);
   });
 
   it.each([500, 502, 503, 401, 404, 400])(

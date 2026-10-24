@@ -265,17 +265,17 @@ describe("bridges/email-bridge server: PGP and identity", () => {
       it("blocks the send when this bridge has no secret key to sign with, rather than sending unsigned", async () => {
         await restartWithGpg({ ownSecretKey: false });
         const response = await sendEdit();
-        expect(response.status).toBe(422);
+        expect(response.status).toBe(409); // needs-person: importing the key lifts it (BRG-8)
         const body = (await readJson(response)) as { error: string };
         expect(body.error).toContain(sender.address);
         expect(sender.sent).toHaveLength(0);
         expect(gpg.encrypted).toHaveLength(0);
       });
 
-      it("returns 503 for a PGP-enabled document when no gpg binary is configured at all", async () => {
+      it("refuses a send for a PGP-enabled document as needs-person when no gpg binary is configured at all", async () => {
         await restartWithGpg({ withGpg: false });
         const response = await sendEdit();
-        expect(response.status).toBe(503);
+        expect(response.status).toBe(409); // installing gpg lifts it, waiting does not (BRG-8)
         expect(sender.sent).toHaveLength(0);
       });
 
@@ -1278,14 +1278,14 @@ describe("bridges/email-bridge server: PGP and identity", () => {
       expect(await readJson(response)).toEqual([]);
     });
 
-    it("returns 503 while the bridge is unconfigured", async () => {
+    it("refuses as needs-person while the bridge is not provisioned (BRG-1)", async () => {
       server.close();
       start({ address: undefined, sender: undefined, sync: undefined });
       await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
       const address = server.address();
       baseUrl = typeof address === "object" && address ? `http://127.0.0.1:${address.port}` : "";
       const response = await fetch(`${baseUrl}/channels/doc-1/integrity-log`);
-      expect(response.status).toBe(503);
+      expect(response.status).toBe(409);
     });
   });
 });

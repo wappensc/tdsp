@@ -21,6 +21,19 @@ import { SignalRpcError } from "./signal-daemon.ts";
  * (`FrameTooLargeError`, 4 MiB): a 413, which no retry can fix. A frame over the body
  * limit but within that goes as an attachment (`attachment.ts`), so nothing `signal-cli`
  * reports about a too-long body needs classifying.
+ *
+ * A refusal only a person can lift is a 409, `needs-person` (BRG-1, BRG-8, TRN-11):
+ * - no account to send as: the bridge is not linked yet (`NotProvisionedError`);
+ * - nobody got the message, and the recipients it missed are identities this account does not
+ *   trust, beside any that are not registered (SIG-4): code -4 (`UNTRUSTED_KEY_ERROR`) when every
+ *   one of them is such an identity, code -1 with the results per recipient otherwise. Read from
+ *   `signal-cli` 0.14.9's source (`SendMessageResultUtils.outputResult`), not provoked against
+ *   real Signal.
+ *
+ * A device unlinked from the phone is not told apart: `signal-cli` then answers every call naming
+ * the account with `"Specified account does not exist"` (code -32602), but it answers the same
+ * when it could not load an account that is still linked, such as while Signal is unreachable.
+ * That, and storage that is full, stay a 502.
  */
 export interface SendFailure {
   readonly status: number;
@@ -48,12 +61,30 @@ export class PartialSendError extends Error {
   }
 }
 
+/**
+ * The bridge has no account to act as yet: no device link has completed (BRG-1). Only the
+ * person can link one.
+ */
+export class NotProvisionedError extends Error {
+  constructor() {
+    super(
+      "no Signal account is linked to this bridge yet: link this bridge as a device of the account from the Signal app",
+    );
+    this.name = "NotProvisionedError";
+  }
+}
+
+const SIGNAL_USER_ERROR_CODE = -1;
+const SIGNAL_UNTRUSTED_KEY_CODE = -4;
 const SIGNAL_RATE_LIMIT_CODE = -5;
 
 export function classifySendFailure(error: unknown): SendFailure {
   // Over what this bridge carries in one message: no retry can make it fit (413, permanent).
   if (error instanceof FrameTooLargeError) {
     return { status: 413 };
+  }
+  if (error instanceof NotProvisionedError || missedOnlyUntrustedIdentities(error)) {
+    return { status: 409 };
   }
   if (error instanceof PartialSendError) {
     if (error.missed.rateLimited === 0) {
@@ -67,6 +98,35 @@ export function classifySendFailure(error: unknown): SendFailure {
     return retryAfterSeconds === undefined ? { status: 429 } : { status: 429, retryAfterSeconds };
   }
   return { status: 502 };
+}
+
+/**
+ * Whether `signal-cli` refused the whole send because the recipients it missed are identities this
+ * account does not trust, beside any that are not registered (SIG-4): trusting them is the
+ * person's (TRN-11), and no retry gets past them before that. `signal-cli` raises an error only
+ * when no recipient got the message; with every recipient an untrusted identity it is code -4, and
+ * with a mix code -1, carrying the results per recipient as `data.response.results`.
+ */
+function missedOnlyUntrustedIdentities(error: unknown): boolean {
+  if (!(error instanceof SignalRpcError)) {
+    return false;
+  }
+  if (error.code === SIGNAL_UNTRUSTED_KEY_CODE) {
+    return true;
+  }
+  if (error.code !== SIGNAL_USER_ERROR_CODE) {
+    return false;
+  }
+  const results = (error.data as { response?: { results?: unknown } } | null | undefined)?.response
+    ?.results;
+  if (!Array.isArray(results)) {
+    return false;
+  }
+  const types = results.map((result) => (result as { type?: unknown } | null)?.type);
+  return (
+    types.includes("IDENTITY_FAILURE") &&
+    types.every((type) => type === "IDENTITY_FAILURE" || type === "UNREGISTERED_FAILURE")
+  );
 }
 
 /**

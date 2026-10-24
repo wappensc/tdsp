@@ -20,9 +20,10 @@ const accessToken = process.env.MATRIX_ACCESS_TOKEN;
 const bindStorePath = process.env.MATRIX_BIND_STORE_PATH ?? "./credentials/tdsp-channels.json";
 
 // No access token configured (it comes from the environment only) —
-// /health still works and reports
-// `configured: false`; anything touching Matrix itself fails loudly and
-// clearly rather than with a confusing lower-level fetch error.
+// /health still works and reports `configured: false`, and `createServer`
+// refuses every document operation itself (BRG-1). These stand-ins are what
+// is left: anything that still reaches Matrix fails loudly and clearly
+// rather than with a confusing lower-level fetch error.
 const notConfiguredError = () => Promise.reject(new Error("MATRIX_ACCESS_TOKEN is not configured"));
 const unconfigured: {
   rooms: MatrixRoomReader;

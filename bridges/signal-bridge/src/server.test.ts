@@ -3,7 +3,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseTransportProfile } from "@tdsp/messenger-port";
+import { parseTransportProfile, transportSendErrorFromHttp } from "@tdsp/messenger-port";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FrameTooLargeError } from "./attachment.ts";
 import type { AuthStatus } from "./auth.ts";
@@ -36,6 +36,12 @@ class FakeAuth implements AuthStatusSource {
   async link(): Promise<{ linkingUri: string }> {
     this.linkCalls++;
     return { linkingUri: "sgnl://linkdevice?uuid=fake&pub_key=fake" };
+  }
+
+  /** What a completed device link leaves: the ACI the bridge is, and the number signal-cli selects it by. */
+  provision(accountId = "alice"): void {
+    this.status = { linked: true, accountId };
+    this.phoneNumber = "+15550000001";
   }
 }
 
@@ -169,6 +175,7 @@ describe("signal-bridge HTTP API", () => {
   });
 
   it("GET /members answers a group's members by ACI, refuses one this account is not in, and needs a channelId (TRN-17)", async () => {
+    auth.provision();
     groups.groups = [{ id: "group-1", name: "Team" }];
     groups.memberAcis.set("group-1", ["aci-alice", "aci-bob"]);
     groups.memberAcis.set("group-2", ["aci-mallory"]);
@@ -185,6 +192,7 @@ describe("signal-bridge HTTP API", () => {
   });
 
   it("GET /channels lists groups from the group reader", async () => {
+    auth.provision();
     groups.groups = [{ id: "g1", name: "Team chat" }];
     const response = await fetch(`${baseUrl}/channels`);
     expect(response.status).toBe(200);
@@ -192,6 +200,7 @@ describe("signal-bridge HTTP API", () => {
   });
 
   it("POST /channels/:id/bind rejects a group this account is not a member of", async () => {
+    auth.provision();
     const response = await fetch(`${baseUrl}/channels/doc-1/bind`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -201,6 +210,7 @@ describe("signal-bridge HTTP API", () => {
   });
 
   it("POST /channels/:id/bind succeeds for a group this account belongs to, and is idempotent", async () => {
+    auth.provision();
     groups.groups = [{ id: "g1", name: "Team chat" }];
     const response = await fetch(`${baseUrl}/channels/doc-1/bind`, {
       method: "POST",
@@ -221,7 +231,7 @@ describe("signal-bridge HTTP API", () => {
   });
 
   async function bindDocument(documentId: string, creator = "alice"): Promise<void> {
-    auth.status = { linked: true, accountId: "alice" }; // the account this bridge sends as
+    auth.provision("alice"); // the account this bridge sends as
     groups.groups = [{ id: "g1", name: "Team chat" }];
     await fetch(`${baseUrl}/channels/${documentId}/bind`, {
       method: "POST",
@@ -231,7 +241,7 @@ describe("signal-bridge HTTP API", () => {
   }
 
   it("POST /channels/:id/send requires a bound document", async () => {
-    auth.status = { linked: true, accountId: "alice" };
+    auth.provision("alice");
     const response = await fetch(`${baseUrl}/channels/doc-1/send`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -255,6 +265,7 @@ describe("signal-bridge HTTP API", () => {
   });
 
   it("GET /transport-profile serves the Signal profile", async () => {
+    auth.provision();
     const response = await fetch(`${baseUrl}/transport-profile`);
     expect(response.status).toBe(200);
     const profile = parseTransportProfile(await response.json());
@@ -297,6 +308,18 @@ describe("signal-bridge HTTP API", () => {
       ).status,
     ).toBe(502);
     expect((await sendFailingWith(new SignalRpcError("other (code -1)", -1))).status).toBe(502);
+    // Nobody got it, every recipient an identity this account does not trust: the person's to
+    // decide, so the change waits for them (BRG-8, TRN-11).
+    expect(
+      (
+        await sendFailingWith(
+          new SignalRpcError(
+            "signal-cli JSON-RPC error: Failed to send message due to untrusted identities (code -4)",
+            -4,
+          ),
+        )
+      ).status,
+    ).toBe(409);
     expect((await sendFailingWith(new Error("signal-cli daemon socket closed"))).status).toBe(502);
     // A frame over what the bridge carries in one message can never be retried into fitting.
     expect((await sendFailingWith(new FrameTooLargeError(5_000_000))).status).toBe(413);
@@ -374,6 +397,7 @@ describe("signal-bridge HTTP API", () => {
   });
 
   it("GET /channels/:id/deliveries polls sync and returns the frames' text as payloads", async () => {
+    auth.provision();
     sync.deliveries.set("doc-1", [
       { id: "a:1", documentId: "doc-1", sender: "alice", payload: "AQID" },
     ]);
@@ -383,6 +407,76 @@ describe("signal-bridge HTTP API", () => {
       { id: "a:1", documentId: "doc-1", sender: "alice", payload: "AQID" },
     ]);
     expect(sync.pollCalls).toBe(1);
+  });
+
+  describe("while no account is linked (BRG-1)", () => {
+    const post = (route: string, body: unknown) =>
+      fetch(`${baseUrl}${route}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    it("refuses a send as needs-person, not as a forbidden sender, and sends nothing", async () => {
+      const response = await post("/channels/doc-1/send", { sender: "alice", payload: "aGVsbG8=" });
+      expect(response.status).toBe(409);
+      const refusal = transportSendErrorFromHttp("send", response.status, await response.text());
+      expect(refusal.reason).toBe("needs-person");
+      expect(refusal.message).toContain("no Signal account is linked");
+      expect(writer.sent).toHaveLength(0);
+    });
+
+    it("refuses every other document operation with 409, before looking at the request", async () => {
+      // A group the reader would list, so nothing but the missing account can be the refusal.
+      groups.groups = [{ id: "g1", name: "Team chat" }];
+      sync.deliveries.set("doc-1", [
+        { id: "a:1", documentId: "doc-1", sender: "alice", payload: "AQID" },
+      ]);
+      const responses = {
+        channels: await fetch(`${baseUrl}/channels`),
+        members: await fetch(`${baseUrl}/members?channelId=g1`),
+        bind: await post("/channels/doc-1/bind", {
+          channelId: "g1",
+          creator: "alice",
+          profile: "yjs-paragraphs/1",
+        }),
+        invite: await post("/channels/doc-1/invite", { actor: "alice", text: "join me" }),
+        deliveries: await fetch(`${baseUrl}/channels/doc-1/deliveries`),
+        integrityLog: await fetch(`${baseUrl}/channels/doc-1/integrity-log`),
+      };
+      expect(
+        Object.fromEntries(
+          Object.entries(responses).map(([route, response]) => [route, response.status]),
+        ),
+      ).toEqual({
+        channels: 409,
+        members: 409,
+        bind: 409,
+        invite: 409,
+        deliveries: 409,
+        integrityLog: 409,
+      });
+      expect(writer.sent).toHaveLength(0);
+      expect(sync.pollCalls).toBe(0);
+    });
+
+    it("refuses while the account is only half there: an ACI without signal-cli's number", async () => {
+      auth.status = { linked: true, accountId: "alice" };
+      const response = await post("/channels/doc-1/send", { sender: "alice", payload: "aGVsbG8=" });
+      expect(response.status).toBe(409);
+    });
+
+    it("answers GET /transport-profile with 503", async () => {
+      const response = await fetch(`${baseUrl}/transport-profile`);
+      expect(response.status).toBe(503);
+    });
+
+    it("still answers what sets the account up, and an unknown route with 404", async () => {
+      expect((await fetch(`${baseUrl}/health`)).status).toBe(200);
+      expect((await fetch(`${baseUrl}/auth/status`)).status).toBe(200);
+      expect((await fetch(`${baseUrl}/auth/link`, { method: "POST" })).status).toBe(200);
+      expect((await post("/channels/doc-1/membership", {})).status).toBe(404);
+    });
   });
 
   it("an unknown route gets a 404 with a clear error, not a silent fallback", async () => {
