@@ -385,6 +385,9 @@ describe("a receiver's handling of attachments", () => {
       rpc.emit(notification({ body }));
       rpc.emit(
         notification({
+          // Another message, so another sent timestamp: under the first one's it would be that
+          // message again, which the bridge takes as nothing new (BRG-11).
+          timestamp: 1700000000001,
           body,
           attachments: [
             { id: "att1", size: frame.length },

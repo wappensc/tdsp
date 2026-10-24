@@ -176,6 +176,35 @@ describe("a receiver's handling of a messenger-native edit or withdrawal", () =>
     ]);
   });
 
+  it("never applies another message under an id already delivered, and records it against the first's document (BRG-12)", () => {
+    const rpc = new FakeRpc();
+    const sync = createSyncState(rpc, bindStorePath);
+    const first = JSON.stringify({ tdsp: 1, kind: "frame", documentId: "doc-1", frame: "AQID" });
+    rpc.emit("receive", groupEnvelope(ALICE, 1000, first));
+    rpc.emit(
+      "receive",
+      groupEnvelope(
+        ALICE,
+        1000,
+        JSON.stringify({ tdsp: 1, kind: "frame", documentId: "doc-1", frame: "BBBB" }),
+      ),
+    );
+    expect(sync.getDeliveries("doc-1").map((delivery) => delivery.payload)).toEqual(["AQID"]);
+    expect(sync.getIntegrityLog("doc-1")).toEqual([
+      { id: "alice:1000", sender: ALICE, reason: "message-replaced" },
+    ]);
+  });
+
+  it("takes the same message again as nothing new, and records nothing (BRG-11)", () => {
+    const rpc = new FakeRpc();
+    const sync = createSyncState(rpc, bindStorePath);
+    const message = JSON.stringify({ tdsp: 1, kind: "frame", documentId: "doc-1", frame: "AQID" });
+    rpc.emit("receive", groupEnvelope(ALICE, 1000, message));
+    rpc.emit("receive", groupEnvelope(ALICE, 1000, message));
+    expect(sync.getDeliveries("doc-1")).toHaveLength(1);
+    expect(sync.getIntegrityLog("doc-1")).toEqual([]);
+  });
+
   it("never applies a remote-delete, and records it against the original's document", () => {
     const rpc = new FakeRpc();
     const sync = createSyncState(rpc, bindStorePath);

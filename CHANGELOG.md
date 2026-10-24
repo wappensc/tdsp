@@ -48,6 +48,11 @@ No byte on the wire changes; the new requirements are why this is a minor versio
 
 ### Fixed
 
+- The Signal bridge records another message under the id of one already delivered — the same
+  author and sent timestamp, other content — as an integrity violation, `message-replaced`, and
+  never delivers it; the same message again is dropped as nothing new (BRG-11, BRG-12). Before,
+  both were delivered. `@tdsp/messenger-signal`'s `IntegrityReason` gains `message-replaced`
+  (#75).
 - A send failure whose reason is none of the four — one an adapter of a later version names —
   is retried as `unavailable`, as TRN-12 requires. `TransportSendError.retryable` is now false
   only for `too-large` and `rejected`; before, the engine dropped such a change (#72).
