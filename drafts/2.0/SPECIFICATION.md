@@ -72,11 +72,11 @@ behind it.
 
 This document is self-contained: every requirement states its reason. It
 depends on no other document except the standards it cites (RFC 2119, RFC 8174,
-RFC 3629, RFC 4648, RFC 5234, RFC 8259) and, for the one profile it defines, the Yjs
-encodings named in [Appendix A](#appendix-a-profile-yjs-paragraphs1); a bridge
-or adapter implementer also reads the binding of their messenger
-([bindings/](bindings/)). A
-reference implementation exists; [Appendix F](#appendix-f-reference-implementation)
+RFC 3629, RFC 4648, RFC 5234, RFC 7493, RFC 8259, RFC 8785, FIPS 180-4 and the
+WHATWG URL Standard) and, for the one profile it defines, the Yjs encodings named
+in [Appendix A](#appendix-a-profile-yjs-paragraphs1); a bridge or adapter
+implementer also reads the binding of their messenger ([bindings/](bindings/)).
+A reference implementation exists; [Appendix F](#appendix-f-reference-implementation)
 names its parts. Where it deviates from this document, this document states the
 intended behaviour. No second, independently written implementation has yet been
 checked against the published test vectors ([§3.6](#36-conformance-suite)), so
@@ -168,17 +168,21 @@ across a process boundary through it, and no one else.
   surrogate. Every JSON text this specification defines — a frame, an envelope,
   a binding's other messages — nests arrays and objects at most **32** deep (the
   outermost object is the first level); a receiver treats a deeper one as not
-  that message, and SHOULD find out in one pass over the text before handing it
-  to a parser that recurses once per level, since such a parser can exhaust its
-  stack on a few kilobytes. No message this specification defines needs more
-  than a handful of levels. Base64 is the standard alphabet with padding (RFC 4648 §4), and only
-  its canonical form: the bits the padding discards are zero, so one text encodes
-  one byte string. A device tag is base64url without padding (RFC 4648 §5).
+  that message (JSN-1). No message this specification defines needs more than a
+  handful of levels.
+- Base64 is the standard alphabet with padding (RFC 4648 §4), and only its
+  canonical form: the bits the padding discards are zero, so one text encodes one
+  byte string. A device tag is base64url without padding (RFC 4648 §5).
 - Strings are **UTF-8** (RFC 3629). A length "in bytes" is the length of that
   UTF-8 encoding; a length "in characters" counts Unicode code points.
 - An integer field is a JSON number without a fraction or an exponent.
 - A grammar is ABNF (RFC 5234).
 - A duration named `…Ms` is in milliseconds.
+
+- **JSN-1** · *all* — A receiver of a JSON text this specification defines SHOULD
+  find out in one pass over the text whether it nests deeper than 32 levels,
+  before it hands the text to a parser that recurses once per level.
+  *Rationale:* such a parser can exhaust its stack on a few kilobytes.
 
 ### 1.7 What must stay
 
@@ -3901,6 +3905,7 @@ The changes have six reasons, which the tables below cite by letter:
 | VER-5 (new, with VER-6) | What a revision that defines a new right must define: capabilities per value, a merge that grants no more than every merged value, commutative, associative and idempotent, decisions in knowledge of others superseding, revocation first, and how older implementations are kept from reading it as `write` or inherit | A third right is not invented now, but the rules any later one must keep are laid down; a total order does not fit every model. |
 | VER-6 | Part of VER-5 as a requirement of its own: keeping older implementations from taking a new value of a permission or a layer right for `write` or for inherit | Readability: it was a part of a longer requirement, and requires what it did there |
 | SEC-1, SEC-2 | The SHOULD of §15.3 to combine independent checks of "no external connection", and the MUST of §15.5 to tell the user of an email document without PGP, as requirements of their own | A SHOULD and a MUST without an ID, which §1.3 left informative although they were meant to apply; the content is unchanged |
+| JSN-1 | The SHOULD of §1.6 to check the nesting depth in one pass, as a requirement of its own | A SHOULD without an ID, which §1.3 left informative although it was meant to apply; the content is unchanged |
 
 **Moved** into [bindings/](bindings/) (F): §12 (BRG-1 to BRG-17), §12.6 (LBI-1 to
 LBI-6, the routes gaining an optional cursor and instance), §13 (BND-1 to BND-3,
