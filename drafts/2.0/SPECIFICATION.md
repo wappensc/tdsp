@@ -798,12 +798,12 @@ digits, chosen at random by an engine each time it starts (LOS-13).
 | | `update` | Base64, not empty | What the requester lacks, or one piece of it; where it lacks nothing, or a piece carries only the snapshot and the overlay (SND-18), an update that holds nothing (PRF-1, item 4) |
 | | `control` | object or `null` | A control snapshot, in the layout of [§7.5](#75-the-control-snapshot): the creator's (`null` from a device of the creator without a basis, CTL-28); from a device answering another device of its own member, its own; from a member answering a device of the creator, what it holds, which counts there as a report only (CTL-27); `null` otherwise (RSY-8) |
 | | `attribution` | object or `null` | The responder's attribution overlay, in the layout of [§5.4](#54-attribution-overlay); `null` for none |
-| | `stateVector` | Base64 or `null` | In an answer's last piece, the responder's state vector as it answered; `null` in the others (RSY-8) |
+| | `stateVector` | Base64 or `null` | In an answer's last piece, the responder's state vector as it answered; `null` in the others (RSY-18) |
 | | `stateDigest` | digest or `null` | Beside `stateVector`, the digest of what the responder deleted; `null` exactly when `stateVector` is |
 | | `stream` | stream tag | The responder's stream, the same in every piece of the answer (LOS-13) |
 | | `sequence` | uint32, at least 1 | The answer's number in that stream, the same in every piece (LOS-13) |
 | | `piece` | uint32, at least 1 | This piece's number in the answer, 1, 2, 3, … in the order sent (LOS-14) |
-| | `pieces` | uint32 or `null` | In an answer's last piece, how many pieces the answer has — that piece's own number; `null` in the others, and exactly when `stateVector` is (RSY-8) |
+| | `pieces` | uint32 or `null` | In an answer's last piece, how many pieces the answer has — that piece's own number; `null` in the others, and exactly when `stateVector` is (RSY-18) |
 | `control` | `device` | device tag | The creator device that issued the operation |
 | | `counter` | uint32, at least 1 | That device's own count of its operations, 1, 2, 3, … |
 | | `target` | string | `member:<MemberId>` (the MemberId 1 to 255 bytes), `layer:<layer id>:member:<MemberId>` ([§5.6](#56-layers)), `close` or `pace` |
@@ -2113,14 +2113,17 @@ and the answer is a targeted diff.
   *Rationale:* a capability flag would create two code paths of which tests
   exercise only one; on a transport with history the request is a cheap
   redundancy, on one without it the only bootstrap that works.
-- **RSY-16** · *engine* — A `resync-request` MUST carry a fresh random 64-bit
-  `requestId`, the requester's control vector (§7.4) and control digest — for
-  anyone but the creator `null` until it is bootstrapped (CTL-13), whatever control
-  state it holds; a device of the creator always its own —, its current state
-  vector and state digest (LOS-12), its stream and number (LOS-13), and
-  `force: true` while it holds *history truncated* evidence (LOS-8, LOS-9, LOS-19),
-  `false` otherwise. A
-  responder MUST treat copies of a request with the same `requestId` as one
+- **RSY-16** · *engine* — A `resync-request` MUST carry:
+  - a fresh random 64-bit `requestId`;
+  - the requester's control vector (§7.4) and control digest: for anyone but the
+    creator `null` until it is bootstrapped (CTL-13), whatever control state it
+    holds; for a device of the creator always its own;
+  - its current state vector and state digest (LOS-12);
+  - its stream and number (LOS-13);
+  - `force`: `true` while it holds *history truncated* evidence (LOS-8, LOS-9,
+    LOS-19), `false` otherwise.
+
+  A responder MUST treat copies of a request with the same `requestId` as one
   request.
   *Rationale:* the state vector lets the responder send only what is missing; the
   control vector lets it see which operations a requester lacks even when it lacks
@@ -2131,11 +2134,11 @@ and the answer is a targeted diff.
   answer when nothing is missing (RSY-17), and after a read that could not rule out
   a gap it would never be bootstrapped; `null` asks for the creator's word. A
   device of the creator decides its own control state, so its vector is what it
-  holds. The id is the requester's own, not the messenger's
-  delivery id: a requester does not always learn the id its message gets on the
-  receiving side, and a duplicated delivery must not be answered twice. `force` is
-  needed because after a truncated history the requester cannot tell what it
-  lacks, and a responder that sees nothing missing would stay silent.
+  holds. The id is the requester's own, not the messenger's delivery id: a
+  requester does not always learn the id its message gets on the receiving side,
+  and a duplicated delivery must not be answered twice. `force` is needed because
+  after a truncated history the requester cannot tell what it lacks, and a
+  responder that sees nothing missing would stay silent.
 - **RSY-3** · *engine* — An engine MUST have at most one resync request of its own
   outstanding per document. A further request made while one is outstanding MUST
   be coalesced into it and send nothing, and no request MUST be sent sooner than
@@ -2151,7 +2154,7 @@ and the answer is a targeted diff.
   learns at once that it was too soon, where a click that silently waits looks
   like one that did nothing.
 - **RSY-4** · *engine* — An outstanding request MUST expire after a bounded time,
-  counted from when it was sent, and is then reported as *unanswered*; a request
+  counted from when it was sent, and is then reported as *unanswered*. A request
   whose send failed MUST release the slot immediately without counting against the
   floor, and its outcome is *failed* (SND-10). The expiry SHOULD be derived from
   the engine's floor and expected latency
@@ -2163,10 +2166,10 @@ and the answer is a targeted diff.
   wait.
 - **RSY-5** · *engine* — While a joining engine has not completed its bootstrap,
   it SHOULD repeat its request when one expires unanswered, with growing waits
-  and a bounded number of attempts; it MUST NOT repeat it without bound. A device
-  of the creator's automatic requests on loss evidence (LOS-6) MUST NOT depend on
-  its bootstrap: neither on whether it completed nor on whether its own attempts
-  ran out.
+  and a bounded number of attempts; it MUST NOT repeat it without bound. The
+  automatic requests of a device of the creator on loss evidence (LOS-6) MUST NOT
+  depend on its bootstrap: neither on whether it completed nor on whether its own
+  attempts ran out.
   *Rationale:* the first request, or its answer, may itself be lost, or the creator
   may have been offline; an unbounded retry would spend the rate budget of a
   participant nobody can answer. A device of the creator edits and answers at
@@ -2176,12 +2179,16 @@ and the answer is a targeted diff.
 
 ### 8.3 Who answers
 
-- **RSY-6** · *engine* — The creator MUST answer resync requests from other
-  members. A non-creator MUST NOT answer a resync request unless the requester is
-  the creator or its own member. Every engine MUST answer requests from another
-  device of its own member as the creator answers other members'. An engine that
-  does not know the creator MUST NOT answer any request. An engine MUST NOT answer
-  its own request, which it recognises by its `requestId`, not by its requester.
+- **RSY-6** · *engine* — Who answers whom:
+  - The creator MUST answer resync requests from other members.
+  - A non-creator MUST NOT answer a resync request unless the requester is the
+    creator or its own member.
+  - Every engine MUST answer requests from another device of its own member as the
+    creator answers other members'.
+  - An engine that does not know the creator MUST NOT answer any request.
+  - An engine MUST NOT answer its own request, which it recognises by its
+    `requestId`, not by its requester.
+
   *Rationale:* one possible responder makes a join cost exactly one answer instead
   of one per online member, removes every timing-dependent suppression rule, and
   leaves one attribution overlay. The exception exists because a creator may
@@ -2191,17 +2198,21 @@ and the answer is a targeted diff.
   can give it back. A member may run several devices under one MemberId; one of
   them can bring another up to date while the creator is offline, and only for
   that device's own member.
-- **RSY-17** · *engine* — A responder MUST answer a request only if it holds content
-  the requester's state vector lacks, or it would carry a control snapshot (RSY-8)
-  holding operations the requester's control vector lacks, or the request's state
-  vector holds every update it holds itself and the request's state digest differs
-  from its own, or it would carry control
-  state and the request's control vector equals its own and its control digest
-  does not (LOS-12), or — for the creator,
-  and for a device that carries control state to another device of its own
-  member — the request's control vector is `null` or it has `force: true`; those
-  it MUST answer, even with nothing to add. Otherwise a responder MUST stay silent,
-  and MUST keep the request to reconsider later (RSY-9), since that may change.
+- **RSY-17** · *engine* — A responder MUST answer a request only if one of these
+  holds, and then MUST answer it, even with nothing to add:
+  - it holds content the requester's state vector lacks;
+  - it would carry a control snapshot (RSY-8) holding operations the requester's
+    control vector lacks;
+  - the request's state vector holds every update the responder holds itself, and
+    the request's state digest differs from its own;
+  - it would carry control state, and the request's control vector equals its own
+    and its control digest does not (LOS-12);
+  - for the creator, and for a device that carries control state to another device
+    of its own member: the request's control vector is `null`, or it has
+    `force: true`.
+
+  Otherwise a responder MUST stay silent, and MUST keep the request to reconsider
+  later (RSY-9), since that may change.
   *Rationale:* an engine that is up to date gets no answer, which keeps resync
   traffic proportional to what is actually missing. A lost membership change
   leaves the content diff empty and still needs healing, which the control vector
@@ -2212,62 +2223,71 @@ and the answer is a targeted diff.
   other one's evidence makes it ask in turn. A requester ahead differs in digest
   by what it deleted of its own as well, so the answer may bring nothing: one
   message, and its whole answer ends the requester's evidence (LOS-18). A joiner is
-  not up to date until it holds a control snapshot, whatever
-  its state vector says: one that had seen every edit as it happened would
-  otherwise ask, get no answer, and never complete its bootstrap.
+  not up to date until it holds a control snapshot, whatever its state vector says:
+  one that had seen every edit as it happened would otherwise ask, get no answer,
+  and never complete its bootstrap.
 - **RSY-8** · *engine* — An answer MUST be a `resync-response` whose `respondsTo`
   is the request's `requestId` and whose update is the responder's state since
-  the requester's state vector. The creator's answer MUST carry its control
-  snapshot in `control`, except as CTL-28 says for a device without a basis. A
-  non-creator answering another device of its own member MUST carry its own
-  control state there once it has been bootstrapped, and `null` before. A member
-  answering a device of the creator MAY carry the control state it holds, which
-  counts there as a report only (CTL-27); every other non-creator answer MUST set
-  `control` to `null`. The answer SHOULD carry the responder's attribution overlay.
-  Every piece MUST carry the responder's stream and the answer's number in it
-  (LOS-13), and its own number, from 1 in the order the pieces are sent. Its last
-  piece — the whole answer, when it is one — MUST carry the number of pieces, which
-  is its own number, and the responder's state vector and state digest as it
-  answered, and every other piece `null` there.
+  the requester's state vector. What it carries in `control`:
+  - the creator's answer MUST carry its control snapshot, except as CTL-28 says for
+    a device without a basis;
+  - a non-creator answering another device of its own member MUST carry its own
+    control state once it has been bootstrapped, and `null` before;
+  - a member answering a device of the creator MAY carry the control state it
+    holds, which counts there as a report only (CTL-27);
+  - every other non-creator answer MUST set `control` to `null`.
+
+  The answer SHOULD carry the responder's attribution overlay.
   *Rationale:* `respondsTo` lets the requester tell its own answer from answers to
-  others (RSY-13, ATR-1); only the creator can issue control state. The state in
-  the last piece tells the requester what it holds once every piece is there, so a
-  piece that never arrives shows (LOS-4), where a bootstrap would otherwise look
-  complete with the first piece that carried the snapshot; the numbers say it even
-  where the requester already holds more than the responder and no state does
-  (LOS-14). Two devices of one member may both answer, so a piece names its
-  stream: by `respondsTo` alone their pieces would count as one answer. A device may
+  others (RSY-13, ATR-1); only the creator can issue control state. A device may
   pass on what it holds to its own member's other device, since a union cannot
   undo anything (CTL-25); a member's state helps a new device of the creator know
   what to supersede, and nothing more.
+- **RSY-18** · *engine* — Every piece of an answer (RSY-8) MUST carry the
+  responder's stream and the answer's number in it (LOS-13), and its own number,
+  from 1 in the order the pieces are sent. The answer's last piece — the whole
+  answer, when it is one — MUST carry the number of pieces, which is its own
+  number, and the responder's state vector and state digest as it answered; every
+  other piece MUST carry `null` there.
+  *Rationale:* the state in the last piece tells the requester what it holds once
+  every piece is there, so a piece that never arrives shows (LOS-4), where a
+  bootstrap would otherwise look complete with the first piece that carried the
+  snapshot; the numbers say it even where the requester already holds more than
+  the responder and no state does (LOS-14). Two devices of one member may both
+  answer, so a piece names its stream: by `respondsTo` alone their pieces would
+  count as one answer.
 - **RSY-9** · *engine* — A responder MUST answer at most one request per
   throttle interval per document. It MUST keep every request it may have to
   answer and has not answered — throttled, or with nothing to offer yet (RSY-17) —
   and reconsider it on later processing, independently of whether the request's
   delivery is offered again. A request counts as answered only once the transport
-  has accepted the answer: after a send failure that is worth retrying (§3.4) the
-  request MUST be kept as before, under the time it was first heard; after a
-  permanent one it MUST be let go. It MUST keep requests by their `requestId`, at
-  most four per requester — a requester's fifth replaces its oldest and keeps the
-  requester's place in the order —, and MUST serve requesters in turn: of the
-  requests it keeps, it answers first one of the requester heard longest ago that
-  it has not answered since, a requester just answered going to the end. It MUST
-  bound what it keeps, by count and by age, dropping the oldest first
-  ([Appendix B](#appendix-b-recommended-values)). A request for which its profile
-  fails to compute an answer MUST be let go and reported to the application, and
-  MUST NOT keep it from answering the others.
+  has accepted the answer:
+  - after a send failure that is worth retrying (§3.4) the request MUST be kept as
+    before, under the time it was first heard (RSY-19);
+  - after a permanent one it MUST be let go.
+
+  A request for which its profile fails to compute an answer MUST be let go and
+  reported to the application, and MUST NOT keep it from answering the others.
   *Rationale:* bounds the responder's traffic in the time domain however many
   requests arrive. Keeping the request itself is necessary because an engine
   processes each delivery once (TRN-8): a request skipped under the throttle and
   not kept would never be looked at again, and its requester would stay
-  unanswered until its own request expired. Several devices of one member may each
-  have a request outstanding (RSY-3) and are each to be answered (RSY-6); keeping
-  one per requester let them push each other out. Four per requester, and turns,
-  keep a requester that repeats itself from pushing others back and from being
-  pushed back itself; the bound keeps a flood of requests from growing a
-  responder's memory — a dropped requester asks again (RSY-5, LOS-6). A request
-  kept after its answer failed would fail again on every later processing, and any
-  member of the channel can send one (§1.7, item 11).
+  unanswered until its own request expired. A request kept after its answer failed
+  would fail again on every later processing, and any member of the channel can
+  send one (§1.7, item 11).
+- **RSY-19** · *engine* — A responder MUST keep those requests (RSY-9) by their
+  `requestId`, at most four per requester — a requester's fifth replaces its
+  oldest and keeps the requester's place in the order —, and MUST serve requesters
+  in turn: of the requests it keeps, it answers first one of the requester heard
+  longest ago that it has not answered since, a requester just answered going to
+  the end. It MUST bound what it keeps, by count and by age, dropping the oldest
+  first ([Appendix B](#appendix-b-recommended-values)).
+  *Rationale:* several devices of one member may each have a request outstanding
+  (RSY-3) and are each to be answered (RSY-6); keeping one per requester would let
+  them push each other out. Four per requester, and turns, keep a requester that
+  repeats itself from pushing others back and from being pushed back itself; the
+  bound keeps a flood of requests from growing a responder's memory — a dropped
+  requester asks again (RSY-5, LOS-6).
 - **RSY-10** · *engine* — A resync answer MUST NOT be refused because the document
   is closed or because the responder's own permission is `read`.
   *Rationale:* a closed document must still bootstrap a joiner (LIF-6); the creator
@@ -2284,30 +2304,36 @@ and the answer is a targeted diff.
 
 ### 8.4 Accepting an answer
 
-- **RSY-12** · *engine* — An engine that is not the creator MUST accept a
-  `resync-response` only if its sender is the creator, or its own member answering
-  a request the engine itself made. The creator MUST accept one from another
-  member only if its `respondsTo` names a request the creator itself made. An
-  engine that does not know the creator MUST accept none.
+- **RSY-12** · *engine* — Which answers an engine accepts:
+  - An engine that is not the creator MUST accept a `resync-response` only if its
+    sender is the creator, or its own member answering a request the engine itself
+    made.
+  - The creator MUST accept one from another member only if its `respondsTo` names
+    a request the creator itself made.
+  - An engine that does not know the creator MUST accept none.
+
   *Rationale:* the counterpart of RSY-6. Without the `respondsTo` check anyone
   could push content at the creator by sending an unsolicited "response".
-- **RSY-13** · *engine* — An engine MUST apply the update of every accepted
-  `resync-response`, including one that answers another member's request, and
-  MUST apply the control snapshot of every `resync-response` the creator sent, and
-  of one from another device of its own member answering its own request (CTL-25).
-  It MUST consider the attribution overlay only of a response that
-  answers its own request (ATR-1, ATR-2), and MUST leave content applied from any
-  other response unattributed (ATR-2).
+- **RSY-13** · *engine* — An engine MUST apply:
+  - the update of every accepted `resync-response`, including one that answers
+    another member's request;
+  - the control snapshot of every `resync-response` the creator sent, and of one
+    from another device of its own member answering its own request (CTL-25).
+
+  It MUST consider the attribution overlay only of a response that answers its own
+  request (ATR-1, ATR-2), and MUST leave content applied from any other response
+  unattributed (ATR-2).
   *Rationale:* content is a CRDT and harmless to apply twice; a snapshot from the
   creator is authoritative whoever asked for it; but an overlay only describes the
   document of the member who asked, and the responder did not write everything
   it sends.
-- **RSY-14** · *engine* — An engine MUST consider its bootstrap complete once it
-  has applied an answer to its own request that bootstraps it (CTL-13) — for a
-  device of the creator any answer to its own request —, and a device of the
-  creator also at once when it restored persisted content together with control
-  state that had a basis (CTL-28); it MUST make "not yet bootstrapped" observable
-  to the application.
+- **RSY-14** · *engine* — An engine MUST consider its bootstrap complete:
+  - once it has applied an answer to its own request that bootstraps it (CTL-13) —
+    for a device of the creator any answer to its own request;
+  - for a device of the creator also at once when it restored persisted content
+    together with control state that had a basis (CTL-28).
+
+  It MUST make "not yet bootstrapped" observable to the application.
   *Rationale:* a joiner whose creator is offline sees an empty document; the
   application must be able to say "waiting for the creator" rather than present
   an empty document as the real one. A device of the creator that restored its
@@ -2697,7 +2723,7 @@ leave no trace an engine can see (§10.6).
   device that wrote the first one fell silent; what a heartbeat holds, and where a
   frame comes from, does.
 - **LOS-4** · *engine* — An engine MUST treat as evidence a report (LOS-13) — a
-  heartbeat, a request or an answer's last piece (RSY-8) — whose state vector
+  heartbeat, a request or an answer's last piece (RSY-18) — whose state vector
   contains updates it has not applied, judged against its current document so
   that the evidence disappears when those updates arrive. It MUST judge the latest
   report of each of a member's streams (LOS-17), not only the member's latest, and
@@ -2723,7 +2749,7 @@ leave no trace an engine can see (§10.6).
   that stream, from 1, each one higher than every earlier one:
   - a heartbeat and a request when it writes them;
   - an answer when it takes the state it answers from, every piece of that answer
-    with the same number (RSY-8).
+    with the same number (RSY-18).
 
   A *report* is a heartbeat, a request or an answer's last piece — of an answer
   the engine does not accept (RSY-12) too, of which it applies nothing —: its
@@ -3435,7 +3461,7 @@ requirement it serves.
 | Retry back-off | Starts at max(1 s, floor), doubles per consecutive failure, capped at `maxIntervalMs` or 10 min; `retryAfterMs` honoured up to 1 h; after `needs-person`, the cap at once | SND-7, TRN-20 |
 | Adaptive spacing | ×1.5 per `rate-limited` refusal, from the floor or 1 s; relaxed ×1.5 after 8 consecutive successes | SND-9 |
 | Resync response throttle | 1 000 ms per document per responder | RSY-9 |
-| Requests kept to answer later | By request id, at most 4 per requester and 64 per document, each for at most 5 min; oldest dropped first; requesters served in turn | RSY-9 |
+| Requests kept to answer later | By request id, at most 4 per requester and 64 per document, each for at most 5 min; oldest dropped first; requesters served in turn | RSY-19 |
 | Resync request expiry | floor + 2 × latency, at least 10 s | RSY-4 |
 | Bootstrap retry | after 1, 2, 4, … expiries; at most 5 attempts | RSY-5 |
 | Loss-evidence wait | 1 × `expectedLatencyMs`, or 5 s when it is 0 | LOS-1 |
@@ -3687,7 +3713,7 @@ The changes have six reasons, which the tables below cite by letter:
 | CTL-5 | Without 1.x's condition (c), a sequence above the last for the target and above the snapshot floor | A: an operation counts in whatever order it arrives; which of two holds is decided by merging (CTL-23), not by arrival. |
 | CTL-6, TRN-8 | An operation already held is inert, where 1.x judged a frame by its sequence | A: a duplicate is the expected result of a re-offered message, and a set makes it harmless without a sequence. |
 | CTL-15 | The snapshot's layout: operations per target with a control vector and the counters held above a hole, and no policy | A, B; the counters, because an operation superseded above a hole is in no target's heads, and a state restored without them lost the hole. |
-| RSY-8 | What `control` carries in an answer; a member reports the creator's counters; every piece names the responder's stream and its own number, the last the count | A: the reports are how a new device of the creator learns what to supersede (CTL-27). D, and a review of draft 2: a requester that holds more than the responder could not tell whether a piece was missing. |
+| RSY-8 (with RSY-18) | What `control` carries in an answer; a member reports the creator's counters; every piece names the responder's stream and its own number, the last the count | A: the reports are how a new device of the creator learns what to supersede (CTL-27). D, and a review of draft 2: a requester that holds more than the responder could not tell whether a piece was missing. |
 | SND-2 | A control frame is retried until the messenger takes it, and a piece of an answer; a send asked for at once keeps the floor | A: the operation already holds, so its send is owed, as an edit's is. And a conformance check: a send at once could push the next message into a refusal. |
 | SND-1 | A floor, `minChars` or latency that is not finite falls back to its default | A conformance check: an infinite floor stopped every send. |
 | SND-7, SND-9 | A refusal of a message of any kind holds back, and widens the spacing of, the next send of every kind | A conformance check: an answer refused as rate-limited went out again every second. |
@@ -3699,7 +3725,7 @@ The changes have six reasons, which the tables below cite by letter:
 | INV-3, INV-7 | The creator is shown by an identifier the messenger keeps unique, or a name the person gave; an invitation naming the person as creator is a claim | A self-chosen name is what a forger copies, and an invitation naming the person themselves is the forgery they can least recognise. |
 | TRN-11, TRN-12 | Five reasons: `needs-person` for a refusal only a person can lift | An identity not trusted, a device not confirmed or no account was either retried without end (`unavailable`) or dropped (`rejected`); neither serves, and implementations chose differently. |
 | LOS-1 | The waiting time comes from the engine's own pacing | B. |
-| RSY-9 | Kept by request id, four per requester, served in turn | wappensc/tdsp#31: several devices of one member asking at once each get their answer. |
+| RSY-9 (with RSY-19) | Kept by request id, four per requester, served in turn | wappensc/tdsp#31: several devices of one member asking at once each get their answer. |
 | LOS-4 | The latest report of each of a member's streams is judged — a heartbeat, a request, an answer's last piece —, those of one's own member too | wappensc/tdsp#31: a person may write from several devices, and one device's heartbeat must not hide another's. |
 | LOS-8 (with LOS-19 and LOS-20) | Only without a cursor; a truncated history sets `force`, and ends for anyone but the creator only with an answer that brings control state | E: where the bridge offers a cursor, its answer replaces the guess (LOS-9). |
 | INV-6 | `policy` is an unknown parameter | B. |
@@ -3735,6 +3761,7 @@ The changes have six reasons, which the tables below cite by letter:
 | CTL-30, CTL-32 | Bounds on device tags, targets, holes and bytes; the operation that fills a hole is never refused for them; at a bound, the first in code point order are kept, a close always; a creator issues nothing the bounds or one answer could not hold, a new target only up to 1 MiB of the 3 MiB a receiver holds; beyond the bytes, a capacity conflict: no new target, no edit of one's own, shown until a person resolves it; the bytes are measured without the close, which no bound refuses and every device of the creator can always issue; the close keeps each device's latest of 64 devices and no `seen`, and a target's `seen` over 64 devices is refused like the bytes | A: a set of operations would otherwise let a forged or broken creator application make every receiver keep anything (§1.7, item 11). Refusing a union over the bytes whole left receivers of the same operations with different rights; two bounds keep devices that grew apart mergeable, and the conflict names what is left. A review of draft 3: at the bound a full document could not be closed; the room between the two bounds was no reserve, since changes of targets held used it too. A review of draft 4: the close, out of the bytes, was bounded by nothing, and any target's `seen` could name more devices than a snapshot carries — states the own decoder refused. |
 | CTL-34 to CTL-43 | Parts of CTL-30, CTL-26, CTL-13 and CTL-33 as requirements of their own: how the bytes are measured (CTL-34), what is kept at a bound (CTL-35), the close beyond every bound (CTL-36), what a device of the creator may issue (CTL-37), persisting asynchronously (CTL-38), the control state of any other participant (CTL-39), the control state and the cursor (CTL-40), the bootstrap after a restart (CTL-41), holding changes (CTL-42), showing divergences (CTL-43) | Readability: each was one clause of a longer requirement, and requires what it did there |
 | RSY-16, RSY-17 | A control vector and `force` in requests, `null` until a member is bootstrapped, whatever it restored; when to answer | A. |
+| RSY-18, RSY-19 | Parts of RSY-8 and RSY-9 as requirements of their own: the numbers and the state an answer's pieces carry (RSY-18), how the requests kept are keyed, ordered and bounded (RSY-19) | Readability: each was a part of a longer requirement, and requires what it did there |
 | SND-14 to SND-16 | `due`, the pace, local pacing | B. |
 | SND-17 to SND-19 | Pieces | D. |
 | LOS-9 | The cursor and the instance id replace LOS-8's guess; a new instance is evidence on its own, with or without a cursor, and after a restart one other than the instance restored with the cursor (§6.3) | E: a bridge that offers an instance but no cursor still shows a restart; restored with the cursor, the instance shows what a bridge lost while the engine was gone. |
