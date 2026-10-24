@@ -159,6 +159,21 @@ describe("an unencrypted frame where the room is encrypted (§13.3)", () => {
     expect(frames(state)).toEqual(["ZW5j"]);
   });
 
+  it("never enters what a later event under its id is compared by: the real event is delivered, nothing recorded (BRG-12, MTX-5)", async () => {
+    const state = syncStateBoundAs(true);
+    await pollRounds(state, [plainFrame("$id", "Zm9yZ2Vk")], [encryptedFrame("$id", "cmVhbA==")]);
+    expect(frames(state)).toEqual(["cmVhbA=="]);
+    expect(state.getIntegrityLog(DOC)).toEqual([]);
+  });
+
+  it("is not compared with a delivered event under its id: ignored without an integrity record (MTX-5)", async () => {
+    const state = syncStateBoundAs(true);
+    await pollRounds(state, [encryptedFrame("$id", "cmVhbA==")], [plainFrame("$id", "Zm9yZ2Vk")]);
+    expect(frames(state)).toEqual(["cmVhbA=="]);
+    expect(state.getIntegrityLog(DOC)).toEqual([]);
+    expect(logged).toContain("unencrypted-frame-in-encrypted-room");
+  });
+
   it("is delivered in a plain room, as before", async () => {
     const state = syncStateBoundAs(false);
     await pollRounds(state, [plainFrame("$one", "b25l")], [plainFrame("$two", "dHdv")]);

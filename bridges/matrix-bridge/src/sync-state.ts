@@ -14,6 +14,7 @@ import {
   frameTextOf,
   openAttachment,
   parseAttachmentRef,
+  sha256Hex,
 } from "./attachment.ts";
 import { type BindStoreData, loadBindStore } from "./bind-store.ts";
 import type { CryptoMachine } from "./crypto-machine.ts";
@@ -98,6 +99,25 @@ type FrameEnvelope =
   | { readonly documentId: string; readonly frame?: undefined; readonly attachment: AttachmentRef };
 
 /**
+ * What a delivered event is compared by when another event arrives under its id (BRG-12): the
+ * frame's bytes, for an attachment the hash its envelope names, so nothing is fetched to compare.
+ * A plain attachment names the SHA-256 of the frame itself, the same digest an inline frame gets
+ * here. An encrypted file names the SHA-256 of its ciphertext, which decrypts to another frame
+ * under another key or IV, so those are compared with it.
+ */
+function contentDigest(envelope: FrameEnvelope): string {
+  const { attachment } = envelope;
+  if (attachment === undefined) {
+    return sha256Hex(new TextEncoder().encode(envelope.frame));
+  }
+  if (attachment.file !== undefined) {
+    const { hashes, key, iv } = attachment.file;
+    return `file:${hashes.sha256.replace(/=+$/, "")}:${key.k}:${iv.replace(/=+$/, "")}`;
+  }
+  return attachment.sha256 ?? "";
+}
+
+/**
  * A recognisable TDSP envelope of another version — `tdsp` a number other than 1, `documentId`
  * a string — or `undefined` (bindings/bridges.md BND-2). Such an envelope for a bound
  * document is reported and not delivered; anything else that is not an envelope stays silent.
@@ -141,8 +161,10 @@ export function readFrameEnvelope(content: unknown): FrameEnvelope | undefined {
 /** An attachment whose download failed in a way that may pass: kept, and tried again on a later poll. */
 interface PendingAttachment {
   readonly event: LogicalEvent;
+  readonly roomId: string;
   readonly documentId: string;
   readonly attachment: AttachmentRef;
+  readonly digest: string;
   attempts: number;
   nextAt: number;
 }
@@ -212,7 +234,7 @@ interface LogicalEvent {
 export interface SyncState {
   pollOnce(): Promise<void>;
   getDeliveries(documentId: DocumentId): readonly Delivery[];
-  /** bindings/bridges.md BRG-12, BRG-15 — every edit/redaction this bridge caught and refused to apply for `documentId`, oldest first. */
+  /** bindings/bridges.md BRG-12, BRG-15 — every edit, redaction and replacement this bridge caught and refused to apply for `documentId`, oldest first. */
   getIntegrityLog(documentId: DocumentId): readonly IntegrityEntry[];
 }
 
@@ -229,8 +251,15 @@ export function createSyncState(
   let hasPolledOnce = false;
   let inFlight: Promise<void> | undefined;
   const deliveries = new Map<DocumentId, Delivery[]>();
-  /** `eventId -> documentId`, populated as `recordEvent` records a real delivery — lets a later redaction attribute itself to the right document's own integrity log. */
-  const recordedEventDocument = new Map<string, DocumentId>();
+  /**
+   * Every event this bridge delivered while it runs, by event id: the document it went to, which a
+   * later redaction is attributed to, and what another event under the same id is compared by
+   * (BRG-11, BRG-12). Only `recordEvent` adds to it, so an event the bridge does not take (BRG-10,
+   * MTX-5) never stands here. It is kept as long as the bridge runs, never shorter than the
+   * deliveries `retention` keeps: a replaced event under an id dropped from here would be taken
+   * as new. Nothing of it outlives a restart, so a bridge started afresh compares afresh (BRG-17).
+   */
+  const delivered = new Map<string, { readonly documentId: DocumentId; readonly digest: string }>();
   const violations = new Map<DocumentId, IntegrityEntry[]>();
   /**
    * The rooms this bridge has seen encrypted while it runs: an `m.room.encryption` state event or
@@ -343,12 +372,45 @@ export function createSyncState(
     }
   }
 
-  function recordEvent(event: LogicalEvent, documentId: string, payload: string): void {
+  function recordEvent(
+    event: LogicalEvent,
+    documentId: string,
+    payload: string,
+    digest: string,
+  ): void {
     const list = deliveries.get(documentId) ?? [];
     list.push({ id: event.eventId, documentId, sender: event.sender, payload });
     retainNewest(list, retention); // bounded, oldest first (BRG-17)
     deliveries.set(documentId, list);
-    recordedEventDocument.set(event.eventId, documentId);
+    delivered.set(event.eventId, { documentId, digest });
+  }
+
+  /**
+   * Whether an event under `event`'s id was delivered already; called before an attachment is
+   * fetched. The same content again is the homeserver presenting it again, dropped without a
+   * record (BRG-11). Other content is a replacement of a delivered message: never handed up,
+   * never a new message, and recorded where it can be attributed (BRG-12). An event id names one
+   * event in one room, so a replacement in a room the delivered event's document is not bound to
+   * is not attributed to it (BRG-10).
+   */
+  function alreadyDelivered(
+    event: LogicalEvent,
+    digest: string,
+    roomId: string,
+    bindStore: BindStoreData,
+  ): boolean {
+    const earlier = delivered.get(event.eventId);
+    if (earlier === undefined) {
+      return false;
+    }
+    if (earlier.digest !== digest) {
+      if (boundHere(earlier.documentId, roomId, bindStore)) {
+        reject(earlier.documentId, event.eventId, event.sender, "message-replaced");
+      } else {
+        logger.warn("replacement-unattributed", { eventId: event.eventId, sender: event.sender });
+      }
+    }
+    return true;
   }
 
   /**
@@ -371,7 +433,7 @@ export function createSyncState(
       if (target === undefined) {
         return; // malformed redaction — nothing to attribute
       }
-      const documentId = recordedEventDocument.get(target);
+      const documentId = delivered.get(target)?.documentId;
       if (documentId === undefined) {
         // We never recorded the redacted event ourselves (it predates this
         // process, or its own content already arrived stripped) — cannot
@@ -420,6 +482,10 @@ export function createSyncState(
     if (!boundHere(envelope.documentId, roomId, bindStore)) {
       return;
     }
+    const digest = contentDigest(envelope);
+    if (alreadyDelivered(event, digest, roomId, bindStore)) {
+      return;
+    }
     if (envelope.attachment !== undefined) {
       const frame = await fetchAttachment(envelope.attachment);
       if (frame === "retry") {
@@ -428,26 +494,33 @@ export function createSyncState(
         }
         pendingAttachments.push({
           event,
+          roomId,
           documentId: envelope.documentId,
           attachment: envelope.attachment,
+          digest,
           attempts: 1,
           nextAt: Date.now() + ATTACHMENT_RETRY_BASE_MS,
         });
         return;
       }
       if (frame !== null) {
-        recordEvent(event, envelope.documentId, frame);
+        recordEvent(event, envelope.documentId, frame, digest);
       }
       return;
     }
-    recordEvent(event, envelope.documentId, envelope.frame);
+    recordEvent(event, envelope.documentId, envelope.frame, digest);
   }
 
   /** Tries again every attachment whose wait is over; one that keeps failing is given up on after a few tries. */
-  async function retryPendingAttachments(): Promise<void> {
+  async function retryPendingAttachments(bindStore: BindStoreData): Promise<void> {
     const now = Date.now();
     for (const pending of [...pendingAttachments]) {
       if (pending.nextAt > now) {
+        continue;
+      }
+      // Another event under this id may have been delivered while this one waited (BRG-12).
+      if (alreadyDelivered(pending.event, pending.digest, pending.roomId, bindStore)) {
+        pendingAttachments.splice(pendingAttachments.indexOf(pending), 1);
         continue;
       }
       const frame = await fetchAttachment(pending.attachment);
@@ -465,7 +538,7 @@ export function createSyncState(
       }
       pendingAttachments.splice(pendingAttachments.indexOf(pending), 1);
       if (frame !== null) {
-        recordEvent(pending.event, pending.documentId, frame);
+        recordEvent(pending.event, pending.documentId, frame, pending.digest);
       }
     }
   }
@@ -511,7 +584,7 @@ export function createSyncState(
       return;
     }
     const bindStore = loadBindStore(bindStorePath);
-    await retryPendingAttachments();
+    await retryPendingAttachments(bindStore);
     for (const [roomId, events] of result.roomEvents) {
       for (const event of events) {
         // In timeline order: a frame sent before the room's encryption was turned on was valid then.
