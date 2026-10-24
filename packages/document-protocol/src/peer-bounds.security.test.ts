@@ -108,6 +108,28 @@ describe("a pace runs at most as the bound (SND-15)", () => {
     });
   }
 
+  it("a pace of days delays the suspicion of a silent sender by 10 minutes, not by days (LOS-11)", async () => {
+    const port = new InMemoryMessengerPort();
+    const { bob } = await pair(port, () => {});
+    await port.send(DOCUMENT_ID, "alice", paceOf(7 * 24 * 3_600_000));
+    await bob.sync();
+    // Carol promises a follow-up within a minute, shorter than the pace, and then falls silent.
+    const doc = createDocument();
+    transact(doc, () => insertPlainText(getFragment(doc), 0, "carol's last words"));
+    await port.send(DOCUMENT_ID, "carol", encodeEditFrame(DOCUMENT_ID, encodeUpdate(doc), 60_000));
+    await bob.sync();
+    const overdue = () =>
+      bob.syncHealth.suspicions.filter(
+        (suspicion) => suspicion.kind === "sender-overdue" && suspicion.sender === "carol",
+      );
+    await vi.advanceTimersByTimeAsync(9 * 60_000);
+    await bob.sync();
+    expect(overdue()).toStrictEqual([]); // within the pace as it runs: still owed time
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    await bob.sync();
+    expect(overdue()).toHaveLength(1); // past 10 minutes and the wait, not past a week
+  });
+
   it("a pace of days holds a member's next message for 10 minutes, not for days", async () => {
     const port = new InMemoryMessengerPort();
     const { alice, bob } = await pair(port, () => {});
