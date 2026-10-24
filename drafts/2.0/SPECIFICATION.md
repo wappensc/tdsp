@@ -468,7 +468,8 @@ type Permission = "read" | "write" | "creator";
   what another wrote. The window keeps a long-lived document's
   answer from growing without end; what slides out before an engine read it is a
   lost message, which loss detection notices in the cases [§10](#10-loss-detection)
-  names (LOS-8) and a resync then recovers — not in every case, as §10's limits say.
+  names (LOS-8) and a resync then recovers — not in every case, as
+  [§10.6](#106-what-loss-detection-cannot-notice) says.
 - **TRN-8** · *engine* — An engine MUST process each `Delivery.id` at most once while
   `receive` keeps returning it, and MUST tolerate receiving its own messages. It MAY
   forget an id once `receive` no longer returns it, except the ids of its own
@@ -523,8 +524,8 @@ type Permission = "read" | "write" | "creator";
   either only in memory, say — and SHOULD stay the same otherwise, across a
   restart that kept both included.
   *Rationale:* a bridge that restarts may lose what it held, and a restart that
-  falls entirely between two polls is otherwise invisible ([§10](#10-loss-detection),
-  limits). A new id is what the engine needs to treat it like a truncated window
+  falls entirely between two polls is otherwise invisible
+  ([§10.6](#106-what-loss-detection-cannot-notice)). A new id is what the engine needs to treat it like a truncated window
   (LOS-9), with or without a cursor. What decides is the loss, not the process: a
   bridge that keeps its window and its position at the messenger together on disk
   loses nothing by restarting, and a new id would cost every engine that reads it
@@ -788,7 +789,7 @@ digits, chosen at random by an engine each time it starts (LOS-13).
 | `resync-request` | `requestId` | 16 lowercase hex digits | Random, chosen by the requester, new for every request; what the answer names (RSY-16) |
 | | `control` | control vector or `null` | The requester's control vector; `null` while it holds no control snapshot from the creator (RSY-16) |
 | | `controlDigest` | digest or `null` | The digest of the requester's control state (LOS-12); `null` exactly when `control` is |
-| | `force` | boolean | `true` when the requester needs an answer even if it seems to lack nothing: its history was truncated (LOS-8, LOS-9) |
+| | `force` | boolean | `true` when the requester needs an answer even if it seems to lack nothing: its history was truncated (LOS-8, LOS-9, LOS-19) |
 | | `stateVector` | Base64 | The requester's state vector |
 | | `stateDigest` | digest | The digest of what the requester deleted (LOS-12) |
 | | `stream` | stream tag | The requester's stream (LOS-13) |
@@ -1020,8 +1021,8 @@ This specification defines one profile, `yjs-paragraphs/1`, in
      ([§9.4](#94-changes-larger-than-one-message));
   8. a canonical encoding of **what a replica deleted**: the same bytes for the same
      state, whatever the order, grouping or garbage collection of the updates it
-     came from, and other bytes when a deletion is missing ([§10](#10-loss-detection),
-     state digests); and the same encoding of what it deleted **of the items a given
+     came from, and other bytes when a deletion is missing
+     ([§10.3](#103-reports-and-streams), state digests); and the same encoding of what it deleted **of the items a given
      state vector counts**, which within the replica's own state vector is the
      encoding of all it deleted;
   9. how to **read without applying**: to tell, changing no replica, whether bytes
@@ -2117,7 +2118,7 @@ and the answer is a targeted diff.
   anyone but the creator `null` until it is bootstrapped (CTL-13), whatever control
   state it holds; a device of the creator always its own —, its current state
   vector and state digest (LOS-12), its stream and number (LOS-13), and
-  `force: true` while it holds *history truncated* evidence (LOS-8, LOS-9),
+  `force: true` while it holds *history truncated* evidence (LOS-8, LOS-9, LOS-19),
   `false` otherwise. A
   responder MUST treat copies of a request with the same `requestId` as one
   request.
@@ -2210,7 +2211,7 @@ and the answer is a targeted diff.
   record of deletions. Which of the two lacks something a digest does not tell; the
   other one's evidence makes it ask in turn. A requester ahead differs in digest
   by what it deleted of its own as well, so the answer may bring nothing: one
-  message, and its whole answer ends the requester's evidence (LOS-13). A joiner is
+  message, and its whole answer ends the requester's evidence (LOS-18). A joiner is
   not up to date until it holds a control snapshot, whatever
   its state vector says: one that had seen every edit as it happened would
   otherwise ask, get no answer, and never complete its bootstrap.
@@ -2384,7 +2385,7 @@ follow-up: `due`, the time within which the sender will speak again (SND-14).
   *Rationale:* a receiver judges a sender's silence by what that sender promised
   (LOS-11), not by its own pacing; `due` is relative, so it needs no shared clock
   (LOS-7). The receiver ends the expectation only with a frame of the same source
-  or a heartbeat that holds the frame, so that is what keeps the promise.
+  or a heartbeat that holds the frame (LOS-16), so that is what keeps the promise.
 - **SND-2** · *engine* — Every message an engine sends — of every kind, the initial
   seed and resync answers included — MUST go through its send scheduler, and MUST
   NOT be sent sooner than the effective floor after the engine's previous message
@@ -2509,7 +2510,7 @@ same sender is pending behind it. The heartbeat closes that hole.
   an answer to a joiner just after an edit would push the heartbeat past the
   edit's `due`, and every other participant would suspect the sender. After an
   answer that healed it, it tells the others the new state, so that what their
-  evidence showed of the old one ends (LOS-12, LOS-13): its last report would
+  evidence showed of the old one ends (LOS-12, LOS-18): its last report would
   otherwise stand for it, older than what it holds. So would a report that crossed
   another's deletion, which the engine then received by an ordinary edit: at
   everyone who holds that deletion it shows a difference in digests (LOS-12), and
@@ -2586,70 +2587,120 @@ limit, and the engine never needs to know how a frame of a given size travels.
 
 ## 10. Loss detection
 
-The information to notice a loss exists at the receiver. Loss detection makes it
-available — as **evidence**, never as a claim, because every piece of evidence
-can have an innocent cause (a late message, a participant who closed the
-application). The converse holds too: **no evidence is not a claim of
-completeness.** A loss can leave no trace an engine can see (the limits at the
-end of this section), so an engine MUST NOT expose the absence of evidence as
-"synchronised" or "complete", and an application MUST NOT present it so; the
-most it may say is that nothing currently suggests a loss — and not that either
-while the outcome of its last request is *unanswered* where LOS-8 ended the
-creator's evidence so: then it may only say that nobody it could ask had anything
-to give.
+*How it works (informative).* A receiver often holds what it needs to notice that
+a message did not reach it. Loss detection makes that available as **evidence**,
+never as a claim: every piece of evidence can have an innocent cause, such as a
+message that is only late, or a participant who closed the application. The
+converse holds too: no evidence is no claim of completeness, since a loss can
+leave no trace an engine can see (§10.6).
+
+- **What follows from evidence** (§10.1). Evidence is reported once it has
+  persisted for a waiting time — a truncated history at once —, judged by when the
+  receiver heard a message, and answered by a bounded number of resync requests.
+- **What a receiver can see missing** (§10.2). An update whose predecessors it
+  lacks (*pending gap*); a sender who promised a follow-up and sent none
+  (*silence*); a report of updates it has not applied; a missing counter of a
+  device of the creator.
+- **Reports and streams** (§10.3). A heartbeat, a request and an answer's last
+  piece each state their sender's state, its vectors and digests: they are
+  *reports*. An engine numbers its reports in a *stream* that it begins anew each
+  time it starts, so a receiver keeps the latest report of each stream and never
+  takes one device of a member for another. Digests show what vectors cannot: a
+  lost deletion (*diverged*), or two operations under one counter.
+- **A history the bridge cut short** (§10.4). A bridge keeps a bounded window.
+  When an engine's reads no longer overlap, or the bridge says that it truncated
+  or restarted, the engine holds *history truncated* evidence and asks for a
+  resync at once.
+- **Answers in pieces** (§10.5). An answer to a request arrives in numbered
+  pieces; one with a piece missing is *answer incomplete*.
+
+### 10.1 Evidence, not claims
 
 - **LOS-1** · *engine* — An engine MUST NOT report a message as lost; it MAY report
-  evidence that something is missing, and MUST NOT report any evidence before it
-  has persisted for a waiting time derived from its pacing's `expectedLatencyMs`
-  ([Appendix B](#appendix-b-recommended-values)).
+  evidence that something is missing. It MUST NOT report any evidence before it
+  has persisted for a *waiting time* derived from its pacing's
+  `expectedLatencyMs` ([Appendix B](#appendix-b-recommended-values)), except
+  *history truncated* evidence (LOS-19).
   *Rationale:* a message that is merely late produces exactly the same evidence for
   a while; reporting it immediately would cry wolf on every slow network.
+- **LOS-15** · *engine, application* — An engine MUST NOT expose the absence of
+  evidence as "synchronised" or "complete", and an application MUST NOT present it
+  so. The most an application may say is that nothing currently suggests a loss —
+  and not that either while the outcome of the engine's last request is
+  *unanswered* where LOS-20 ended the creator's evidence so: then it may only say
+  that nobody it could ask had anything to give.
+  *Rationale:* a loss can leave no trace an engine can see (§10.6), so no evidence
+  is not completeness.
+- **LOS-7** · *engine* — Loss evidence MUST be based on the time the receiver heard
+  a message, not on the sender's clock.
+  *Rationale:* clocks of different participants are not synchronised, and the
+  missing edit may still be in flight behind a heartbeat that just arrived.
+- **LOS-6** · *engine* — An engine SHOULD answer evidence by a resync request through
+  its single request slot (RSY-3), automatically:
+  - only after a conservative multiple of the waiting time;
+  - with a bounded number of attempts per episode, and growing waits between them;
+  - never while a request of its own is already outstanding.
+
+  The application MAY switch the automatic request off.
+  *Rationale:* asking costs messages against the same rate budget as editing;
+  unbounded automatic requests would turn a noisy network into a traffic storm.
+
+### 10.2 What a receiver can see missing
+
 - **LOS-2** · *engine* — An engine MUST treat as evidence an update held pending
-  because its causal predecessors are missing (a *pending gap*) — a deletion of
-  items it does not hold, which the CRDT holds back until they arrive, among them
-  (PRF-1, item 2) —, and SHOULD name the member it is waiting for when it can
-  tell.
+  because its causal predecessors are missing (a *pending gap*). A deletion of
+  items the engine does not hold, which the CRDT holds back until they arrive
+  (PRF-1, item 2), is one. The engine SHOULD name the member it is waiting for
+  when it can tell.
   *Rationale:* this is the direct signature of a lost message in the middle of a
   sender's stream. A held deletion is one too: the insertion it deletes was lost,
   or is late.
-- **LOS-11** · *engine* — An engine MUST treat as evidence a sender from whom a frame
-  with `due` above 0 arrived and neither a further message nor a heartbeat within
-  the larger of that `due` and the pace (SND-15), plus the waiting time LOS-1
-  derives from the engine's own `expectedLatencyMs`, measured from when it heard
-  the frame (*silence*); the waiting time counts once, so the evidence is reported
-  as soon as that has passed. A heartbeat MUST end that expectation for the frames it
-  holds — an `edit` whose update its state vector holds (PRF-1, item 3), a
-  `control` frame whose counter its control vector reaches — and for no other; a
-  further frame MUST end it for the earlier frames of its own source — an `edit`
-  for those whose updates come from the same CRDT clients, a `control` frame for
-  those under its device tag — and for no other; an applied answer to the engine's
-  own resync request MUST end it for every frame. A `resync-request` or
-  `resync-response` MUST NOT create it, and a frame with `due` 0 creates none.
-  Frames of the engine's own member count like anyone's, except its own coming
-  back: an `edit` whose updates come only from the engine's own CRDT client, and a
-  `control` frame under its own device tag.
+- **LOS-11** · *engine* — A frame with `due` above 0 sets up an *expectation*: a
+  further frame of its source, or a heartbeat that holds it (LOS-16), within the
+  larger of that `due` and the pace (SND-15), measured from when the engine heard
+  the frame. An engine
+  MUST treat as evidence (*silence*) an expectation that nothing ended (LOS-16)
+  within that time plus the waiting time LOS-1 derives from the engine's own
+  `expectedLatencyMs`. The waiting time counts once, so the evidence is reported as
+  soon as that has passed.
+  - A `resync-request` or a `resync-response` MUST NOT set up an expectation, and a
+    frame with `due` 0 sets up none.
+  - Frames of the engine's own member count like anyone's, except its own coming
+    back: an `edit` whose updates come only from the engine's own CRDT client, and
+    a `control` frame under its own device tag.
+
   *Rationale:* after an edit, a follow-up is due by what its sender promised
   (SND-14); its absence is the only sign of a lost final message when the
   heartbeat itself was lost too. Judging by the sender's own promise, not by the
   receiver's pacing, is what lets pacing be each participant's own. The pace is a
   floor for everyone, though: a sender that learned a longer pace after it
   announced its `due` can no longer keep the shorter promise, and must not look
-  silent for it. A receiver
-  that counted a resync request as an edit would suspect every joiner of going
-  quiet and ask for a resync itself — in a small group, more than a dozen
-  messages for one join without a single edit. Another device of the engine's own
-  member is a sender like any other, whose losses this device must notice too; a
-  transport need not tell a sender the id its message is delivered under (RSY-16),
-  so an engine may see its own frames again, and their content tells them apart.
-  A member may write from several devices: a heartbeat that crossed another
-  device's edit, or that device's next edit, says nothing about whether the device
-  that wrote the first one fell silent; what a heartbeat holds, and where a frame
-  comes from, does.
+  silent for it. A receiver that counted a resync request as an edit would suspect
+  every joiner of going quiet and ask for a resync itself — in a small group, more
+  than a dozen messages for one join without a single edit. Another device of the
+  engine's own member is a sender like any other, whose losses this device must
+  notice too; a transport need not tell a sender the id its message is delivered
+  under (RSY-16), so an engine may see its own frames again, and their content
+  tells them apart.
+- **LOS-16** · *engine* — An expectation (LOS-11) MUST end by each of these, for
+  the frames named and for no other:
+  - a heartbeat, for the frames it holds: an `edit` whose update its state vector
+    holds (PRF-1, item 3), a `control` frame whose counter its control vector
+    reaches;
+  - a further frame, for the earlier frames of its own source: an `edit` for those
+    whose updates come from the same CRDT clients, a `control` frame for those
+    under its device tag;
+  - an applied answer to the engine's own resync request, for every frame.
+
+  *Rationale:* a member may write from several devices: a heartbeat that crossed
+  another device's edit, or that device's next edit, says nothing about whether the
+  device that wrote the first one fell silent; what a heartbeat holds, and where a
+  frame comes from, does.
 - **LOS-4** · *engine* — An engine MUST treat as evidence a report (LOS-13) — a
   heartbeat, a request or an answer's last piece (RSY-8) — whose state vector
   contains updates it has not applied, judged against its current document so
   that the evidence disappears when those updates arrive. It MUST judge the latest
-  report of each of a member's streams (LOS-13), not only the member's latest, and
+  report of each of a member's streams (LOS-17), not only the member's latest, and
   the reports of its own member like anyone's.
   *Rationale:* it is the only direct evidence of a lost *final* message. A member
   may write from several devices: the report of one that never saw a change must
@@ -2664,87 +2715,85 @@ to give.
   even the last operation's loss visible. A heartbeat from a creator device that
   knows less is no evidence: a vector compares per device, so a lagging device
   shows only lower entries.
-- **LOS-6** · *engine* — An engine SHOULD answer evidence by a resync request through
-  its single request slot (RSY-3), automatically, only after a conservative
-  multiple of the waiting time, with a bounded number of attempts per episode and
-  growing waits between them, and never while a request of its own is already
-  outstanding. The automatic request MAY be switched off by the application.
-  *Rationale:* asking costs messages against the same rate budget as editing;
-  unbounded automatic requests would turn a noisy network into a traffic storm.
-- **LOS-7** · *engine* — Loss evidence MUST be based on the time the receiver heard
-  a message, not on the sender's clock.
-  *Rationale:* clocks of different participants are not synchronised, and the
-  missing edit may still be in flight behind a heartbeat that just arrived.
-- **LOS-8** · *engine* — An engine whose transport does not offer `receiveSince`
-  MUST treat as evidence (*history truncated*) a
-  `receive` answer that shares no delivery with the previous non-empty answer it
-  processed — everything it had seen has left the bridge's window, so deliveries
-  may have come and gone unseen in between — and the first `receive` answer after
-  one that failed. Unlike LOS-2, LOS-4, LOS-10 and LOS-11 this evidence needs no
-  waiting time: an engine SHOULD answer it by a resync request with `force: true`
-  (RSY-16) as soon as its request slot is free, and MUST report it until an answer to its own
-  request that bootstraps it (CTL-13, RSY-14) has been applied — for a device of the
-  creator any answer, for anyone else one with control state it takes (RSY-13) —
-  as "not safely synchronised", never as "synchronised". For the creator the
-  evidence also ends when a request it made
-  after the evidence expired unanswered: a peer answers the creator only when it
-  holds content the creator lacks (RSY-6, RSY-17), so silence means nothing to
-  recover, or nobody online to recover it from — and the engine cannot tell
-  which. What remains is the request's outcome, *unanswered* (RSY-4), which the
-  engine MUST keep observable until its next request; an application SHOULD show
-  it, and MUST NOT say then that nothing suggests a loss (§10). The creator's copy
-  may still lack a change of a member who is offline, until that member sends
-  again (LOS-2, LOS-4, LOS-11) or answers a later request.
-  *Rationale:* a bounded window (BRG-17) can drop an edit *and* the heartbeat that
-  follows it before an engine reads again; the engine then sees no pending gap,
-  no silence (it never heard the edit) and no newer state vector, so LOS-2, LOS-4,
-  LOS-10 and LOS-11 stay quiet while the document has diverged. The one thing the engine can still see is that the
-  window moved past everything it knew. Overlap proves nothing after a bridge
-  restart, though: a restarted bridge may offer old deliveries again (BRG-17), and
-  one it offers again can overlap the previous answer while newer ones were lost.
-  A restart is visible to an engine
-  that polls as a failed `receive`, so that is evidence too; so is a bridge that
-  could not reach its messenger, which costs one answered request when nothing
-  was lost. The request forces an answer (`force: true`) because only an
-  answer can end the evidence: an engine that lacks nothing would otherwise get
-  none and warn for ever. For anyone but the creator that answer must carry control
-  state: the window may have dropped a control operation, which an answer of
-  content alone does not bring back. The rule does not promise
-  healing: with the creator offline the request goes unanswered and the evidence
-  stays.
-- **LOS-9** · *engine* — An engine whose transport offers `receiveSince` MUST read
-  through it, with the last `DeliveryId` of the latest answer that held one as the
-  cursor (TRN-18), and MUST treat as
-  *history truncated* evidence, with LOS-8's consequences, an answer with
-  `truncated: true`, and MUST NOT apply LOS-8's comparison of answers then. An
-  engine whose transport offers `instance` (TRN-19), with or without
-  `receiveSince`, MUST treat an `instance` other than the one that answered its
-  previous read as such evidence too — after a restart, other than the one its
-  application restored with the cursor (§6.3), where it restored one; either is
-  evidence on its own.
-  *Rationale:* where the bridge can say that something slid out unseen, or that it
-  restarted, the engine needs no guess: LOS-8's overlap heuristic, its "first
-  answer after a failed one" case and its cost of a needless request after every
-  outage go, and a restart between two polls becomes visible. A bridge may offer
-  the instance without the cursor; its restart is evidence all the same. Restored
-  with the cursor, the instance carries this across the engine's own restart: a
-  bridge that lost something meanwhile has another epoch, one that kept its window
-  the same. Read after the deliveries, it also shows what a bridge gave up while it
-  answered them — an event of its messenger it read for this answer and could not
-  enter — at this read, not one later, when a restored member would already have
-  bootstrapped from its own state.
-- **LOS-12** · *engine* — An engine MUST treat as evidence (*diverged*) a report
-  (LOS-13) whose state vector its own holds — every update it counts, the vectors
-  equal or the engine's ahead — and whose state digest differs from the digest of
-  what the engine deleted of the items that state vector counts (PRF-1, item 8),
-  judged first when the engine can compare the two: as it hears the report, or
-  once it holds every update the report's vector counts. A report that did not
-  differ then is no such evidence. It MUST treat as evidence too a creator
-  device's heartbeat or request whose control vector equals its own and whose
-  control digest does not — on a device of the creator, a member's request too
-  (CTL-31). It MUST judge either against its current state, so that it disappears
-  once the digests agree, and wait for it as LOS-1 says. A report the engine holds
-  by a whole answer is no such evidence (LOS-13).
+
+### 10.3 Reports and streams
+
+- **LOS-13** · *engine* — An engine MUST choose a random stream tag (§4.3) each
+  time it starts, and MUST number every heartbeat, request and answer it sends in
+  that stream, from 1, each one higher than every earlier one:
+  - a heartbeat and a request when it writes them;
+  - an answer when it takes the state it answers from, every piece of that answer
+    with the same number (RSY-8).
+
+  A *report* is a heartbeat, a request or an answer's last piece — of an answer
+  the engine does not accept (RSY-12) too, of which it applies nothing —: its
+  sender's state, at that number.
+  *Rationale:* a member may run several devices under one MemberId, and a later
+  message of one says nothing about another's state. Within one stream the state
+  only grows, so a newer report says at least what an older one did, and its
+  number orders the two however the messenger delivered them. What a stream
+  reveals is how many engines a member runs and when one starts.
+- **LOS-17** · *engine* — An engine MUST keep the latest report of each of a
+  member's streams — at least four streams per member, dropping the one it heard
+  from least recently first ([Appendix B](#appendix-b-recommended-values)) —, MUST
+  let a report replace only one of the same stream with a lower number, and MUST
+  NOT take a report of its own stream as anyone's.
+  *Rationale:* kept by member, the report of a device that lags behind would
+  replace that of the device that deleted, and valid evidence would vanish. An older report
+  offered again changes nothing.
+- **LOS-18** · *engine* — What a stream's report shows (LOS-4, LOS-12, LOS-14) MUST
+  end only:
+  - when the engine's state no longer gives it, judged against its current state;
+  - when a newer report of that stream shows nothing;
+  - or when the engine has applied, whole (LOS-14), an answer of that stream to its
+    own request: it then holds what that answer's last piece states, and neither
+    that report nor a later one of the stream stating the same state is evidence of
+    a difference in digests.
+
+  A stream that falls silent is a sender that falls silent (§10.6): no time alone
+  ends what its last report shows.
+  *Rationale:* a whole answer is the one way a receiver knows it holds a sender's
+  state although its own digest differs — by deletions of its own the sender had
+  not seen — so it ends that false alarm without a second request.
+
+**State digests.** A state vector counts what a sender inserted, not what it
+deleted, and a control vector counts operations, not what they say. A lost update
+that only deleted, or two different operations under one device and counter
+(CTL-24), leave every vector equal. So heartbeats, requests and an answer's last
+piece carry digests beside their vectors (LOS-12):
+
+- a **digest** is the first 8 bytes of SHA-256 (FIPS 180-4), written as 16
+  lowercase hex digits;
+- the *state digest* is that of the profile's encoding of what the sender deleted
+  (PRF-1, item 8);
+- the *control digest* is that of the sender's control snapshot's `vector` and
+  `targets` (§7.5) — not its `aboveHoles`, a hole being evidence of its own
+  (LOS-10) —, every target's `heads` in order of `device` and then `counter`, no
+  control vector in it with an entry of 0 (FRM-14), canonicalized by RFC 8785
+  (JSON Canonicalization Scheme) and encoded as UTF-8.
+
+A receiver that holds every insertion a sender's vector counts compares the
+sender's state digest with that of what it deleted itself of those items, its own
+control digest with the sender's at equal control vectors. Different digests are
+evidence (LOS-12), a responder that sees them has something to offer (RSY-17), and
+a device of the creator learns where two participants hold different operations
+(CTL-31). While one participant lacks an insertion the other counts, the vectors
+show that first, and the digests are compared once it has arrived.
+
+- **LOS-12** · *engine* — An engine MUST treat as evidence:
+  - (*diverged*) a report (LOS-13) whose state vector its own holds — every update it counts,
+    the vectors equal or the engine's ahead — and whose state digest differs from
+    the digest of what the engine deleted of the items that state vector counts
+    (PRF-1, item 8). It is judged first when the engine can compare the two: as it
+    hears the report, or once it holds every update the report's vector counts. A
+    report that did not differ then is no such evidence.
+  - a creator device's heartbeat or request whose control vector equals the
+    engine's own and whose control digest does not — on a device of the creator, a
+    member's request too (CTL-31).
+
+  It MUST judge either against its current state, so that it disappears once the
+  digests agree, and wait for it as LOS-1 says. A report the engine holds by a
+  whole answer is no such evidence (LOS-18).
   *Rationale:* a vector counts what was inserted, or which operations were issued;
   a lost deletion, or two different operations under one device and counter
   (CTL-24), leave it equal. The digest is what differs then. A sender cannot have
@@ -2759,60 +2808,86 @@ to give.
   which the sender had not yet received when it reported, makes the digests differ
   as well: a false alarm, which one whole answer of that stream ends, or its next
   report, which a request stating what it holds brings at once (SND-11).
-- **LOS-13** · *engine* — An engine MUST choose a random stream tag (§4.3) each
-  time it starts, and MUST number every heartbeat, request and answer it sends in
-  that stream, from 1, each one higher than every earlier one: a heartbeat and a
-  request when it writes them, an answer when it takes the state it answers from,
-  every piece of that answer with the same number (RSY-8). A *report* is a
-  heartbeat, a request or an answer's last piece — of an answer the engine does
-  not accept (RSY-12) too, of which it applies nothing —: its sender's state, at
-  that number. An engine MUST keep the latest report of each of a member's streams — at
-  least four streams per member, dropping the one it heard from least recently
-  first ([Appendix B](#appendix-b-recommended-values)) —, MUST let a report replace
-  only one of the same stream with a lower number, and MUST NOT take a report of
-  its own stream as anyone's. What a stream's report shows (LOS-4, LOS-12, LOS-14)
-  MUST end only when the engine's state no longer gives it, judged against its
-  current state; when a newer report of that stream shows nothing; or when the
-  engine has applied, whole (LOS-14), an answer of that stream to its own request:
-  it then holds what that answer's last piece states, and neither that report nor
-  a later one of the stream stating the same state is evidence of a difference in
-  digests. A stream that falls silent is a sender that falls silent (§10, its
-  limits): no time alone ends what its last report shows.
-  *Rationale:* a member may run several devices under one MemberId, and a later
-  message of one says nothing about another's state: kept by member, the report of
-  a device that lags behind replaced that of the device that deleted, and valid
-  evidence vanished. Within one stream the state only grows, so a newer report
-  says at least what an older one did, and its number orders the two however the
-  messenger delivered them; an older report offered again changes nothing. A whole
-  answer is the one way a receiver knows it holds a sender's state although its
-  own digest differs — by deletions of its own the sender had not seen — so it ends
-  that false alarm without a second request. What a stream reveals is how many
-  engines a member runs and when one starts.
-- **LOS-14** · *engine* — An engine MUST count, by stream and number (LOS-13), the
-  pieces of each answer to its own request it applies, and MUST treat as evidence
-  (*answer incomplete*) an answer of which a piece is missing — its last piece
-  arrived and one of a lower number did not, or pieces arrived and its last did
-  not — once no piece of it has arrived for the floor the engine keeps (SND-15)
-  plus the waiting time of LOS-1, unless the engine holds what the last piece
-  states anyway (LOS-4, LOS-12). It MUST keep each such answer by its sender,
-  stream and number, bound to the request it answers, apart from every other
-  answer and from the reports it keeps (LOS-13): a piece of another answer — of
-  the same stream or another, to its own request or anyone's — ends nothing of it,
-  and neither does dropping its stream's report. The evidence MUST end only when
-  the answer is whole, when the engine holds what its last piece states, or when
-  it holds the state of that stream at a higher number: by a report of the stream
-  it held when it could first compare it (LOS-12), or by a whole answer of the
-  stream. A piece MUST count once by its number, however often it arrives. An
-  answer whose pieces disagree — on the request they answer, on the count or on
-  the state the last one states, or with a piece numbered above the count — MUST
-  NOT be taken as whole, and its evidence MUST end only by a higher number of its
-  stream. An engine MAY bound the answers it counts at once and the piece numbers
-  it counts; an answer it gives up for the bound MUST stay evidence until the
-  engine holds the state of its stream at its number or a higher one, and one with
-  a piece numbered above the bound is never whole. It MUST make that evidence
-  observable, and an answer that lacks a piece observable at once, as a transfer
-  under way; it SHOULD answer the evidence as LOS-6 says. An answer with every
-  piece, up to the number its last one names, is *whole*.
+
+### 10.4 A history the bridge cut short
+
+- **LOS-8** · *engine* — An engine whose transport does not offer `receiveSince`
+  MUST treat as evidence (*history truncated*):
+  - a `receive` answer that shares no delivery with the previous non-empty answer
+    it processed — everything it had seen has left the bridge's window, so
+    deliveries may have come and gone unseen in between;
+  - the first `receive` answer after one that failed.
+
+  *Rationale:* a bounded window (BRG-17) can drop an edit *and* the heartbeat that
+  follows it before an engine reads again; the engine then sees no pending gap, no
+  silence (it never heard the edit) and no newer state vector, so LOS-2, LOS-4,
+  LOS-10 and LOS-11 stay quiet while the document has diverged. The one thing the
+  engine can still see is that the window moved past everything it knew. Overlap
+  proves nothing after a bridge restart, though: a restarted bridge may offer old
+  deliveries again (BRG-17), and one it offers again can overlap the previous
+  answer while newer ones were lost. A restart is visible to an engine that polls
+  as a failed `receive`, so that is evidence too; so is a bridge that could not
+  reach its messenger, which costs one answered request when nothing was lost.
+- **LOS-9** · *engine* — Where the transport can say what it lost:
+  - An engine whose transport offers `receiveSince` MUST read through it, with the
+    last `DeliveryId` of the latest answer that held one as the cursor (TRN-18). It
+    MUST treat an answer with `truncated: true` as *history truncated* evidence,
+    and MUST NOT apply LOS-8's comparison of answers then.
+  - An engine whose transport offers `instance` (TRN-19), with or without
+    `receiveSince`, MUST treat as such evidence too an `instance` other than the
+    one that answered its previous read — after a restart, other than the one its
+    application restored with the cursor (§6.3), where it restored one.
+
+  Either is evidence on its own.
+  *Rationale:* where the bridge can say that something slid out unseen, or that it
+  restarted, the engine needs no guess: LOS-8's overlap heuristic, its "first
+  answer after a failed one" case and its cost of a needless request after every
+  outage go, and a restart between two polls becomes visible. A bridge may offer
+  the instance without the cursor; its restart is evidence all the same. Restored
+  with the cursor, the instance carries this across the engine's own restart: a
+  bridge that lost something meanwhile has another epoch, one that kept its window
+  the same. Read after the deliveries, it also shows what a bridge gave up while it
+  answered them — an event of its messenger it read for this answer and could not
+  enter — at this read, not one later, when a restored member would already have
+  bootstrapped from its own state.
+- **LOS-19** · *engine* — Unlike every other evidence of this section, *history
+  truncated* evidence (LOS-8, LOS-9) needs no waiting time. An engine SHOULD answer
+  it by a resync request with `force: true` (RSY-16) as soon as its request slot is
+  free, and MUST report it as "not safely synchronised", never as "synchronised",
+  until it has applied an answer to its own request that bootstraps it (CTL-13,
+  RSY-14) — for a device of the creator any answer, for anyone else one with
+  control state it takes (RSY-13) —, or, on a device of the creator, as LOS-20
+  says.
+  *Rationale:* the request forces an answer (`force: true`) because only an
+  answer can end the evidence: an engine that lacks nothing would otherwise get
+  none and warn for ever. For anyone but the creator that answer must carry control
+  state: the window may have dropped a control operation, which an answer of
+  content alone does not bring back. The rule does not promise healing: with the
+  creator offline the request goes unanswered and the evidence stays.
+- **LOS-20** · *engine, application* — For the creator, *history truncated*
+  evidence also ends when a request it made after the evidence expired unanswered.
+  What remains is the request's outcome, *unanswered* (RSY-4), which the engine
+  MUST keep observable until its next request; an application SHOULD show it, and
+  MUST NOT say then that nothing suggests a loss (LOS-15). The creator's copy may
+  still lack a change of a member who is offline, until that member sends again
+  (LOS-2, LOS-4, LOS-11) or answers a later request.
+  *Rationale:* a peer answers the creator only when it holds content the creator
+  lacks (RSY-6, RSY-17), so silence means nothing to recover, or nobody online to
+  recover it from — and the engine cannot tell which.
+
+### 10.5 Answers in pieces
+
+- **LOS-14** · *engine* — An answer with every piece, up to the number its last one
+  names, is *whole*. An engine MUST count, by stream and number (LOS-13), the
+  pieces of each answer to its own request it applies; a piece MUST count once by
+  its number, however often it arrives. It MUST treat as evidence (*answer
+  incomplete*) an answer of which a piece is missing — its last piece arrived and
+  one of a lower number did not, or pieces arrived and its last did not —, once no
+  piece of it has arrived for the floor the engine keeps (SND-15) plus the waiting
+  time of LOS-1, unless the engine holds what the last piece states anyway (LOS-4,
+  LOS-12). It MUST make that evidence observable, and an answer that lacks a piece
+  observable at once, as a transfer under way; it SHOULD answer the evidence as
+  LOS-6 says.
   *Rationale:* a bootstrap completes with the piece that carries the snapshot
   (RSY-14), which may arrive first: trust is there before the content is. And a
   receiver that already holds more than the responder — its own edits, others' —
@@ -2820,64 +2895,76 @@ to give.
   piece may carry only deletions. Numbered pieces say it exactly, for the cost of a
   count. The responder sends its pieces at its own floor, which the receiver does
   not know but shares through the pace; it waits as long as one more piece would
-  take it. Two answers of one stream are two transfers, and they overlap: a
+  take it.
+- **LOS-21** · *engine* — An engine MUST keep each answer it counts (LOS-14) by its
+  sender, stream and number, bound to the request it answers, apart from every
+  other answer and from the reports it keeps (LOS-17): a piece of another answer —
+  of the same stream or another, to its own request or anyone's — ends nothing of
+  it, and neither does dropping its stream's report. Its evidence MUST end only:
+  - when the answer is whole;
+  - when the engine holds what its last piece states;
+  - or when it holds the state of that stream at a higher number: by a report of
+    the stream it held when it could first compare it (LOS-12), or by a whole
+    answer of the stream.
+
+  *Rationale:* two answers of one stream are two transfers, and they overlap: a
   responder answers whoever asks, and a later answer may go to someone else and
   never be whole here. Within a stream the state only grows, so a later answer
   held whole, or a later report held, says the engine holds the earlier one's state
-  too; a piece that is not the last states nothing, and cannot. Where an answer's
-  pieces disagree, the engine cannot tell which of them states the answer; only
-  its stream's later word can. A bound on what is counted keeps memory finite
-  without letting evidence vanish: giving an answer up costs the engine the chance
-  to see it whole, not the warning.
+  too; a piece that is not the last states nothing, and cannot.
+- **LOS-22** · *engine* — An answer whose pieces disagree — on the request they
+  answer, on the count or on the state the last one states, or with a piece
+  numbered above the count — MUST NOT be taken as whole, and its evidence MUST end
+  only by a higher number of its stream. An engine MAY bound the answers it counts
+  at once and the piece numbers it counts; an answer it gives up for the bound MUST
+  stay evidence until the engine holds the state of its stream at its number or a
+  higher one, and one with a piece numbered above the bound is never whole.
+  *Rationale:* where an answer's pieces disagree, the engine cannot tell which of
+  them states the answer; only its stream's later word can. A bound on what is
+  counted keeps memory finite without letting evidence vanish: giving an answer up
+  costs the engine the chance to see it whole, not the warning.
 
-Honest limits: LOS-8 notices a window that moved on only while a previous answer
-exists to compare with, so a truncation between an engine's start and its first
-`receive` is covered by the joiner's bootstrap instead (RSY-1). A bridge that
-restarts entirely between two polls of an engine — possible where an application
-polls rarely, as a browser does in a background tab — and whose new window
-overlaps the previous answer is not noticed, unless the transport offers
-`instance` (LOS-9). A resync heals only while the creator (or, for the creator's own
-request, a peer holding the content) is online. A message that reached *nobody*
-is recovered only when its author answers a request. A sender whose
-`maxIntervalMs` is not finite promises nothing (`due` 0) and sends no heartbeat,
-and the loss of its final message cannot be noticed at all. A heartbeat names its
-member, not its device: one that holds a frame ends the expectation of that frame,
-whichever of the member's devices sent it (LOS-11). So when one device's final
-message and its heartbeat are both lost while another device of that member, which
-did get the frame before, sends a heartbeat, the loss shows only through a gap
-(LOS-2), that device's next message or its restart (SND-8). An update that only
-deleted is held by every state vector, so a heartbeat ends its expectation always.
-A report that crossed a deletion the receiver holds stays evidence until its
-stream reports again — at once, once that stream hears a request stating what it
-holds (SND-11) — or answers the receiver whole (LOS-13); while that stream does
-not run, it stays, and the receiver's requests go unanswered. An engine keeps the
-reports of a bounded number of streams per member (LOS-13): a member running more
-engines at once than that can have one stream's evidence dropped — not that of an
-answer it counts (LOS-14). An answer whose responder stops before its last piece —
-the application quits, or restarts with a new stream — stays evidence while that
-stream does not run: what another stream of the member holds says nothing of what
-this one sent, so whole answers from it do not end it; the old stream's own pieces,
-sent before it stopped and delivered late, still do.
+### 10.6 What loss detection cannot notice
 
-**State digests.** A state vector counts what a sender inserted, not what it
-deleted, and a control vector counts operations, not what they say. A lost update
-that only deleted, or two different operations under one device and counter
-(CTL-24), leave every vector equal. So heartbeats, requests and an answer's last
-piece carry digests beside their vectors (LOS-12): a **digest** is the first 8
-bytes of SHA-256 (FIPS 180-4), written as 16 lowercase hex digits. The *state
-digest* is that of the profile's encoding of what the sender deleted (PRF-1,
-item 8). The *control digest* is that of the sender's control snapshot's `vector`
-and `targets` (§7.5) — not its `aboveHoles`, a hole being evidence of its own
-(LOS-10) —, every target's `heads` in order of `device` and then `counter`, no
-control vector in it with an entry of 0 (FRM-14), canonicalized by RFC 8785 (JSON
-Canonicalization Scheme) and encoded as UTF-8. A receiver that holds every
-insertion a sender's vector counts compares the sender's state digest with that
-of what it deleted itself of those items, its own control digest with the
-sender's at equal control vectors; different digests are evidence (LOS-12), a
-responder that sees them has something to offer (RSY-17), and a device of the
-creator learns where two participants hold different operations (CTL-31). While
-one participant lacks an insertion the other counts, the vectors show that first,
-and the digests are compared once it has arrived.
+*Informative.* A loss may leave no evidence, evidence that ends too soon, or
+evidence nothing can end:
+
+- **Before the first answer.** LOS-8 notices a window that moved on only while a
+  previous answer exists to compare with, so a truncation between an engine's
+  start and its first `receive` is covered by the joiner's bootstrap instead
+  (RSY-1).
+- **A bridge restart between two polls.** A bridge that restarts entirely between
+  two polls of an engine — possible where an application polls rarely, as a
+  browser does in a background tab — and whose new window overlaps the previous
+  answer is not noticed, unless the transport offers `instance` (LOS-9).
+- **Nobody to ask.** A resync heals only while the creator (or, for the creator's
+  own request, a peer holding the content) is online. A message that reached
+  *nobody* is recovered only when its author answers a request.
+- **No promise.** A sender whose `maxIntervalMs` is not finite promises nothing
+  (`due` 0) and sends no heartbeat, and the loss of its final message cannot be
+  noticed at all.
+- **Another device's heartbeat.** A heartbeat names its member, not its device: one
+  that holds a frame ends the expectation of that frame, whichever of the member's
+  devices sent it (LOS-16). So when one device's final message and its heartbeat
+  are both lost while another device of that member, which did get the frame
+  before, sends a heartbeat, the loss shows only through a gap (LOS-2), that
+  device's next message or its restart (SND-8).
+- **Deletions.** An update that only deleted is held by every state vector, so a
+  heartbeat ends its expectation always.
+- **A report that crossed a deletion.** A report that crossed a deletion the
+  receiver holds stays evidence until its stream reports again — at once, once
+  that stream hears a request stating what it holds (SND-11) — or answers the
+  receiver whole (LOS-18); while that stream does not run, it stays, and the
+  receiver's requests go unanswered.
+- **Many engines of one member.** An engine keeps the reports of a bounded number
+  of streams per member (LOS-17): a member running more engines at once than that
+  can have one stream's evidence dropped — not that of an answer it counts
+  (LOS-21).
+- **A responder that stops.** An answer whose responder stops before its last piece
+  — the application quits, or restarts with a new stream — stays evidence while
+  that stream does not run: what another stream of the member holds says nothing
+  of what this one sent, so whole answers from it do not end it; the old stream's
+  own pieces, sent before it stopped and delivered late, still do.
 
 ## 11. Invitations
 
@@ -3218,9 +3305,9 @@ The reference implementation uses all five.
   grow apart beyond what a receiver holds leave a capacity conflict, which a person
   resolves (CTL-32), not a merged state.
 - **Completeness without evidence.** A copy with no loss evidence may still lack a
-  change: one no engine saw a trace of ([§10](#10-loss-detection)'s limits), or,
+  change: one no engine saw a trace of ([§10.6](#106-what-loss-detection-cannot-notice)), or,
   at the creator, one held only by a member who was offline when the creator
-  asked (LOS-8).
+  asked (LOS-20).
 - **Authorship.** Attribution is a display convenience (ATR-3).
 - **Deletion** of content from participants' devices.
 - **Metadata protection.** Who talks to whom, when and how much is as visible as the
@@ -3352,10 +3439,10 @@ requirement it serves.
 | Resync request expiry | floor + 2 × latency, at least 10 s | RSY-4 |
 | Bootstrap retry | after 1, 2, 4, … expiries; at most 5 attempts | RSY-5 |
 | Loss-evidence wait | 1 × `expectedLatencyMs`, or 5 s when it is 0 | LOS-1 |
-| Streams kept per member | 4 for their reports, each with its latest; a fifth replaces the one heard from least recently; a stream with an answer counted or given up is kept besides | LOS-13 |
-| Answers counted per member | 8 at once; a ninth gives up the one heard from least recently, which stays evidence by stream and number; 8 streams with answers given up, beyond them the member's evidence stays while the engine runs; piece numbers up to 2^20 | LOS-14 |
+| Streams kept per member | 4 for their reports, each with its latest; a fifth replaces the one heard from least recently; a stream with an answer counted or given up is kept besides | LOS-17, LOS-21 |
+| Answers counted per member | 8 at once; a ninth gives up the one heard from least recently, which stays evidence by stream and number; 8 streams with answers given up, beyond them the member's evidence stays while the engine runs; piece numbers up to 2^20 | LOS-21, LOS-22 |
 | Incomplete answer | evidence once no piece has arrived for the floor + the loss-evidence wait | LOS-14 |
-| Automatic resync | at once for a truncated history; after 2 × latency for a gap, a report that shows we are behind or differs in digest, or an incomplete answer; after the overdue time + 3 × latency for silence; at most 3 per episode, each wait doubling, never longer than 10 min | LOS-6, LOS-8 |
+| Automatic resync | at once for a truncated history; after 2 × latency for a gap, a report that shows we are behind or differs in digest, or an incomplete answer; after the overdue time + 3 × latency for silence; at most 3 per episode, each wait doubling, never longer than 10 min | LOS-6, LOS-19 |
 | Control state bounds | 64 creator devices, 1 024 counters above a hole per device, 5 002 targets, 64 operations per target in a snapshot, a target's `seen` 64 devices, the close each device's latest of 64 devices without `seen`, 3 MiB held and 1 MiB for a device that adds a target, measured without the close, which holds always | CTL-30, CTL-34 to CTL-37 |
 | Smallest useful piece | Below it, a change is refused rather than cut into pieces too small to carry anything | SND-19 |
 | Incoming mail read | At most 10 MiB of one mail, by a partial IMAP fetch; a larger one is rejected unread (the largest mail a 4 MiB frame becomes is about 7.6 MiB) | BRG-13 |
@@ -3614,7 +3701,7 @@ The changes have six reasons, which the tables below cite by letter:
 | LOS-1 | The waiting time comes from the engine's own pacing | B. |
 | RSY-9 | Kept by request id, four per requester, served in turn | wappensc/tdsp#31: several devices of one member asking at once each get their answer. |
 | LOS-4 | The latest report of each of a member's streams is judged — a heartbeat, a request, an answer's last piece —, those of one's own member too | wappensc/tdsp#31: a person may write from several devices, and one device's heartbeat must not hide another's. |
-| LOS-8 | Only without a cursor; a truncated history sets `force`, and ends for anyone but the creator only with an answer that brings control state | E: where the bridge offers a cursor, its answer replaces the guess (LOS-9). |
+| LOS-8 (with LOS-19 and LOS-20) | Only without a cursor; a truncated history sets `force`, and ends for anyone but the creator only with an answer that brings control state | E: where the bridge offers a cursor, its answer replaces the guess (LOS-9). |
 | INV-6 | `policy` is an unknown parameter | B. |
 | TRN-13 | A transport profile is `{ bounds, pacing }` | B: a transport suggests its pacing; named presets belong to applications. |
 | ATR-1 | Only an answer to a request made while the engine held nothing is adopted wholesale | An engine that restarted with content keeps the attribution it restored; 1.x left open whether its answer was a bootstrap response. |
@@ -3643,7 +3730,7 @@ The changes have six reasons, which the tables below cite by letter:
 | CTL-33 | What only members hold shown to a device of the creator, with the values reported; resolved by an explicit confirmation that counts the reported counters as seen | A: deciding a target again superseded a vanished device's decision only when it was narrower; automatic is only what a rule merges without a question of authority. |
 | PRF-1, item 9 | Reading an update and a state vector without applying them; one the profile cannot read, or with a byte after it, rejects its frame (§4.4) | A frame is checked whole before anything of it is applied (FRM-6), and CRDT libraries fail differently on bytes they cannot read: one throws, another has applied part already. |
 | LOS-12, CTL-31; PRF-1, item 8 | State digests beside the vectors in heartbeats, requests and an answer's last piece; a receiver that holds a sender's vector compares what it deleted within it, and different digests are evidence and something to offer; a device of the creator learns of a collision from a report | wappensc/tdsp#71: a vector counts what was inserted or issued, so a lost deletion and two operations under one dot went unseen; the digest is a fixed 8 bytes. A review of draft 2: compared at equal vectors only, a lost deletion stayed unseen at a receiver that had edited since. |
-| LOS-13, LOS-14 | Streams: a heartbeat, a request and an answer name their sender's engine as it runs now and number its reports; a report replaces only an older one of its stream; an answer applied whole ends a difference in digests; an answer's pieces are numbered, the last with the count, and one with a piece missing is evidence, counted apart from the stream's reports and its other answers, until it is whole or the stream's state at a higher number is held; copies count once, pieces that disagree are never whole, an answer given up for a bound stays evidence | A review of draft 2: kept by member, a lagging device's report ended the evidence another device's had shown, and a receiver that held more than an answer could not tell whether a piece of it was missing. A review of draft 3: a piece of a later answer of the same stream, to someone else, ended the evidence of an incomplete one. |
+| LOS-13, LOS-14 (with LOS-17, LOS-18, LOS-21 and LOS-22) | Streams: a heartbeat, a request and an answer name their sender's engine as it runs now and number its reports; a report replaces only an older one of its stream; an answer applied whole ends a difference in digests; an answer's pieces are numbered, the last with the count, and one with a piece missing is evidence, counted apart from the stream's reports and its other answers, until it is whole or the stream's state at a higher number is held; copies count once, pieces that disagree are never whole, an answer given up for a bound stays evidence | A review of draft 2: kept by member, a lagging device's report ended the evidence another device's had shown, and a receiver that held more than an answer could not tell whether a piece of it was missing. A review of draft 3: a piece of a later answer of the same stream, to someone else, ended the evidence of an incomplete one. |
 | LAY-5, LAY-6 | A member's right on a layer, inherited from the document where the creator set none or reset it (`null`); of concurrent values `read` before inherit before `write` (CTL-23), the narrowest effective right whatever the permission on the document; none for a revoked member; enforced by the sending engine, a change that touches a layer it may not write refused whole | wappensc/tdsp#33 (L5) and #50 (no. 2): commenting on content one may only read, and its opposite, without a value beyond `read` and `write`. Ordered with inherit as the narrowest value, a concurrent reset undid a restriction and let a member write who should only read. |
 | CTL-30, CTL-32 | Bounds on device tags, targets, holes and bytes; the operation that fills a hole is never refused for them; at a bound, the first in code point order are kept, a close always; a creator issues nothing the bounds or one answer could not hold, a new target only up to 1 MiB of the 3 MiB a receiver holds; beyond the bytes, a capacity conflict: no new target, no edit of one's own, shown until a person resolves it; the bytes are measured without the close, which no bound refuses and every device of the creator can always issue; the close keeps each device's latest of 64 devices and no `seen`, and a target's `seen` over 64 devices is refused like the bytes | A: a set of operations would otherwise let a forged or broken creator application make every receiver keep anything (§1.7, item 11). Refusing a union over the bytes whole left receivers of the same operations with different rights; two bounds keep devices that grew apart mergeable, and the conflict names what is left. A review of draft 3: at the bound a full document could not be closed; the room between the two bounds was no reserve, since changes of targets held used it too. A review of draft 4: the close, out of the bytes, was bounded by nothing, and any target's `seen` could name more devices than a snapshot carries — states the own decoder refused. |
 | CTL-34 to CTL-43 | Parts of CTL-30, CTL-26, CTL-13 and CTL-33 as requirements of their own: how the bytes are measured (CTL-34), what is kept at a bound (CTL-35), the close beyond every bound (CTL-36), what a device of the creator may issue (CTL-37), persisting asynchronously (CTL-38), the control state of any other participant (CTL-39), the control state and the cursor (CTL-40), the bootstrap after a restart (CTL-41), holding changes (CTL-42), showing divergences (CTL-43) | Readability: each was one clause of a longer requirement, and requires what it did there |
@@ -3651,7 +3738,8 @@ The changes have six reasons, which the tables below cite by letter:
 | SND-14 to SND-16 | `due`, the pace, local pacing | B. |
 | SND-17 to SND-19 | Pieces | D. |
 | LOS-9 | The cursor and the instance id replace LOS-8's guess; a new instance is evidence on its own, with or without a cursor, and after a restart one other than the instance restored with the cursor (§6.3) | E: a bridge that offers an instance but no cursor still shows a restart; restored with the cursor, the instance shows what a bridge lost while the engine was gone. |
-| LOS-10, LOS-11 | A gap per device; silence judged by `due`, or the pace when longer; another device of one's own member counts like anyone, one's own frames coming back do not; a heartbeat ends the expectations of the frames it holds, a further frame those of its own source | A, B; and wappensc/tdsp#31: a person may write from several devices, and each must notice the others' losses. |
+| LOS-10, LOS-11 (with LOS-16) | A gap per device; silence judged by `due`, or the pace when longer; another device of one's own member counts like anyone, one's own frames coming back do not; a heartbeat ends the expectations of the frames it holds, a further frame those of its own source | A, B; and wappensc/tdsp#31: a person may write from several devices, and each must notice the others' losses. |
+| LOS-15 to LOS-22 | Parts of the opening of §10, LOS-11, LOS-13, LOS-8 and LOS-14 as requirements of their own: no evidence is no claim of completeness (LOS-15), what ends an expectation (LOS-16), which reports are kept (LOS-17), what ends what a report shows (LOS-18), answering a truncated history (LOS-19), its end at the creator (LOS-20), an answer counted apart and when its evidence ends (LOS-21), pieces that disagree, and bounds (LOS-22) | Readability: each was a part of a longer requirement, or of the section's opening, and requires what it did there |
 | YJS-4 | A receiver applies content YJS-1 forbids, and projects it one way | A CRDT cannot refuse part of the state it converges to, and engines that project it differently disagree about every attribution offset after it. |
 | VER-3 | The draft marker | A draft must never leave frames that a released 2.0 would read as its own. |
 | VER-4 | An application shows whose frames are of another version | VER-1's loud failure reached only the application, and the person saw a silent participant instead. |
