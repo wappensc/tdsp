@@ -85,11 +85,6 @@ thread starts and checks every message against them.
   | *consistent* | the user's keyring holds the same key | the invitation agrees with what the user held before; the key is as trustworthy as the way it reached that keyring, which the bridge does not check |
   | *verified* | the person has compared the fingerprint with the creator outside the application | the creator's identity — the only state that shows it |
 
-  An application MUST show the fingerprint in every state, and MUST NOT call the
-  creator *verified* or *authenticated as a person* in the first two. A binding
-  or application that does not record a person's comparison — the reference
-  implementation does not — never reaches *verified* and MUST say so rather than
-  imply it.
   *Rationale:* the invitation carries the very keys that verify its own
   signature. Anyone who can send mail in the creator's name can build an
   invitation with a key of their own that passes every check inside it. Only
@@ -102,6 +97,14 @@ thread starts and checks every message against them.
   either: a keyring holds keys however they got there. "PGP-authenticated sender
   under a pinned key" and "this person's verified identity" are different claims,
   and must stay apart.
+- **EML-13** · *bridge, application* — An application MUST show the creator key's
+  fingerprint in every trust state of EML-8, and MUST NOT call the creator
+  *verified* or *authenticated as a person* in *first contact* or *consistent*. A
+  binding or application that does not record a person's comparison — the
+  reference implementation does not — never reaches *verified* and MUST say so
+  rather than imply it.
+  *Rationale:* the fingerprint is what a person compares with the creator outside
+  the application; only that comparison makes the creator *verified* (EML-8).
 
 - **EML-9** · *bridge, application* — Email without PGP does not meet
   [§15.1](../SPECIFICATION.md#151-what-a-messenger-must-provide): it has no sender authentication.
@@ -117,11 +120,13 @@ thread starts and checks every message against them.
 - **EML-10** · *bridge* — A bridge MUST hand the engine every email MemberId — its
   own (`whoami`), a delivery's sender, and each participant it is given — in one
   canonical form: the bare address (`local@domain`, no display name, angle
-  brackets or comment) without surrounding space, all in lower case. It MUST
-  refuse a participant that is not a bare address rather than repair it, MUST
-  refuse a participant list in which two addresses have the same canonical form,
-  and MUST compare addresses only in that form. It MUST NOT resolve aliases: a
-  subaddress such as `alice+docs@example.org` is a MemberId of its own.
+  brackets or comment) without surrounding space, all in lower case. It MUST:
+  - refuse a participant that is not a bare address rather than repair it;
+  - refuse a participant list in which two addresses have the same canonical form;
+  - compare addresses only in that form.
+
+  It MUST NOT resolve aliases: a subaddress such as `alice+docs@example.org` is a
+  MemberId of its own.
   **Scope:** this binding is defined only for mail providers that do not tell the
   letter case of a local part apart. With a provider that does, it is not
   conformant: two participants who differ only in case are refused, and mail

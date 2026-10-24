@@ -195,10 +195,10 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
   the one reader it serves for that document has kept it (an application that
   persisted its content up to that delivery, say, through a step this
   specification does not define); a cursor from before what it dropped then reads
-  as truncated (TRN-18). It SHOULD NOT offer again, while
-  it runs, a delivery it has dropped when the messenger shows it again (email: a
-  later read of the thread); after a restart it MAY offer again deliveries it
-  had dropped before, since it is not required to persist what it has seen.
+  as truncated (TRN-18). It SHOULD NOT offer again, while it runs, a delivery it
+  has dropped when the messenger shows it again (email: a later read of the
+  thread); after a restart it MAY offer again deliveries it had dropped before,
+  since it is not required to persist what it has seen.
   *Rationale:* without a bound, a long-lived document makes every `receive`
   answer, and the bridge's memory, grow without end. An engine polls far more
   often than a sensible window fills, and one that falls behind anyway loses
@@ -268,18 +268,26 @@ never do.
 `"frame"`: every frame kind rides in this one envelope kind, because the bridge
 must not distinguish them (ARC-3). `frame` is the frame's JSON text as a JSON
 string — escaped, never parsed, never Base64-encoded — so it arrives exactly as it
-was sent (TRN-3). A binding MAY replace `frame` by an `attachment` reference to a
-file holding the frame's UTF-8 text; exactly one of the two is present.
+was sent (TRN-3).
+
+- **BND-4** · *bridge* — A binding MAY replace `frame` by an `attachment` reference
+  to a file holding the frame's UTF-8 text; an envelope carries exactly one of the
+  two.
+  *Rationale:* a frame too large for a message body still travels in the same
+  envelope, and a receiver never has to choose between two copies.
 
 - **BND-2** · *bridge* — A bridge MUST write `tdsp` 1. A **recognisable envelope of
   another version** — `tdsp` a number other than 1 and `documentId` a string — for a
   document the bridge has bound MUST NOT be delivered and MUST be reported locally
-  (VER-1), in the bridge's log at least. Everything else that is not a valid
-  envelope — nested deeper than [§1.6](../SPECIFICATION.md#16-notation) allows, `tdsp` missing or not
-  a number, `kind` not `"frame"` (where the binding has a `kind`), `documentId` or
-  `frame` not a string, both or neither of
-  `frame` and `attachment`, or another version for a document the bridge has not
-  bound — it MUST ignore silently (BRG-10).
+  (VER-1), in the bridge's log at least. It MUST silently ignore everything else
+  that is not a valid envelope (BRG-10):
+  - nested deeper than [§1.6](../SPECIFICATION.md#16-notation) allows;
+  - `tdsp` missing or not a number;
+  - `kind` not `"frame"`, where the binding has a `kind`;
+  - `documentId` or `frame` not a string;
+  - both or neither of `frame` and `attachment` (BND-4);
+  - another version for a document the bridge has not bound.
+
   *Rationale:* the envelope has one reading. A version mismatch in a document the
   participant takes part in is exactly what VER-1 wants seen — a participant runs
   a newer bridge — while ordinary chat and other people's documents in a shared

@@ -61,11 +61,15 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
   own devices, so one from another sender is not one.
 - **SIG-4** · *bridge* — A bridge MUST read `signal-cli`'s result for each recipient
   of a group message, and MUST resolve `send` (TRN-6) only when no recipient was
-  refused for a reason that may pass: a recipient Signal rate-limited makes the
-  send fail as `rate-limited`, with the longest wait a result names; one Signal
-  could not reach makes it fail as `unavailable`. A recipient refused for a reason
-  no retry of the message changes — not registered, or an identity the account
-  does not trust — does not make the send fail while another recipient got it.
+  refused for a reason that may pass:
+  - a recipient Signal rate-limited makes the send fail as `rate-limited`, with
+    the longest wait a result names;
+  - one Signal could not reach makes it fail as `unavailable`.
+
+  A recipient refused for a reason no retry of the message changes — not
+  registered, or an identity the account does not trust — does not make the send
+  fail while another recipient got it.
+
   When nobody got it, the send fails as `rejected` when every recipient is
   unregistered, as `needs-person` when the others are identities to trust, and as
   `unavailable` otherwise. An invitation (`sendInvitation`) MAY count as sent once
