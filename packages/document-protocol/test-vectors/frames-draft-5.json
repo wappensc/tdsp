@@ -631,6 +631,12 @@
       "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"resync-response\",\"documentId\":\"doc-a1b2c3\",\"respondsTo\":\"5f3a9c0e12b47d68\",\"update\":\"AAA=\",\"control\":null,\"attribution\":null,\"stateVector\":\"AA==\",\"stateDigest\":\"96a296d224f285c6\",\"stream\":\"5f3a9c0e12b47d69\",\"sequence\":4,\"piece\":3,\"pieces\":null}",
       "valid": false,
       "reason": "invalid-field"
+    },
+    {
+      "name": "control: a right on a layer, a target of its own",
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"device\":\"VGFibGV0LWNyZWF0b3ItMD\",\"counter\":3,\"target\":\"layer:com.example.comments/1:member:bob\",\"value\":\"write\",\"seen\":{\"Q0FGRS1jcmVhdG9yLTAwMQ\":1},\"due\":60000}",
+      "valid": true,
+      "kind": "control"
     }
   ]
 }

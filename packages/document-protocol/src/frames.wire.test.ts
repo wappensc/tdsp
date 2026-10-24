@@ -65,7 +65,12 @@ function encode(entry: FrameEntry): string {
   const documentId = String(input.documentId);
   switch (entry.kind) {
     case "edit":
-      return encodeEditFrame(documentId, bytes(input.update), Number(input.due ?? 0));
+      return encodeEditFrame(
+        documentId,
+        bytes(input.update),
+        Number(input.due ?? 0),
+        input.extensions as Parameters<typeof encodeEditFrame>[3],
+      );
     case "control":
       return encodeControlFrame(input as Parameters<typeof encodeControlFrame>[0]);
     case "heartbeat":
@@ -146,6 +151,10 @@ describe("frames at the draft marker", () => {
     expect(CURRENT_FRAME_VERSION).toBe(FRAMES.version);
   });
 
+  it("hold at least the entries frozen so far: an entry may be added, never removed", () => {
+    expect(FRAMES.entries.length).toBeGreaterThanOrEqual(22);
+  });
+
   it("cover every kind", () => {
     expect(new Set(FRAMES.entries.map((entry) => entry.kind))).toEqual(
       new Set(["edit", "control", "heartbeat", "resync-request", "resync-response", "decline"]),
@@ -163,7 +172,9 @@ describe("frames at the draft marker", () => {
     (_name, entry) => {
       const decoded = decodeFrame(entry.frame);
       expect(decoded.kind).toBe(entry.kind);
-      expect(asInput(decoded)).toEqual(entry.input);
+      // An extension this reader does not implement is ignored, and changes no defined field (FRM-9).
+      const { extensions: _extensions, ...defined } = entry.input;
+      expect(asInput(decoded)).toStrictEqual(defined);
     },
   );
 });
@@ -178,6 +189,10 @@ describe("invitation links at the draft marker", () => {
 
   it("are the version this writer writes", () => {
     expect(INVITATION_VERSION).toBe(LINKS.version);
+  });
+
+  it("hold at least the entries frozen so far: an entry may be added, never removed", () => {
+    expect(LINKS.entries.length).toBeGreaterThanOrEqual(3);
   });
 
   it("are what the writer writes from each invitation", () => {

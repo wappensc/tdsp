@@ -373,6 +373,38 @@
         "reason": "other"
       },
       "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"decline\",\"documentId\":\"doc-a1b2c3\",\"reason\":\"other\"}"
+    },
+    {
+      "name": "control: a member may write on a layer, which it may only read on the document",
+      "kind": "control",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "device": "VGFibGV0LWNyZWF0b3ItMD",
+        "counter": 3,
+        "target": "layer:com.example.comments/1:member:bob",
+        "value": "write",
+        "seen": {
+          "Q0FGRS1jcmVhdG9yLTAwMQ": 1
+        },
+        "due": 60000
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"control\",\"documentId\":\"doc-a1b2c3\",\"device\":\"VGFibGV0LWNyZWF0b3ItMD\",\"counter\":3,\"target\":\"layer:com.example.comments/1:member:bob\",\"value\":\"write\",\"seen\":{\"Q0FGRS1jcmVhdG9yLTAwMQ\":1},\"due\":60000}"
+    },
+    {
+      "name": "edit: the §4.5 example with an extension field, not named in crit",
+      "kind": "edit",
+      "input": {
+        "documentId": "doc-a1b2c3",
+        "update": "AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=",
+        "due": 0,
+        "extensions": {
+          "fields": {
+            "com.example.mood/1": "calm"
+          },
+          "crit": []
+        }
+      },
+      "frame": "{\"tdsp\":\"de.wappensc.together.tdsp.probe.draft-5\",\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"due\":0,\"com.example.mood/1\":\"calm\"}"
     }
   ]
 }

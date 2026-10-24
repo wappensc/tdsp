@@ -12,11 +12,13 @@ import {
   ensureParagraph,
   getFragment,
   getPlainText,
+  giveUpPending,
   insertPlainText,
   isStateVector,
   isUpdate,
   lacksUpdatesOf,
   observeUpdates,
+  pendingBytes,
   pendingGapClients,
   stateVectorHolds,
   updateClientIds,
@@ -144,6 +146,23 @@ describe("noticing that something is missing", () => {
     applyUpdate(receiver, updates[0] as Uint8Array); // late, not lost
     expect(pendingGapClients(receiver)).toEqual([]);
     expect(getPlainText(getFragment(receiver))).toBe("oe");
+  });
+
+  it("measures what it holds for a gap, and gives it up so that the late predecessor alone applies (LOS-23)", () => {
+    const { writer, receiver, updates, type } = stream();
+    type("one", 0);
+    type("two", 3);
+    deletePlainText(getFragment(writer), 0, 1); // an update that only deletes, held as well
+    applyUpdate(receiver, updates[1] as Uint8Array);
+    applyUpdate(receiver, updates[2] as Uint8Array);
+    expect(pendingBytes(receiver)).toBeGreaterThan(0);
+    expect(giveUpPending(receiver)).toEqual([writer.clientID]);
+    expect(pendingBytes(receiver)).toBe(0);
+    expect(pendingGapClients(receiver)).toEqual([]);
+    applyUpdate(receiver, updates[0] as Uint8Array); // what it gave up does not come back with it
+    expect(getPlainText(getFragment(receiver))).toBe("one");
+    for (const update of updates) applyUpdate(receiver, update); // all of it again, as an answer brings
+    expect(getPlainText(getFragment(receiver))).toBe(getPlainText(getFragment(writer)));
   });
 
   it("the gap closes when the late predecessor arrives, and the receiver is no longer behind", () => {

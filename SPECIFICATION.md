@@ -827,7 +827,7 @@ digits, chosen at random by an engine each time it starts (LOS-13).
 | `resync-request` | `requestId` | 16 lowercase hex digits | Random, chosen by the requester, new for every request; what the answer names (RSY-16) |
 | | `control` | control vector or `null` | The requester's control vector; `null` while it holds no control snapshot from the creator (RSY-16) |
 | | `controlDigest` | digest or `null` | The digest of the requester's control state (LOS-12); `null` exactly when `control` is |
-| | `force` | boolean | `true` when the requester needs an answer even if it seems to lack nothing: its history was truncated (LOS-8, LOS-9, LOS-19) |
+| | `force` | boolean | `true` when the requester needs an answer even if it seems to lack nothing: its history was truncated, or it gave up what it held for missing predecessors (LOS-8, LOS-9, LOS-19, LOS-23) |
 | | `stateVector` | Base64 | The requester's state vector |
 | | `stateDigest` | digest | The digest of what the requester deleted (LOS-12) |
 | | `stream` | stream tag | The requester's stream (LOS-13) |
@@ -1055,7 +1055,8 @@ This specification defines one profile, `yjs-paragraphs/1`, in
      with duplicates, yields the same state (convergence), and an update whose
      causal predecessors are missing is held rather than rejected;
   2. how to tell that updates are being held for **missing predecessors**, and,
-     where the CRDT allows it, whose;
+     where the CRDT allows it, whose; how many bytes they take, and how to give them
+     up (LOS-23);
   3. a **state vector** encoding that summarises which updates a replica holds;
   4. how to encode **the updates a state vector lacks** — where the empty state
      vector yields the full state — and how to tell whether a state vector holds
@@ -2203,7 +2204,7 @@ and the answer is a targeted diff.
   - its current state vector and state digest (LOS-12);
   - its stream and number (LOS-13);
   - `force`: `true` while it holds *history truncated* evidence (LOS-8, LOS-9,
-    LOS-19), `false` otherwise.
+    LOS-19, LOS-23), `false` otherwise.
 
   A responder MUST treat copies of a request with the same `requestId` as one
   request.
@@ -2475,10 +2476,14 @@ follow-up: `due`, the time within which the sender will speak again (SND-14).
   smaller than `minChars` with no deadline would otherwise never be sent.
 - **SND-15** · *engine* — The creator MAY set the pace. An engine MUST NOT send
   faster than the larger of the pace and its own transport's
-  `bounds.minIntervalMs`, and MAY send slower.
+  `bounds.minIntervalMs`, and MAY send slower. It MUST run a pace longer than the
+  bound of [Appendix B](#appendix-b-recommended-values) as that bound, here and
+  wherever it judges by the pace (SND-16, LOS-11).
   *Rationale:* the pace lets the creator keep a document quiet; the own bounds
   still win, because they are the provider's limit and the creator cannot know
-  everyone's provider (§1.7, item 13).
+  everyone's provider (§1.7, item 13). Quiet is not mute: a pace of days would
+  hold every participant's heartbeats and answers, a joiner's bootstrap among
+  them, for as long.
 - **SND-16** · *engine* — The pacing an engine runs MUST be the engine's defaults,
   overridden by its transport profile's `pacing`, overridden by what its
   application chose; then made consistent (SND-1), with `minIntervalMs` raised to
@@ -2784,6 +2789,19 @@ leave no trace an engine can see (§10.6).
   *Rationale:* this is the direct signature of a lost message in the middle of a
   sender's stream. A held deletion is one too: the insertion it deletes was lost,
   or is late.
+- **LOS-23** · *engine* — An engine MUST bound the bytes its profile holds for
+  missing predecessors (PRF-1, item 2;
+  [Appendix B](#appendix-b-recommended-values)). When they exceed the bound, it MUST
+  give up all it holds so, and MUST treat that as *history truncated* evidence, with
+  the consequences of LOS-19 and LOS-20.
+  *Rationale:* anyone in the channel can send updates whose predecessors never come,
+  since receivers do not reject an edit for its sender's permission (CTL-7); held
+  without a bound, they would take a receiver's memory unseen (§1.7, item 11). What
+  is given up is as if the engine had missed those deliveries, so it asks as after a
+  truncated history: the forced answer carries every update its state vector lacks,
+  those it gave up among them, from a responder that holds them, and ends the
+  evidence even where the responder holds none of them. One only its writer holds
+  comes back when the writer sends again or answers.
 - **LOS-11** · *engine* — A frame with `due` above 0 sets up an *expectation*: a
   further frame of its source, or a heartbeat that holds it (LOS-16), within the
   larger of that `due` and the pace (SND-15), measured from when the engine heard
@@ -2980,7 +2998,7 @@ show that first, and the digests are compared once it has arrived.
   enter — at this read, not one later, when a restored member would already have
   bootstrapped from its own state.
 - **LOS-19** · *engine* — Unlike every other evidence of this section, *history
-  truncated* evidence (LOS-8, LOS-9) needs no waiting time. An engine SHOULD answer
+  truncated* evidence (LOS-8, LOS-9, LOS-23) needs no waiting time. An engine SHOULD answer
   it by a resync request with `force: true` (RSY-16) as soon as its request slot is
   free, and MUST report it as "not safely synchronised", never as "synchronised",
   until it has applied an answer to its own request that bootstraps it (CTL-13,
@@ -3407,7 +3425,7 @@ it is only *worth using* with it.
 | Convergence | The CRDT | Unconditional, given the same set of updates — not given a lost one |
 | Message immutability | Bridges refuse and record edits and withdrawals (BRG-12) | Where the messenger reveals them, and after a bridge's restart under the ids it kept |
 | No external connection | ARC-2, BRG-4; an application that carries a document between one person's devices also reaches that service (ARC-5) | As strong as its enforcement; see below |
-| Resource exhaustion by peers | Bounded control state (CTL-30), and a capacity conflict beyond its bytes (CTL-32); bounded nesting and frame size, extensions included (FRM-11), bounded attachment fetches (BRG-14), bounded pre-verification reads (BRG-13); no reassembly buffer | Bounded, not prevented; beyond the bytes of control state a person resolves the conflict |
+| Resource exhaustion by peers | Bounded control state (CTL-30), and a capacity conflict beyond its bytes (CTL-32); bounded nesting and frame size, extensions included (FRM-11), bounded attachment fetches (BRG-14), bounded pre-verification reads (BRG-13); what is held for missing predecessors bounded (LOS-23); no reassembly buffer | Bounded, not prevented; beyond the bytes of control state a person resolves the conflict |
 
 **Enforcing "no external connection".** The one security property TDSP owns
 rather than inherits is only as good as the checks behind it, and no single check
@@ -3514,7 +3532,7 @@ interoperates, whichever Yjs release — or independent implementation — it us
 | PRF-1 item | In this profile |
 |---|---|
 | Update | A **Yjs update in encoding version 1**, as produced by `Y.encodeStateAsUpdate` and consumed by `Y.applyUpdate` (not the `…V2` functions). A full snapshot and an incremental change are the same format |
-| Missing predecessors | Yjs holds such an update as pending (`store.pendingStructs`, `store.pendingDs`); the Yjs client ids an update carries name whose updates they are |
+| Missing predecessors | Yjs holds such an update as pending (`store.pendingStructs`, `store.pendingDs`); the Yjs client ids an update carries name whose updates they are. What they take is the length of the pending structures' update and of the pending deletions, as Yjs keeps them; giving them up sets both to none |
 | State vector | A **Yjs state vector** as produced by `Y.encodeStateVector`. The empty document's is the single byte `00` (Base64 `AA==`) |
 | Updates a state vector lacks | `Y.encodeStateAsUpdate(doc, stateVector)`; with the empty state vector this is byte-identical to the full state. The update that holds nothing, the full state of an empty `Y.Doc`, is the two bytes `00 00` (Base64 `AAA=`): no structs and an empty delete set |
 | Reading without applying | An update is read as `Y.decodeUpdate` reads it, every struct and the whole delete set, and ends where its delete set ends; a state vector is read as `Y.decodeStateVector` reads it, and ends after its last entry. Yjs ignores bytes after either; a receiver of this profile rejects them (§4.4) |
@@ -3593,10 +3611,12 @@ requirement it serves.
 | Resync request expiry | floor + 2 × latency, at least 10 s | RSY-4 |
 | Bootstrap retry | after 1, 2, 4, … expiries; at most 5 attempts | RSY-5 |
 | Loss-evidence wait | 1 × `expectedLatencyMs`, or 5 s when it is 0 | LOS-1 |
+| Held for missing predecessors | 32 MiB of pending structures and deletions; beyond it, all given up, as after a truncated history | LOS-23 |
 | Streams kept per member | 4 for their reports, each with its latest; a fifth replaces the one heard from least recently; a stream with an answer counted or given up is kept besides | LOS-17, LOS-21 |
 | Answers counted per member | 8 at once; a ninth gives up the one heard from least recently, which stays evidence by stream and number; 8 streams with answers given up, beyond them the member's evidence stays while the engine runs; piece numbers up to 2^20 | LOS-21, LOS-22 |
 | Incomplete answer | evidence once no piece has arrived for the floor + the loss-evidence wait | LOS-14 |
 | Automatic resync | at once for a truncated history; after 2 × latency for a gap, a report that shows we are behind or differs in digest, or an incomplete answer; after the overdue time + 3 × latency for silence; at most 3 per episode, each wait doubling, never longer than 10 min | LOS-6, LOS-19 |
+| Longest pace | 10 min; a pace the creator set longer runs as 10 min | SND-15 |
 | Control state bounds | 64 creator devices, 1 024 counters above a hole per device, 5 002 targets, 64 operations per target in a snapshot, a target's `seen` 64 devices, the close each device's latest of 64 devices without `seen`, 3 MiB held and 1 MiB for a device that adds a target, measured without the close, which holds always | CTL-30, CTL-34 to CTL-37 |
 | Smallest useful piece | Below it, a change is refused rather than cut into pieces too small to carry anything | SND-19 |
 | Incoming mail read | At most 10 MiB of one mail, by a partial IMAP fetch; a larger one is rejected unread (the largest mail a 4 MiB frame becomes is about 7.6 MiB) | BRG-13 |
@@ -3897,12 +3917,13 @@ The changes have six reasons, which the tables below cite by letter:
 | CTL-34 to CTL-43 | Parts of CTL-30, CTL-26, CTL-13 and CTL-33 as requirements of their own: how the bytes are measured (CTL-34), what is kept at a bound (CTL-35), the close beyond every bound (CTL-36), what a device of the creator may issue (CTL-37), persisting asynchronously (CTL-38), the control state of any other participant (CTL-39), the control state and the cursor (CTL-40), the bootstrap after a restart (CTL-41), holding changes (CTL-42), showing divergences (CTL-43) | Readability: each was one clause of a longer requirement, and requires what it did there |
 | RSY-16, RSY-17 | A control vector and `force` in requests, `null` until a member is bootstrapped, whatever it restored; when to answer | A. |
 | RSY-18, RSY-19 | Parts of RSY-8 and RSY-9 as requirements of their own: the numbers and the state an answer's pieces carry (RSY-18), how the requests kept are keyed, ordered and bounded (RSY-19) | Readability: each was a part of a longer requirement, and requires what it did there |
-| SND-14 to SND-16 | `due`, the pace, local pacing | B. |
+| SND-14 to SND-16 | `due`, the pace, local pacing; a pace longer than 10 min runs as 10 min | B; a pace of days would hold every participant's heartbeats and answers for as long. |
 | SND-17 to SND-19 | Pieces | D. |
 | SND-20 to SND-24 | Parts of SND-2, SND-8 and SND-11 as requirements of their own: which messages go first and which are retried (SND-20), what the application shows of undistributed changes (SND-21), a refusal the profile ruled out (SND-22), when a heartbeat goes (SND-23), the heartbeat a request stating one's own state calls for (SND-24) | Readability: each was a part of a longer requirement, and requires what it did there |
 | LOS-9 | The cursor and the instance id replace LOS-8's guess; a new instance is evidence on its own, with or without a cursor, and after a restart one other than the instance restored with the cursor (§6.3) | E: a bridge that offers an instance but no cursor still shows a restart; restored with the cursor, the instance shows what a bridge lost while the engine was gone. |
 | LOS-10, LOS-11 (with LOS-16) | A gap per device; silence judged by `due`, or the pace when longer; another device of one's own member counts like anyone, one's own frames coming back do not; a heartbeat ends the expectations of the frames it holds, a further frame those of its own source | A, B; and wappensc/tdsp#31: a person may write from several devices, and each must notice the others' losses. |
 | LOS-15 to LOS-22 | Parts of the opening of §10, LOS-11, LOS-13, LOS-8 and LOS-14 as requirements of their own: no evidence is no claim of completeness (LOS-15), what ends an expectation (LOS-16), which reports are kept (LOS-17), what ends what a report shows (LOS-18), answering a truncated history (LOS-19), its end at the creator (LOS-20), an answer counted apart and when its evidence ends (LOS-21), pieces that disagree, and bounds (LOS-22) | Readability: each was a part of a longer requirement, and requires what it did there; LOS-15 was a MUST NOT without an ID in the section's opening, which §1.3 left informative although it was meant to bind |
+| LOS-23 | What an engine holds for missing predecessors is bounded; beyond the bound it is given up, as *history truncated* evidence | 1.x bounded the buffer of incomplete fragments; pieces wait in the CRDT's own pending structures, which anyone in the channel can fill. |
 | YJS-4 | A receiver applies content YJS-1 forbids, and projects it one way | A CRDT cannot refuse part of the state it converges to, and engines that project it differently disagree about every attribution offset after it. |
 | VER-3 | The draft marker | A draft must never leave frames that a released 2.0 would read as its own. |
 | VER-4 | An application shows whose frames are of another version | VER-1's loud failure reached only the application, and the person saw a silent participant instead. |

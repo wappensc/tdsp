@@ -126,6 +126,12 @@ const MAX_REQUESTS_PER_REQUESTER = 4;
 /** How long a request still to be answered is kept; its requester asks again long before (RSY-4, RSY-5). */
 const PENDING_REQUEST_TTL_MS = 5 * 60_000;
 
+/** The most bytes held for missing predecessors before they are given up and asked for again (LOS-23). */
+const MAX_PENDING_BYTES = 32 * 1024 * 1024;
+
+/** The longest pace this engine runs; a longer one runs as this (SND-15). */
+const MAX_PACE_MS = 600_000;
+
 /**
  * Document protocol: maps one document to one messenger channel, owns
  * update identity and deduplication, and is the only place that broadcasts
@@ -812,6 +818,7 @@ export class DocumentEngine {
   #counter = 0;
   // This device's operations not yet known to be sent, by "device:counter" (CTL-26).
   readonly #unsent = new Map<string, string>();
+
   // Counters participants reported, which a device of the creator without a basis counts as seen
   // when it issues (CTL-27): only ever raised, never a source of values, and dropped once it has a
   // basis (`#gainBasis`).
@@ -999,7 +1006,7 @@ export class DocumentEngine {
       sameControlVector: (vector) => this.#control.hasVector(vector),
       controlDigest: () => this.#controlDigest(),
       isCreatorDevice: () => this.#creatorMemberId === this.memberId,
-      pace: () => this.#control.pace,
+      pace: () => this.#runningPace(),
     });
 
     this.#unobserve = observeUpdates(this.document, (update, origin, transaction) => {
@@ -1881,6 +1888,7 @@ export class DocumentEngine {
     const heldBefore = frame.kind === "resync-response" ? this.#heldNow() : undefined;
     try {
       this.#profile.applyUpdate(this.document, frame.update, REMOTE_ORIGIN);
+      this.#boundPending();
       if (heldBefore !== undefined && heldBefore !== this.#heldNow()) {
         this.#scheduler.oweHeartbeat();
       }
@@ -3320,8 +3328,39 @@ export class DocumentEngine {
   /** The policy this client runs under `pace`: the one it holds now, or one it is about to issue. */
   #policyUnder(pace: number | undefined): SyncPolicy {
     const own = effectiveSyncPolicy(this.#transport, this.#chosen);
-    const floor = pace ?? 0;
+    const floor = Math.min(pace ?? 0, MAX_PACE_MS);
     return floor > own.minIntervalMs ? resolveSyncPolicy({ ...own, minIntervalMs: floor }) : own;
+  }
+
+  /** The pace this engine runs: the creator's, but never longer than `MAX_PACE_MS` (SND-15). */
+  #runningPace(): number | undefined {
+    const pace = this.#control.pace;
+    return pace === undefined ? undefined : Math.min(pace, MAX_PACE_MS);
+  }
+
+  /**
+   * Gives up what the profile holds for missing predecessors once it is more than the bound
+   * (LOS-23): anyone in the channel can send updates whose predecessors never come (CTL-7). What it
+   * gave up is as if it had missed those deliveries: *history truncated* evidence, which asks at
+   * once and ends as LOS-19 and LOS-20 say.
+   */
+  #boundPending(): void {
+    const bytes = this.#profile.pendingBytes?.(this.document);
+    if (
+      bytes === undefined ||
+      bytes <= MAX_PENDING_BYTES ||
+      this.#profile.giveUpPending === undefined
+    ) {
+      return;
+    }
+    this.#profile.giveUpPending(this.document);
+    this.#historyTruncatedSince ??= Date.now();
+    this.#onError(
+      new Error(
+        `gave up ${bytes} bytes held for missing predecessors, more than the ${MAX_PENDING_BYTES} it holds (LOS-23)`,
+      ),
+      "apply",
+    );
   }
 
   /** Runs a pace the creator changed from now on, in the scheduler and in `syncPolicy`. */

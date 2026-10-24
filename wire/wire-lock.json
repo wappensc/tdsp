@@ -169,7 +169,9 @@
         "entries: decline: the Appendix D example": "c26d1af294098579152e5e9160563b4950dedec9435e466c611af07fc999a947",
         "entries: decline: unsupported-version, nothing else": "20f9a87fed1fec94eae80106d1b9c1396e45499fb70d6c44de80de1959394dbe",
         "entries: decline: declined, nothing else": "41c0801f5c74074406e64e8cd25b125b5e5dcbe6fa0921a782750f7f68981669",
-        "entries: decline: other, nothing else": "5ef3aa07531bcec8e24f9283831d1c800275276a54e1f40703104cc6c70fd056"
+        "entries: decline: other, nothing else": "5ef3aa07531bcec8e24f9283831d1c800275276a54e1f40703104cc6c70fd056",
+        "entries: control: a member may write on a layer, which it may only read on the document": "03be72648a9b111d3f8b8c6282e67e90c9ab313b9373e579d0702214a9ee8b08",
+        "entries: edit: the §4.5 example with an extension field, not named in crit": "bb0190c39d2dbdaba0e462973a027056724b2ee9cdcda389bb6ffd6b26052ea4"
       }
     },
     "wire/invitations-draft-5.json": {
@@ -286,7 +288,8 @@
         "vectors: a piece number 0": "2a702a6057bc1d1e07c5774ef467845678a08555ab57a7402fc39de583287545",
         "vectors: an answer's last piece numbered other than its count": "b2d1f87a115454afb266eb1c26b5363dd1ac2fcff982c2f81a2905be6983f50f",
         "vectors: a count of pieces without the responder's state": "970b7015814e02de255b9433a430e2cfa98bc64f5102b4aa9d22ac0ffcbfed38",
-        "vectors: the responder's state without the count of pieces": "492cbe3dcc8f225369bc9611ed0afa27634eda9d2375c671785ff45e13247479"
+        "vectors: the responder's state without the count of pieces": "492cbe3dcc8f225369bc9611ed0afa27634eda9d2375c671785ff45e13247479",
+        "vectors: control: a right on a layer, a target of its own": "ad2b7f8646e31a9974d31e6b73007f3407f3a8f15c9868ec39391cc8ecbd33a6"
       }
     },
     "packages/document-protocol/test-vectors/invitations-draft-5.json": {
@@ -363,12 +366,12 @@
     }
   },
   "sections": {
-    "## 4. The payload frame": "b73c47699ca08c4305217e1c1c565241c8de70f1b26afd115a4be7f9c0099991",
-    "## 5. Document profiles": "0816c3ac02ffe8ce8f27e7fc2ac517d1a0753a587fa1d3f18cbff1f9438dc1a6",
+    "## 4. The payload frame": "3a876f8576d4b1c735006ce5b364eceab5287322789d557c23b5c35140ec6682",
+    "## 5. Document profiles": "5d9bdc88137d0218c67ac06d283b349d716b902f03e41e3e0cdf718854ba516e",
     "## 7. Control state": "2d0535b4154b667a3d3e9a8ec08a640e9282fcd37f4ea663bb3afdec2d167c9c",
     "## 11. Invitations": "e660afd505092af20005f1b5df23ab9e997077147d8fe1d19ec8a1973858ea76",
-    "## Appendix A. Profile `yjs-paragraphs/1`": "b233f1d455bfbdcc6d976c9a6df1134689b9f40bc012a9902e4d9ab90766dfca",
-    "## Appendix B. Recommended values": "1a019a1e0ac6731fa70fd25b017b88a9d9bbd601537d67afc94bd6c47d8a300b"
+    "## Appendix A. Profile `yjs-paragraphs/1`": "1cc8d19f5d873a65dedf951c6238cd25803abafc3d6db1b1360cf0913cd97cb1",
+    "## Appendix B. Recommended values": "ffab04b8894d97df4b62e48f144202b6d4caba0a420e8271883850c2b3a28a55"
   },
   "documents": {
     "bindings/bridges.md": "58eef0f5237f6e8ccbb602e35faca7ab301b31c5e6b13c37ca7d04fffbfd717c",

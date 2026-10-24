@@ -296,6 +296,27 @@ export function pendingGapClients(doc: ReconciledDocument): number[] {
   return [...clients];
 }
 
+/**
+ * The bytes `doc` holds for missing predecessors (PRF-1 item 2, Appendix A): Yjs's pending
+ * structures and pending deletions, as Yjs keeps them encoded. What a bound on them measures
+ * (LOS-23).
+ */
+export function pendingBytes(doc: ReconciledDocument): number {
+  return (doc.store.pendingStructs?.update.length ?? 0) + (doc.store.pendingDs?.length ?? 0);
+}
+
+/**
+ * Gives up everything `doc` holds for missing predecessors (PRF-1 item 2, LOS-23), and returns the
+ * client ids it was waiting on. The document is as if those updates had never arrived: an update
+ * that brings them again is applied as any other.
+ */
+export function giveUpPending(doc: ReconciledDocument): number[] {
+  const clients = pendingGapClients(doc);
+  doc.store.pendingStructs = null;
+  doc.store.pendingDs = null;
+  return clients;
+}
+
 /** The client ids that authored the insertions in `update`; how a caller learns which client belongs to which sender. */
 export function updateClientIds(update: Uint8Array): number[] {
   const clients = new Set<number>();

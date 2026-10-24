@@ -9,6 +9,7 @@ import {
   ensureParagraph,
   getFragment,
   getPlainText,
+  giveUpPending,
   hasUpdatesSince,
   isEmptyStateVector,
   isStateVector,
@@ -16,6 +17,7 @@ import {
   lacksUpdatesOf,
   observePlainTextChanges,
   type PlainTextChange,
+  pendingBytes,
   pendingGapClients,
   type ReconciledDocument,
   splitUpdate,
@@ -107,6 +109,16 @@ export interface DocumentProfile {
   lacksUpdatesOf(document: ReconciledDocument, stateVector: Uint8Array): boolean;
   /** Whose updates are held for missing predecessors (item 2), as the CRDT names them. */
   pendingGapClients(document: ReconciledDocument): number[];
+  /**
+   * How many bytes the replica holds for missing predecessors (item 2), what LOS-23 bounds.
+   * Optional: without it, and without `giveUpPending`, the engine cannot bound them.
+   */
+  pendingBytes?(document: ReconciledDocument): number;
+  /**
+   * Gives up what the replica holds for missing predecessors (item 2, LOS-23), and returns whose
+   * updates they were, as `pendingGapClients` names them.
+   */
+  giveUpPending?(document: ReconciledDocument): number[];
   /** Whose updates one update carries, as the CRDT names them. */
   updateClientIds(update: Uint8Array): number[];
   /**
@@ -241,6 +253,8 @@ const yjsParagraphs1: DocumentProfile = {
   hasUpdatesSince: (document, stateVector) => hasUpdatesSince(document, stateVector),
   lacksUpdatesOf: (document, stateVector) => lacksUpdatesOf(document, stateVector),
   pendingGapClients: (document) => pendingGapClients(document),
+  pendingBytes: (document) => pendingBytes(document),
+  giveUpPending: (document) => giveUpPending(document),
   updateClientIds: (update) => updateClientIds(update),
   holdsUpdate: (stateVector, update) => stateVectorHolds(stateVector, update),
   encodeDeletions: (document) => encodeDeletions(document),

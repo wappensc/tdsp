@@ -226,6 +226,16 @@ What an application does:
 - **The invitation's value ranges** (§11.3, INV-6): a binding's name begins with a letter or a
   digit; a thread root is the email binding's `Message-ID` of at most 200 characters in all.
 
+What a peer can make a receiver hold or wait for:
+
+- **What waits for missing predecessors is bounded** (LOS-23, PRF-1 item 2, Appendix A, Appendix
+  B): beyond 32 MiB of pending structures and deletions an engine gives all of it up and treats
+  that as a truncated history, asking at once with `force`; the creator's answer brings back what
+  it holds and ends the evidence. Anyone in the channel could otherwise fill a receiver's memory
+  unseen with updates whose predecessors never come.
+- **A pace runs at most 10 minutes** (SND-15, Appendix B): a longer one the creator set runs as 10
+  minutes, for sending and for judging silence alike, so a document can be made quiet, not mute.
+
 One person's devices (ARC-5, ARC-2):
 
 - **An application may carry a document between one person's devices** through another service,
@@ -274,7 +284,8 @@ Bridges and bindings:
   `ExtensionKind`, `FrameExtension`, `IncompleteAnswer`, `PieceTooSmallError` and
   `UnsplittableUpdateError`; `FrameDecodeError.sender`, `SyncHealth.incompleteAnswers`, and the
   outcome `failed` of `ResyncStatus.lastOutcome`.
-- `@tdsp/reconciliation`: `splitUpdate()` and `UnsplittableUpdateError` (§9.4),
+- `@tdsp/reconciliation`: `pendingBytes()` and `giveUpPending()` (LOS-23), `splitUpdate()` and
+  `UnsplittableUpdateError` (§9.4),
   `encodeDeletions()` and `encodeDeletionsWithin()` (LOS-12, Appendix A), `stateVectorHolds()`
   (PRF-1 item 3, LOS-11), `isUpdate()` and `isStateVector()` (PRF-1 item 9), `changedRoots()`
   (LAY-6). `DocumentProfile` gains the
@@ -284,6 +295,9 @@ Bridges and bindings:
   (TRN-11, TRN-20).
 - `wire/signal-v1.json`: the §4.5 edit as a 2.0 frame in the Signal envelope, Appendix D's
   example — an entry added within envelope version 1.
+- `wire/frames-draft-5.json`: a control operation on a right on a layer, and an edit with an
+  extension field; the published vectors gain a valid frame with a right on a layer.
+- `DocumentProfile` gains the optional `pendingBytes` and `giveUpPending` (LOS-23).
 
 ### Changed
 
