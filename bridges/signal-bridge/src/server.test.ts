@@ -7,6 +7,7 @@ import { parseTransportProfile } from "@tdsp/messenger-port";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FrameTooLargeError } from "./attachment.ts";
 import type { AuthStatus } from "./auth.ts";
+import { PartialSendError } from "./send-failure.ts";
 import {
   type AuthStatusSource,
   createServer,
@@ -282,6 +283,19 @@ describe("signal-bridge HTTP API", () => {
     );
     expect(rateLimited.status).toBe(429);
     expect(rateLimited.headers.get("retry-after")).toBe("42");
+    // A frame some members missed for now (TRN-6): rate-limited ones decide, with Signal's wait.
+    const partlyRateLimited = await sendFailingWith(
+      new PartialSendError({ rateLimited: 1, retryAfterSeconds: 60, unreachable: 1 }),
+    );
+    expect(partlyRateLimited.status).toBe(429);
+    expect(partlyRateLimited.headers.get("retry-after")).toBe("60");
+    expect(
+      (
+        await sendFailingWith(
+          new PartialSendError({ rateLimited: 0, retryAfterSeconds: undefined, unreachable: 2 }),
+        )
+      ).status,
+    ).toBe(502);
     expect((await sendFailingWith(new SignalRpcError("other (code -1)", -1))).status).toBe(502);
     expect((await sendFailingWith(new Error("signal-cli daemon socket closed"))).status).toBe(502);
     // A frame over what the bridge carries in one message can never be retried into fitting.

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getAttachmentBytes,
   listGroups,
+  missedRecipients,
   parseIncomingGroupMessage,
   type SignalRpc,
   sendGroupMessage,
@@ -70,7 +71,10 @@ describe("sendGroupMessage", () => {
     const rpc = new FakeRpc();
     rpc.results.set("send", { timestamp: 1700000000000, results: [] });
     const result = await sendGroupMessage(rpc, "+15551234567", "g1", '{"tdsp": 1}');
-    expect(result).toEqual({ timestamp: 1700000000000 });
+    expect(result).toEqual({
+      timestamp: 1700000000000,
+      missed: { rateLimited: 0, retryAfterSeconds: undefined, unreachable: 0 },
+    });
     expect(rpc.calls[0]).toEqual({
       method: "send",
       params: { account: "+15551234567", groupId: "g1", message: '{"tdsp": 1}' },
@@ -93,6 +97,28 @@ describe("sendGroupMessage", () => {
     });
     expect(rpc.calls[1]?.params).not.toHaveProperty("attachments");
     expect(rpc.calls[2]?.params).not.toHaveProperty("attachments");
+  });
+
+  it("counts only the recipients a retry can still reach as missed", () => {
+    expect(
+      missedRecipients([
+        { type: "SUCCESS" },
+        { type: "RATE_LIMIT_FAILURE", retryAfterSeconds: 30 },
+        { type: "RATE_LIMIT_FAILURE", retryAfterSeconds: 90 },
+        { type: "NETWORK_FAILURE" },
+        { type: "UNREGISTERED_FAILURE" },
+        { type: "IDENTITY_FAILURE" },
+        null,
+        "not a result",
+      ]),
+    ).toEqual({ rateLimited: 2, retryAfterSeconds: 90, unreachable: 1 });
+    for (const results of [undefined, null, {}, "x"]) {
+      expect(missedRecipients(results)).toEqual({
+        rateLimited: 0,
+        retryAfterSeconds: undefined,
+        unreachable: 0,
+      });
+    }
   });
 
   it("throws a clear error if signal-cli's response carries no timestamp", async () => {

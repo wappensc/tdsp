@@ -1,4 +1,5 @@
 import { FrameTooLargeError } from "./attachment.ts";
+import { longestRetryAfterSeconds, type MissedRecipients } from "./signal-api.ts";
 import { SignalRpcError } from "./signal-daemon.ts";
 
 /**
@@ -26,12 +27,40 @@ export interface SendFailure {
   readonly retryAfterSeconds?: number;
 }
 
+/**
+ * A frame `signal-cli` sent, but not to every member of the group: Signal rate-limited some of
+ * them, or could not reach them. `signal-cli` raises no error as long as one member got the
+ * message, so the bridge reads its result per recipient (`missedRecipients`). TRN-6 accepts a send
+ * only for every channel member (§3.3), so the send fails: as rate-limited (a 429, with the longest
+ * wait Signal stated) when Signal rate-limited any of them, as unavailable (a 502) otherwise. The
+ * retry reaches the members it missed; to the others it is a duplicate, which changes nothing
+ * (TRN-8).
+ */
+export class PartialSendError extends Error {
+  readonly missed: MissedRecipients;
+
+  constructor(missed: MissedRecipients) {
+    super(
+      `Signal ${missed.rateLimited > 0 ? "rate-limited" : "could not reach"} some members of the group (${missed.rateLimited} rate-limited, ${missed.unreachable} unreachable)`,
+    );
+    this.name = "PartialSendError";
+    this.missed = missed;
+  }
+}
+
 const SIGNAL_RATE_LIMIT_CODE = -5;
 
 export function classifySendFailure(error: unknown): SendFailure {
   // Over what this bridge carries in one message: no retry can make it fit (413, permanent).
   if (error instanceof FrameTooLargeError) {
     return { status: 413 };
+  }
+  if (error instanceof PartialSendError) {
+    if (error.missed.rateLimited === 0) {
+      return { status: 502 };
+    }
+    const retryAfterSeconds = error.missed.retryAfterSeconds;
+    return retryAfterSeconds === undefined ? { status: 429 } : { status: 429, retryAfterSeconds };
   }
   if (error instanceof SignalRpcError && error.code === SIGNAL_RATE_LIMIT_CODE) {
     const retryAfterSeconds = statedWaitSeconds(error.data);
@@ -46,17 +75,7 @@ export function classifySendFailure(error: unknown): SendFailure {
  * rate limit, so the longest wait is the one after which a retry can reach all of them.
  */
 function statedWaitSeconds(data: unknown): number | undefined {
-  const results = (data as { response?: { results?: unknown } } | null | undefined)?.response
-    ?.results;
-  if (!Array.isArray(results)) {
-    return undefined;
-  }
-  let longest: number | undefined;
-  for (const result of results) {
-    const seconds = (result as { retryAfterSeconds?: unknown } | null)?.retryAfterSeconds;
-    if (typeof seconds === "number" && Number.isSafeInteger(seconds) && seconds >= 0) {
-      longest = Math.max(longest ?? 0, seconds);
-    }
-  }
-  return longest;
+  return longestRetryAfterSeconds(
+    (data as { response?: { results?: unknown } } | null | undefined)?.response?.results,
+  );
 }
