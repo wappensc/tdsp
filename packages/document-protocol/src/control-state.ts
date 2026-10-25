@@ -97,6 +97,13 @@ export const MAX_COUNTERS_AHEAD = 1024;
 export const MAX_TARGETS = 5_002;
 
 /**
+ * The most targets on members and on rights on layers together (CTL-30): MAX_TARGETS but the close
+ * and the pace, which always have room beside them. Beyond it a receiver refuses, and is in a
+ * capacity conflict (CTL-32), as beyond the bytes.
+ */
+export const MAX_RIGHT_TARGETS = MAX_TARGETS - 2;
+
+/**
  * The most bytes of control state CTL-30 lets a receiver hold, measured in the control digest's
  * form: the UTF-8 of the RFC 8785 form of its snapshot's `vector`, `targets` and `aboveHoles`
  * (CTL-34, LOS-12). 3 MiB, so that the union of three devices of the creator that each grew to
@@ -396,7 +403,7 @@ export class ControlState {
   #byDot = new Map<string, Set<string>>();
   /** Collisions under a device and counter still held as a head (CTL-24, CTL-31); bounded with `#byDot`. */
   #anomalies = new Map<string, ControlAnomaly>();
-  /** Whether an operation or a snapshot was refused for the bytes of control state (CTL-32). */
+  /** Whether an operation or a snapshot was refused for the bytes, a target's `seen` or the targets of control state (CTL-32). */
   #capacityConflict = false;
   // Raised by every call that may change what a snapshot holds, so a digest of it can be kept.
   #revision = 0;
@@ -700,15 +707,21 @@ export class ControlState {
       op.target !== "pace"
     ) {
       // In a capacity conflict no new member or layer right is taken (CTL-32); the close and the
-      // pace are, as at the bound on targets (CTL-35).
+      // pace are, as they always have room beside the bound on targets (CTL-30).
+      return "refused";
+    }
+    if (this.#beyondTargetBound(op.target)) {
+      // Beyond the bound on targets, as beyond the bytes, the operation is refused and the state is
+      // in a capacity conflict (CTL-30, CTL-32): giving up another target for it would take a right
+      // from someone unseen, and which one would depend on what else arrived.
+      this.#capacityConflict = true;
       return "refused";
     }
     const deviceVictim = this.#deviceVictim(op.device);
-    const targetVictim = this.#targetVictim(op.target);
     // A close is held whatever the bound on devices keeps of its device: nothing undoes it (LIF-7),
     // and every joiner must learn it whichever devices a receiver holds (CTL-36).
     const closeOfRefused = deviceVictim === false && op.target === "close";
-    if ((deviceVictim === false && !closeOfRefused) || targetVictim === false) {
+    if (deviceVictim === false && !closeOfRefused) {
       return "refused";
     }
     // Near the byte bound, the state before is kept to go back to (CTL-30); far from it, an upper
@@ -724,7 +737,6 @@ export class ControlState {
     this.#bytes = undefined;
     this.#upper = upper;
     if (deviceVictim !== undefined && deviceVictim !== false) this.#evictDevice(deviceVictim);
-    if (targetVictim !== undefined) this.#dropTarget(targetVictim);
     this.#noteCollision(op, op.target);
     if (!closeOfRefused && !closeAboveHoles) this.#count(op.device, op.counter);
     if (op.target === "close") {
@@ -829,17 +841,17 @@ export class ControlState {
   }
 
   /**
-   * Merges a snapshot by union (CTL-25); a snapshot never needs to be newer than this state. At a
-   * bound it keeps what CTL-35's order keeps, as `add` does; returns how many devices, targets and
-   * operations it left out, for the caller to report.
+   * Merges a snapshot by union (CTL-25); a snapshot never needs to be newer than this state. At the
+   * bound on devices it keeps what CTL-35's order keeps, as `add` does; returns how many devices,
+   * targets and operations it left out, for the caller to report.
    */
   merge(snapshot: ControlStateSnapshot): number {
     return this.mergeOrRefuse(snapshot).leftOut;
   }
 
   /**
-   * As `merge`, and says whether the snapshot was refused as a whole for the bytes of control state
-   * (CTL-30, CTL-32): then nothing of it is held, and an answer that carried it bootstraps no one
+   * As `merge`, and says whether the snapshot was refused as a whole for the bytes, a target's `seen`
+   * or the targets of control state (CTL-30, CTL-32): then nothing of it is held, and an answer that carried it bootstraps no one
    * (CTL-13).
    */
   mergeOrRefuse(snapshot: ControlStateSnapshot): {
@@ -851,11 +863,15 @@ export class ControlState {
     this.#bytes = undefined;
     const leftOut = this.#mergeWithin(snapshot);
     this.#bytes = undefined;
-    if (this.bytes > this.maxBytes || this.#anySeenOverBound()) {
-      // Over the bytes of control state, or with a target's `seen` over its bound, the snapshot is
-      // refused as a whole (CTL-30), and this state is in a capacity conflict (CTL-32) — but its
-      // close holds, as one arriving alone would: the close is not measured, and nothing may leave a
-      // receiver without one it was sent (LIF-7).
+    if (
+      this.bytes > this.maxBytes ||
+      this.#anySeenOverBound() ||
+      this.#rightTargets() > MAX_RIGHT_TARGETS
+    ) {
+      // Over the bytes of control state, with a target's `seen` over its bound, or over the bound on
+      // targets, the snapshot is refused as a whole (CTL-30), and this state is in a capacity
+      // conflict (CTL-32) — but its close holds, as one arriving alone would: the close is not
+      // measured, and nothing may leave a receiver without one it was sent (LIF-7).
       this.#load(before);
       this.#capacityConflict = true;
       for (const head of snapshot.targets.close?.heads ?? []) {
@@ -954,16 +970,12 @@ export class ControlState {
         if (!isClose && heads.length === 0 && Object.keys(seen).length === 0) {
           continue;
         }
-        // In a capacity conflict no new member or layer right is taken (CTL-32).
-        const victim =
-          this.#capacityConflict && !isClose && targetName !== "pace"
-            ? false
-            : this.#targetVictim(targetName);
-        if (victim === false) {
+        // In a capacity conflict no new member or layer right is taken (CTL-32). Beyond the bound
+        // on targets the snapshot is refused as a whole once merged (`mergeOrRefuse`).
+        if (this.#capacityConflict && !isClose && targetName !== "pace") {
           leftOut += 1;
           continue;
         }
-        if (victim !== undefined) this.#dropTarget(victim);
         target = new Target(targetName);
         this.#targets.set(targetName, target);
       }
@@ -1086,11 +1098,27 @@ export class ControlState {
     }
   }
 
-  /** Gives up a target at the bound on targets (CTL-35), and its heads with it. */
-  #dropTarget(name: string): void {
-    const target = this.#targets.get(name);
-    for (const [key, dot] of headKeys(target)) this.#unindex(dot, key);
-    this.#targets.delete(name);
+  /** How many targets on members and on rights on layers this state holds: all but the close and the pace (CTL-30). */
+  #rightTargets(): number {
+    return (
+      this.#targets.size -
+      (this.#targets.has("close") ? 1 : 0) -
+      (this.#targets.has("pace") ? 1 : 0)
+    );
+  }
+
+  /**
+   * Whether holding `target` would bring this state over the bound on targets (CTL-30): a member or
+   * a right on a layer it does not hold yet, beyond MAX_RIGHT_TARGETS. The close and the pace always
+   * have room.
+   */
+  #beyondTargetBound(target: string): boolean {
+    return (
+      target !== "close" &&
+      target !== "pace" &&
+      !this.#targets.has(target) &&
+      this.#rightTargets() >= MAX_RIGHT_TARGETS
+    );
   }
 
   #holdsDevice(device: string): boolean {
@@ -1121,21 +1149,6 @@ export class ControlState {
     }
     const last = held.reduce((a, b) => (compareCodePoints(a, b) >= 0 ? a : b));
     return compareCodePoints(device, last) < 0 ? last : false;
-  }
-
-  /** As `#deviceVictim` for targets; the close and the pace are always kept. */
-  #targetVictim(target: string): string | false | undefined {
-    if (this.#targets.has(target) || this.#targets.size < MAX_TARGETS) {
-      return undefined;
-    }
-    const members = [...this.#targets.keys()].filter((name) => name !== "close" && name !== "pace");
-    if (members.length === 0) {
-      return false;
-    }
-    const last = members.reduce((a, b) => (compareCodePoints(a, b) >= 0 ? a : b));
-    return target === "close" || target === "pace" || compareCodePoints(target, last) < 0
-      ? last
-      : false;
   }
 
   /**
@@ -1190,7 +1203,7 @@ export class ControlState {
   }
 }
 
-/** Unicode code point order, the order in which CTL-35 keeps devices and targets at a bound. */
+/** Unicode code point order, the order in which CTL-35 keeps devices at their bound, and CTL-36 the close's heads. */
 export function compareCodePoints(a: string, b: string): number {
   let i = 0;
   let j = 0;

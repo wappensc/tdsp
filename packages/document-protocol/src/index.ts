@@ -1433,8 +1433,8 @@ export class DocumentEngine {
 
   /**
    * Whether this client is in a capacity conflict (CTL-32): it could not hold an operation or a
-   * snapshot of the creator for the bytes of control state (CTL-30), so it may lack a decision —
-   * about itself, too. From then on it takes no new member or layer right, and refuses its own
+   * snapshot of the creator for the bytes, a target's `seen` or the targets of control state
+   * (CTL-30), so it may lack a decision — about itself, too. From then on it takes no new member or layer right, and refuses its own
    * edits as `read` does (`SendRefusedError` reason `capacity-conflict`), the creator's devices
    * included. Nothing ends it automatically: it is no convergence, but a state for a person to
    * resolve, by continuing in a new document. Persisted with the control state (`capacityConflict`).
@@ -3621,8 +3621,8 @@ export class DocumentEngine {
       throw new ControlFrameRejectedError(
         "refused",
         this.#control.capacityConflict
-          ? "control frame not held: in a capacity conflict, this client takes no new member or layer right beyond its bytes of control state (CTL-32)"
-          : "control frame not held: it would exceed this client's bounds on creator devices, holes or targets",
+          ? "control frame not held: in a capacity conflict, this client takes no new member or layer right beyond its bounds of control state (CTL-32)"
+          : "control frame not held: it would exceed this client's bounds on creator devices or holes",
       );
     }
     if (this.#control.anomalies.length > anomaliesBefore || ownTagElsewhere) {
@@ -3709,8 +3709,8 @@ export class DocumentEngine {
         new ControlFrameRejectedError(
           "refused",
           refused
-            ? "a control snapshot not held: it would exceed this client's bytes of control state, a capacity conflict (CTL-32)"
-            : `${leftOut} part(s) of a control snapshot not held: they would exceed this client's bounds on creator devices, holes or targets`,
+            ? "a control snapshot not held: it would exceed this client's bounds of control state, a capacity conflict (CTL-32)"
+            : `${leftOut} part(s) of a control snapshot not held: they would exceed this client's bounds on creator devices or holes, or take a new member or layer right in a capacity conflict`,
         ),
         "apply",
       );

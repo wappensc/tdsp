@@ -5,6 +5,7 @@ import {
   ControlState,
   type ControlStateSnapshot,
   type ControlTarget,
+  type ControlValue,
   DEVICE_TAG,
   isControlTarget,
   issuingVector,
@@ -440,10 +441,10 @@ describe("control state as a set of operations (CTL-22 to CTL-25)", () => {
     expect(Object.keys(ab.vector).sort()).toEqual(tags.slice(0, 64));
   });
 
-  it("at the bound on targets keeps the close, the pace and the first members in code point order (CTL-30, CTL-35)", () => {
+  it("beyond the bound on targets is in a capacity conflict, whatever the order; the close and the pace always hold (CTL-30, CTL-32)", () => {
     const tag = "M".repeat(22);
     const names = Array.from(
-      { length: 5_004 },
+      { length: 5_001 },
       (_, i) => `member:m${String(i).padStart(5, "0")}` as ControlTarget,
     );
     const run = (order: readonly ControlTarget[]) => {
@@ -455,13 +456,72 @@ describe("control state as a set of operations (CTL-22 to CTL-25)", () => {
       state.add({ device: tag, counter: ++counter, target: "close", value: true, seen: {} });
       return state;
     };
-    const forward = run(names);
-    const backward = run([...names].reverse());
-    expect(forward.closed).toBe(true);
-    expect(forward.pace).toBe(1000);
-    expect(Object.keys(forward.snapshot().targets)).toHaveLength(5_002);
-    expect([...forward.members.keys()].sort()).toEqual([...backward.members.keys()].sort());
-    expect(forward.members.has("m05003")).toBe(false);
+    // 5 000 members, the pace and the close: within the bound.
+    const full = run(names.slice(0, 5_000));
+    expect(full.capacityConflict).toBe(false);
+    expect(Object.keys(full.snapshot().targets)).toHaveLength(5_002);
+    expect(full.closed).toBe(true);
+    expect(full.pace).toBe(1000);
+    // One member more, in whatever order: refused, and a conflict — no member given up for it.
+    for (const order of [names, [...names].reverse()]) {
+      const state = run(order);
+      expect(state.capacityConflict).toBe(true);
+      expect(state.members.size).toBe(5_000);
+      expect(state.closed).toBe(true);
+      expect(state.pace).toBe(1000);
+    }
+  });
+
+  it("a device of the creator issues no member beyond the bound on targets, and is in no conflict for refusing (CTL-37)", () => {
+    const tag = "I".repeat(22);
+    const state = new ControlState();
+    for (let i = 0; i < 5_000; i++)
+      state.add({
+        device: tag,
+        counter: i + 1,
+        target: `member:m${String(i).padStart(5, "0")}` as ControlTarget,
+        value: "read",
+        seen: {},
+      });
+    const next = (counter: number, target: ControlTarget, value: ControlValue) =>
+      state.issue({ device: tag, counter, target, value, seen: {} });
+    expect(next(5_001, "member:one-too-many", "read")).toEqual({ refused: "too-large" });
+    expect(state.capacityConflict).toBe(false);
+    // A target it holds, the pace and the close it still issues.
+    expect("next" in next(5_001, "member:m00000", null)).toBe(true);
+    expect("next" in next(5_001, "pace", 1000)).toBe(true);
+    expect("next" in next(5_001, "close", true)).toBe(true);
+  });
+
+  it("refuses a snapshot whose union goes over the bound on targets as a whole, a capacity conflict, and takes its close (CTL-30, CTL-32, CTL-36)", () => {
+    const device = (letter: string) => letter.repeat(22);
+    const members = (state: ControlState, tag: string, from: number, count: number) => {
+      for (let i = 0; i < count; i++)
+        state.add({
+          device: tag,
+          counter: i + 1,
+          target: `member:m${String(from + i).padStart(5, "0")}` as ControlTarget,
+          value: "read",
+          seen: {},
+        });
+    };
+    // Two devices of the creator that each added 2 600 members: honest, and together too many.
+    const a = new ControlState();
+    members(a, device("A"), 0, 2_600);
+    const b = new ControlState();
+    members(b, device("B"), 2_600, 2_600);
+    b.add({ device: device("B"), counter: 2_601, target: "close", value: true, seen: {} });
+    expect(a.capacityConflict || b.capacityConflict).toBe(false);
+    const before = a.snapshot();
+    const { refused } = a.mergeOrRefuse(b.snapshot());
+    expect(refused).toBe(true);
+    expect(a.capacityConflict).toBe(true);
+    expect(a.closed).toBe(true);
+    expect(a.snapshot().targets).toEqual({ ...before.targets, close: b.snapshot().targets.close });
+    // The other way round alike.
+    const ba = ControlState.from(b.snapshot());
+    expect(ba.mergeOrRefuse(a.snapshot()).refused).toBe(true);
+    expect(ba.capacityConflict).toBe(true);
   });
 
   it("holds at most the bytes it is given as a snapshot carries them, and refuses a snapshot that would go over as a whole (CTL-30)", () => {
