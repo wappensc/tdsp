@@ -313,6 +313,11 @@ Bridges and bindings:
   identities; Matrix's signed-out, locked, suspended or consent errors and a full homeserver;
   email's refused SMTP login, a full mailbox, and for PGP a missing gpg or own secret key, which
   were `502`, `413`, `503` or `422` (BRG-8).
+- `@tdsp/messenger-email`'s `IntegrityReason` names a replaced message `message-replaced`, as
+  every bridge does, instead of `message-id-reused`; the email bridge records it only for a
+  Message-ID it delivered, compared by the frame, and no longer for the thread's root or a mail
+  it refused. `@tdsp/messenger-matrix`'s gains `message-replaced`: another event under a
+  delivered event id is recorded, not delivered again (BRG-11, BRG-12).
 - `AttributionRange.authorId` is `string | null`, and `AttributionTracker.recordInsert` and
   `recordDelete` take `null` for an unattributed change; the engine no longer invents the
   MemberId `__tdsp:unattributed__` (ATR-2).

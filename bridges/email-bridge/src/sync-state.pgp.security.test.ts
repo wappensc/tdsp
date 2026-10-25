@@ -667,4 +667,116 @@ describe("createSyncState", () => {
     await first;
     expect(await second).toBe(1);
   });
+
+  /**
+   * BRG-12 compares another mail under a delivered Message-ID by the frame's bytes: for a PGP
+   * document the frame in the decrypted and verified payload, never the ciphertext, which
+   * differs for every encryption of the same frame. Only a mail that passed EML-2 and EML-3
+   * gets that far, so what is recorded as a replacement is one its sender's pinned key signed.
+   */
+  describe("another mail under a delivered Message-ID", () => {
+    const OTHER_EDIT = { ...EDIT, frame: "BBBB" };
+
+    it("records a replacement signed by the sender's pinned key as message-replaced, and does not deliver it", async () => {
+      bind();
+      receiver.seed("doc-1", [await fromAlice(aliceSigns, EDIT, "m1")]);
+      const sync = createSyncState(receiver, bindStorePath, bobKeyring);
+      await sync.pollOnce("doc-1");
+      receiver.seed("doc-1", [await fromAlice(aliceSigns, OTHER_EDIT, "m1")]);
+      await sync.pollOnce("doc-1");
+      await sync.pollOnce("doc-1");
+
+      expect(sync.getDeliveries("doc-1").map((delivery) => delivery.payload)).toEqual(["AQID"]);
+      expect(sync.getRejections("doc-1")).toEqual([
+        { messageId: "m1", sender: "alice@example.org", reason: "message-replaced" },
+      ]);
+    });
+
+    it("drops silently the same frame encrypted again — other ciphertext, the same message (BRG-11)", async () => {
+      bind();
+      receiver.seed("doc-1", [await fromAlice(aliceSigns, EDIT, "m1")]);
+      const sync = createSyncState(receiver, bindStorePath, bobKeyring);
+      await sync.pollOnce("doc-1");
+      const reencrypted = fakeEncrypt({
+        payload: JSON.stringify(EDIT),
+        recipients: [FP_BOB, FP_ALICE],
+        signerFingerprint: FP_ALICE,
+      });
+      receiver.seed("doc-1", [
+        mail({
+          messageId: "m1",
+          from: "alice@example.org",
+          to: ["bob@example.org"],
+          text: reencrypted,
+        }),
+      ]);
+      await sync.pollOnce("doc-1");
+
+      expect(sync.getDeliveries("doc-1")).toHaveLength(1);
+      expect(sync.getRejections("doc-1")).toEqual([]);
+    });
+
+    it("records a forged mail under a delivered id by why it failed, never as a replacement", async () => {
+      bind();
+      receiver.seed("doc-1", [await fromAlice(aliceSigns, EDIT, "m1")]);
+      const sync = createSyncState(receiver, bindStorePath, bobKeyring);
+      await sync.pollOnce("doc-1");
+      receiver.seed("doc-1", [
+        await fromAlice(malloryPretendsToBeAlice, OTHER_EDIT, "m1"),
+        plainFromAlice(OTHER_EDIT, "m1"),
+      ]);
+      await sync.pollOnce("doc-1");
+      await sync.pollOnce("doc-1");
+
+      expect(sync.getDeliveries("doc-1").map((delivery) => delivery.payload)).toEqual(["AQID"]);
+      expect(sync.getRejections("doc-1").map((rejection) => rejection.reason)).toEqual([
+        "pgp-signature-invalid",
+        "pgp-unsigned",
+      ]);
+    });
+
+    it("records nothing for another mail under the invitation's Message-ID, which it never delivered", async () => {
+      bind();
+      receiver.seed("doc-1", [
+        mail({
+          messageId: "<root@example.org>",
+          from: "alice@example.org",
+          to: ["bob@example.org"],
+          text: "Alice invites you to a document.",
+        }),
+      ]);
+      const sync = createSyncState(receiver, bindStorePath, bobKeyring);
+      await sync.pollOnce("doc-1");
+      receiver.seed("doc-1", [
+        mail({
+          messageId: "<root@example.org>",
+          from: "alice@example.org",
+          to: ["bob@example.org"],
+          text: "Not the invitation, not an envelope.",
+        }),
+      ]);
+      await sync.pollOnce("doc-1");
+
+      expect(sync.getDeliveries("doc-1")).toEqual([]);
+      expect(sync.getRejections("doc-1")).toEqual([]);
+    });
+
+    it("hands a mail to gpg once, however often the thread is read again", async () => {
+      bind();
+      receiver.seed("doc-1", [
+        await fromAlice(aliceSigns, EDIT, "m1"),
+        await fromAlice(malloryPretendsToBeAlice, OTHER_EDIT, "m2"),
+      ]);
+      const sync = createSyncState(receiver, bindStorePath, bobKeyring);
+      await sync.pollOnce("doc-1");
+      await sync.pollOnce("doc-1");
+      await sync.pollOnce("doc-1");
+
+      expect(bobKeyring.opened).toHaveLength(2);
+      expect(sync.getDeliveries("doc-1")).toHaveLength(1);
+      expect(sync.getRejections("doc-1").map((rejection) => rejection.reason)).toEqual([
+        "pgp-signature-invalid",
+      ]);
+    });
+  });
 });

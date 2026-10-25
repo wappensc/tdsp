@@ -40,8 +40,8 @@ export type RejectionReason =
   | "pgp-unavailable"
   /** A PGP-protected message arrived for a document this bridge has PGP switched off for — a setting mismatch between participants, not something to guess around. */
   | "pgp-disabled-locally"
-  /** A second, distinct message arrived reusing an already-seen `Message-ID` with different text — an attempted messenger-native edit or withdrawal (bindings/bridges.md BRG-12). Never applied; an identical repeat (an ordinary IMAP re-read) is not this reason. */
-  | "message-id-reused"
+  /** Another frame under the `Message-ID` of a delivered message, in a mail that passed every other check — an attempt to replace a message, named as every bridge names it (bindings/bridges.md BRG-12). Never applied; the same frame again (an ordinary IMAP re-read) is not this reason, nor is a mail under the id of one never delivered. */
+  | "message-replaced"
   /** Larger than the bridge reads (BRG-13, `MAX_INCOMING_MAIL_BYTES`): never parsed, decrypted or applied. */
   | "message-too-large";
 
@@ -102,17 +102,48 @@ export function createSyncState(
   const deliveries = new Map<string, Delivery[]>();
   const rejections = new Map<string, Rejection[]>();
   /**
-   * `messageId -> SHA-256 of the first delivery's raw text`, so a repeat under the same id can
-   * be compared against it rather than assumed benign. The hash, not
-   * the text: every message of a long-lived thread stays here — it is what keeps a message
-   * dropped by retention from being offered again while this bridge runs (BRG-17) — and must
-   * not keep its body. So this grows with the thread, as the mailbox does, a few hundred
-   * bytes a message; bounding it would make every poll re-offer what fell out, since IMAP
-   * re-reads the whole thread. It lives in memory only: after a restart the thread's older
-   * messages are offered again, which an engine tolerates (TRN-8).
+   * Per document, `messageId -> SHA-256 of the frame delivered under it`: the only ids under
+   * which BRG-12 takes another mail for a replacement, compared by the frame's bytes. An id is
+   * added only once its mail passed EML-2 and EML-3 and was delivered; a mail the bridge did
+   * not take (the invitation, whose Message-ID every invitation link names, or a rejected one)
+   * adds nothing, so nobody can make a later mail under its id count as a replacement.
    */
-  const seenMessageIds = new Map<string, string>();
+  const deliveredFrames = new Map<string, Map<string, string>>();
+  /**
+   * Per document, a digest of every mail already processed, whatever came of it: IMAP
+   * re-reads the whole thread on every poll, and the same mail again is not new (BRG-11).
+   * It keeps a rejection from being recorded on every poll, a mail from going to `gpg`
+   * again, and a delivery dropped by retention from being offered again while this bridge
+   * runs (BRG-17). Its headers are part of the digest, so that a forged copy of a mail's
+   * body cannot stand in for the mail itself.
+   *
+   * Both hold hashes, not text, since every mail of a long-lived thread stays here: they
+   * grow with the mailbox, a few hundred bytes a mail; bounding them would make every poll
+   * re-offer what fell out. They live in memory only: after a restart the thread's older
+   * messages are offered again, which an engine tolerates (TRN-8), and BRG-12 then compares
+   * afresh.
+   */
+  const processedMails = new Map<string, Set<string>>();
   const digestOf = (text: string): string => createHash("sha256").update(text).digest("hex");
+  const mailDigestOf = (message: IncomingMail): string =>
+    digestOf(
+      JSON.stringify([
+        message.messageId,
+        message.from,
+        message.to,
+        message.cc,
+        message.text,
+        message.tooLarge === true,
+      ]),
+    );
+  function perDocument<V>(maps: Map<string, V>, documentId: string, empty: () => V): V {
+    let value = maps.get(documentId);
+    if (value === undefined) {
+      value = empty();
+      maps.set(documentId, value);
+    }
+    return value;
+  }
   // One poll at a time per document. Signature verification is
   // asynchronous (a `gpg` subprocess), so two overlapping polls — the
   // deliveries and the integrity-log routes both poll — could otherwise
@@ -125,8 +156,8 @@ export function createSyncState(
     list.push({ messageId: message.messageId, sender: normalizeAddress(message.from), reason });
     rejections.set(documentId, list);
     // The in-memory list above is what the user sees; the log is what
-    // survives a restart and what an operator greps. Once per message —
-    // `processMessage` marks every message id seen before it can reject it.
+    // survives a restart and what an operator greps. Once per mail —
+    // `processMessage` marks every mail processed before it can reject it.
     logger.warn("message-rejected", {
       reason,
       documentId,
@@ -224,21 +255,15 @@ export function createSyncState(
       return; // this bridge never started this thread — silently ignored
     }
 
-    // bindings/bridges.md BRG-12: IMAP
-    // re-reads the same mailbox on every poll, so a repeated Message-ID is
-    // ordinarily benign — the same bytes, seen again. A repeat carrying
-    // *different* text is the resend-under-an-existing-Message-ID case the
-    // rule names explicitly: never applied (this function already returns
-    // before ever reaching the delivery logic below), and recorded
-    // rather than silently indistinguishable from ordinary IMAP noise.
-    const firstSeenDigest = seenMessageIds.get(message.messageId);
-    if (firstSeenDigest !== undefined) {
-      if (firstSeenDigest !== digestOf(message.text)) {
-        reject(documentId, message, "message-id-reused");
-      }
+    // IMAP re-reads the whole thread on every poll: a mail already processed is
+    // the same message again, dropped silently whatever came of it the first time
+    // (BRG-11, BRG-17). Marked before any check, so it is recorded at most once.
+    const processed = perDocument(processedMails, documentId, () => new Set<string>());
+    const mailDigest = mailDigestOf(message);
+    if (processed.has(mailDigest)) {
       return;
     }
-    seenMessageIds.set(message.messageId, digestOf(message.text));
+    processed.add(mailDigest);
 
     // Larger than the bridge reads (BRG-13): only its envelope was fetched, so there is nothing
     // to check or open — rejected before any parser or `gpg` sees it.
@@ -282,6 +307,24 @@ export function createSyncState(
       return; // not our envelope (e.g. the plain invite email) — silently ignored
     }
 
+    // BRG-12: another mail under a delivered Message-ID, compared by the frame's
+    // bytes. For a PGP document that is the frame in the verified plaintext, not the
+    // ciphertext: every encryption of one frame differs (a fresh session key; GnuPG
+    // 2.5.24 gave two encryptions of one plaintext other bytes and the same plaintext
+    // back), and the plaintext is what the sender's pinned key signed (EML-3), so only
+    // the holder of that key can make it differ. The same frame is the same message
+    // (BRG-11); another one is never delivered.
+    const delivered = perDocument(deliveredFrames, documentId, () => new Map<string, string>());
+    const frameDigest = digestOf(envelope.frame);
+    const deliveredDigest = delivered.get(message.messageId);
+    if (deliveredDigest !== undefined) {
+      if (deliveredDigest !== frameDigest) {
+        reject(documentId, message, "message-replaced");
+      }
+      return;
+    }
+    delivered.set(message.messageId, frameDigest);
+
     const list = deliveries.get(documentId) ?? [];
     list.push({
       id: message.messageId,
@@ -289,8 +332,9 @@ export function createSyncState(
       sender: normalizeAddress(message.from),
       payload: envelope.frame,
     });
-    // Bounded; a dropped message stays in seenMessageIds, so a later IMAP read of the
-    // thread does not offer it again while this bridge runs (BRG-17).
+    // Bounded; a dropped message stays in processedMails and deliveredFrames, so a later
+    // IMAP read of the thread does not offer it again while this bridge runs (BRG-17),
+    // and a replacement of it is still recorded (BRG-12).
     retainNewest(list, retention);
     deliveries.set(documentId, list);
   }

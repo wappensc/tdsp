@@ -27,7 +27,7 @@ const EXPECTED: Record<IntegrityReason, "warning" | "alert"> = {
   "pgp-identity-changed": "alert",
   "pgp-unavailable": "warning",
   "pgp-disabled-locally": "warning",
-  "message-id-reused": "alert",
+  "message-replaced": "alert",
   "message-too-large": "warning",
 };
 
