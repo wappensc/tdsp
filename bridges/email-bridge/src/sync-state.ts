@@ -52,6 +52,9 @@ export interface Rejection {
   readonly reason: RejectionReason;
 }
 
+/** How often a mail whose reading failed is read again, on later polls, before it is given up on. */
+const MAX_READ_ATTEMPTS = 3;
+
 /**
  * Accumulates `receive()`'s cumulative per-`documentId` buffers, mirroring
  * `bridges/matrix-bridge`'s/`bridges/signal-bridge`'s own `SyncState` role —
@@ -124,6 +127,8 @@ export function createSyncState(
    * afresh.
    */
   const processedMails = new Map<string, Set<string>>();
+  /** How often reading each mail failed (BRG-18); only mails that failed are in it. */
+  const failedReads = new Map<string, number>();
   const digestOf = (text: string): string => createHash("sha256").update(text).digest("hex");
   const mailDigestOf = (message: IncomingMail): string =>
     digestOf(
@@ -346,7 +351,25 @@ export function createSyncState(
     }
     const messages = await receiver.fetchThreadMessages(documentId);
     for (const message of messages) {
-      await processMessage(documentId, message);
+      // One mail the bridge cannot read must not keep it from the others (BRG-18). It was marked
+      // as processed before anything was checked; a failure that may pass, of `gpg` say, would
+      // otherwise lose it, so it is read again on the next poll, a few times at most.
+      try {
+        await processMessage(documentId, message);
+      } catch (error) {
+        const digest = mailDigestOf(message);
+        const attempts = (failedReads.get(digest) ?? 0) + 1;
+        failedReads.set(digest, attempts);
+        if (attempts < MAX_READ_ATTEMPTS) {
+          processedMails.get(documentId)?.delete(digest);
+        }
+        logger.warn("message-unreadable", {
+          documentId,
+          messageId: message.messageId,
+          attempts,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
