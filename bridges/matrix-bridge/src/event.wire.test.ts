@@ -12,6 +12,11 @@ import { FRAME_EVENT_TYPE, readFrameEnvelope } from "./sync-state.ts";
  * reads that content back. In an encrypted room this same content is what Megolm encrypts. A
  * difference is a wire change only the CI role may accept (tools/wire-lock.ts). Only the CI
  * role may change this file (.github/CODEOWNERS).
+ *
+ * An entry that carries its frame in an event whose content is over the body limit is read back
+ * only: MTX-7 measures the envelope as written, so the bridge now sends that frame as a media
+ * file, and a receiver still takes either form whatever the frame's size. The entry stays, since
+ * an entry is never changed within a version.
  */
 
 const read = (relative: string): string =>
@@ -73,8 +78,16 @@ describe("Matrix room events at envelope version 1", () => {
         crypto,
       ).sendEdit("!room:homeserver.test", entry.documentId, entry.frame, false);
       expect(seen.eventType).toBe(entry.eventType);
-      expect(seen.content).toBe(entry.content);
-      expect(seen.uploads).toHaveLength(entry.uploads);
+      const sentAsFrozen =
+        entry.uploads > 0 || new TextEncoder().encode(entry.content).length <= BODY_FRAME_LIMIT;
+      if (sentAsFrozen) {
+        expect(seen.content).toBe(entry.content);
+        expect(seen.uploads).toHaveLength(entry.uploads);
+      } else {
+        // In the event its envelope is over the body limit: a media file now (MTX-7).
+        expect(seen.uploads).toHaveLength(1);
+        expect(readFrameEnvelope(JSON.parse(seen.content ?? "null"))?.attachment).toBeDefined();
+      }
 
       const read = readFrameEnvelope(JSON.parse(entry.content));
       expect(read?.documentId).toBe(entry.documentId);
