@@ -233,8 +233,9 @@ What a peer can make a receiver hold or wait for:
   that as a truncated history, asking at once with `force`; the creator's answer brings back what
   it holds and ends the evidence. Anyone in the channel could otherwise fill a receiver's memory
   unseen with updates whose predecessors never come.
-- **A pace runs at most 10 minutes** (SND-15, Appendix B): a longer one the creator set runs as 10
-  minutes, for sending and for judging silence alike, so a document can be made quiet, not mute.
+- **A pace is bounded** (SND-15, Appendix B): one longer than an engine's bound, 10 minutes
+  recommended, runs as that bound, for sending and for judging silence alike, so a document can be
+  made quiet, not mute.
 
 One person's devices (ARC-5, ARC-2):
 
@@ -271,6 +272,28 @@ Bridges and bindings:
   each binding to it;
   a rate limit's wait from `Retry-After`; a frame rides in the event when the envelope as written
   is at most 32 000 bytes. §15.1 and BND-1 say against whom an encrypted room protects.
+
+After a review of the whole text (2026-10-25), besides wording, references and Appendix G:
+
+- **Control state is carried only between the creator's devices** (ARC-5, CTL-39): a member's
+  application carries content and binding, and its engine takes control state from the channel.
+- **The pace bound is each engine's own** (SND-15, LOS-11): 10 minutes recommended, not a number
+  every engine must use, since a receiver waits for the longer of a sender's `due` and the pace it
+  runs itself.
+- **Profile and layer ids** (PRF-7, LAY-4) should begin with a reverse domain name their definer
+  controls, as an extension's does.
+- **The digest is a requirement** (LOS-24): the first 8 bytes of SHA-256 of the state or the control
+  snapshot, as §10.3 defined it informatively.
+- **The seed is not retried** (SND-20, LIF-3): a failed send of it fails the document's creation.
+- **What a bridge compares** (BRG-11, BRG-12): a frame in the body by its bytes, one in an attachment
+  by the hash its envelope names, an encrypted file also by its key and iv; across a restart a hash
+  of key and iv suffices.
+- **Signal** (SIG-4, SIG-7, BRG-8): a recipient a send skipped as an identity to trust is recorded in
+  the integrity log, so the application can show it; a send `signal-cli` refuses because it cannot
+  load the account is `unavailable` while the device shows linked, `needs-person` once unlinked.
+- **Security statements** (BND-1): the Signal binding states what it inherits from Signal, also
+  against Signal's servers, as Signal's word; the email binding what PGP adds against the mail
+  providers, and that the headers stay readable to every one of them.
 
 ### Added
 
