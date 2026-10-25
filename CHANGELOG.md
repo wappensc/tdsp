@@ -378,6 +378,11 @@ After a review of the whole text (2026-10-25), besides wording, references and A
   bridge's start and its first `/sync`: after that `/sync` it queries each member's devices once
   more before sharing a key with them, where such a device got no room key until the member's
   device list changed again (MTX-4).
+- One message a bridge cannot read no longer keeps it from the others (BRG-18): the Matrix bridge
+  reads a `/sync` answer as far as it can, and an event whose reading fails no longer costs the
+  round's others; the Signal bridge goes on past a line or notification it cannot read instead of
+  ending; the email bridge reads a thread's other mails, and reads one that failed again on the
+  next poll, three times at most.
 - `AttributionRange.authorId` is `string | null`, and `AttributionTracker.recordInsert` and
   `recordDelete` take `null` for an unattributed change; the engine no longer invents the
   MemberId `__tdsp:unattributed__` (ATR-2).
