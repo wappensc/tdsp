@@ -18,6 +18,7 @@ import { createSyncState, type SyncState } from "./sync-state.ts";
 const BOUND = "!document-room:homeserver.test";
 const OTHER = "!another-room:homeserver.test";
 const DOC = "doc-1";
+const OTHER_DOC = "doc-2";
 const ALICE = "@alice:homeserver.test";
 const FRAME = "de.wappensc.together.tdsp.frame";
 
@@ -46,11 +47,16 @@ class FakeHomeserver {
   };
 }
 
-const frame = (eventId: string, sender: string, payload: string): TimelineEvent => ({
+const frame = (
+  eventId: string,
+  sender: string,
+  payload: string,
+  documentId = DOC,
+): TimelineEvent => ({
   type: FRAME,
   event_id: eventId,
   sender,
-  content: { tdsp: 1, documentId: DOC, frame: payload },
+  content: { tdsp: 1, documentId, frame: payload },
 });
 
 const editOf = (eventId: string, target: string): TimelineEvent => ({
@@ -88,26 +94,38 @@ const crypto = (): CryptoMachine => ({
 describe("an event for a document from a room it is not bound to (BRG-10)", () => {
   let homeserver: FakeHomeserver;
   let state: SyncState;
+  let logEvents: string[];
 
-  beforeEach(() => {
-    homeserver = new FakeHomeserver();
-    vi.stubGlobal("fetch", homeserver.handle);
+  const binding = (roomId: string) => ({
+    roomId,
+    creatorMemberId: ALICE,
+    profile: "yjs-paragraphs/1",
+    createdAt: "2026-01-01T00:00:00Z",
+    encrypted: false,
+  });
+
+  /** A bridge whose bind store holds `bindings`, with nothing received yet. */
+  function start(bindings: Record<string, ReturnType<typeof binding>>): void {
     const bindStorePath = join(tmpdir(), `matrix-channel-test-${Math.random()}.json`);
-    saveBindStore(bindStorePath, {
-      [DOC]: {
-        roomId: BOUND,
-        creatorMemberId: ALICE,
-        profile: "yjs-paragraphs/1",
-        createdAt: "2026-01-01T00:00:00Z",
-        encrypted: false,
-      },
-    });
+    saveBindStore(bindStorePath, bindings);
+    logEvents = [];
     state = createSyncState(
       { homeserverUrl: "http://homeserver.test", accessToken: "t" },
       bindStorePath,
       crypto(),
-      createLogger({ component: "test", sink: () => {} }),
+      createLogger({
+        component: "test",
+        sink: (_line, record) => {
+          logEvents.push(record.event);
+        },
+      }),
     );
+  }
+
+  beforeEach(() => {
+    homeserver = new FakeHomeserver();
+    vi.stubGlobal("fetch", homeserver.handle);
+    start({ [DOC]: binding(BOUND) });
   });
 
   afterEach(() => {
@@ -149,6 +167,21 @@ describe("an event for a document from a room it is not bound to (BRG-10)", () =
     );
     expect(frames()).toEqual(["b3JpZ2luYWw="]);
     expect(state.getIntegrityLog(DOC)).toEqual([]);
+  });
+
+  it("leaves no record when it replaces a delivered message under its id from a room bound to another document", async () => {
+    // Only an event whose envelope names a document bound to its room gets as far as the comparison
+    // with what was delivered, so the other room here is bound to a document of its own.
+    start({ [DOC]: binding(BOUND), [OTHER_DOC]: binding(OTHER) });
+    await pollRounds(
+      { [BOUND]: [frame("$original", ALICE, "b3JpZ2luYWw=")] },
+      { [OTHER]: [frame("$original", "@mallory:homeserver.test", "dGFtcGVyZWQ=", OTHER_DOC)] },
+    );
+    expect(frames()).toEqual(["b3JpZ2luYWw="]);
+    expect(state.getDeliveries(OTHER_DOC)).toEqual([]);
+    expect(state.getIntegrityLog(DOC)).toEqual([]);
+    expect(state.getIntegrityLog(OTHER_DOC)).toEqual([]);
+    expect(logEvents).toContain("replacement-unattributed");
   });
 
   it("never enters what a later event under its id is compared by: the bound room's is delivered", async () => {
