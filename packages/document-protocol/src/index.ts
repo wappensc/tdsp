@@ -838,6 +838,10 @@ export class DocumentEngine {
   // The members this device of the creator decided about itself, under its tag, in this instance or
   // as its restored state shows (CTL-28): whom it may bootstrap without a basis.
   readonly #decidedHere = new Set<MemberId>();
+  // Whether a member's control report reached this device of the creator since it started — a
+  // request's control vector or an answer's control state (CTL-27): without one, a person's
+  // confirmation has nothing to confirm against, and gives no basis (CTL-33).
+  #memberReported = false;
   #scheduler: SendScheduler;
   #detector: LossDetector;
   // The transport's largest message, if it says: a frame over it is sent in pieces (SND-17).
@@ -1388,8 +1392,9 @@ export class DocumentEngine {
    * device with a basis counts reported counters as seen (CTL-27, CTL-28), and only on this explicit
    * call: a report supplies no value that holds unless the person chose it. A device of the creator
    * only; resolves once every operation went out, as `setMembership` does. Then the device has a
-   * basis for its control state (CTL-28): the person decided again whatever the reports showed it
-   * lacks — with none diverging, confirmed what it holds.
+   * basis for its control state (CTL-28), once a member's control report has reached it: the
+   * person decided again whatever the reports showed it lacks — with none diverging, confirmed what
+   * it holds. Before any report it stays unconfirmed (`controlConfirmed`), waiting for a member.
    */
   async confirmRights(values?: ReadonlyMap<ControlTarget, ControlValue>): Promise<void> {
     if (this.#creatorMemberId !== this.memberId) {
@@ -1442,10 +1447,12 @@ export class DocumentEngine {
 
   /**
    * The person confirmed this device's control state (CTL-33): a basis for it (CTL-28), persisted
-   * with it (CTL-26), so that it bootstraps the members it did not decide about itself from now on.
+   * with it (CTL-26), so that it bootstraps the members it did not decide about itself from now on —
+   * once a member's control report has reached it. Before one, the person confirmed nothing anyone
+   * else holds, and the device stays unconfirmed, waiting for a member.
    */
   #confirmedByPerson(): void {
-    if (this.#controlBasis) {
+    if (this.#controlBasis || !this.#memberReported) {
       return;
     }
     this.#gainBasis();
@@ -1802,6 +1809,9 @@ export class DocumentEngine {
       // creator: counters only, which it may count as seen (CTL-27).
       if (frame.control !== null) {
         this.#takeReport(frame.control);
+        if (delivery.sender !== this.#creatorMemberId) {
+          this.#memberReported = true;
+        }
       }
       return true;
     }
@@ -1955,6 +1965,7 @@ export class DocumentEngine {
           this.#creatorMemberId === this.memberId
         ) {
           this.#takeReport(frame.control.vector);
+          this.#memberReported = true;
           this.#reportedState = frame.control;
           this.#noteCollisionsIn(frame.control, delivery.sender);
           this.#keepDivergences(delivery.sender, frame.control);

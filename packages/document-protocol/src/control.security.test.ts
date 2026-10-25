@@ -1074,7 +1074,7 @@ describe("a basis for a new creator device's control state (CTL-28)", () => {
     expect(dave.hasCompletedBootstrap).toBe(true);
   });
 
-  it("is given by the person's confirmation of what members reported, and only then bootstraps a joiner it never decided about (CTL-33)", async () => {
+  it("is given by the person's confirmation once a member reported, and only then bootstraps a joiner it never decided about (CTL-33)", async () => {
     const unthrottled = { ...AS_ALICE, resyncResponseThrottleMs: 0 };
     const messenger = new NoHistoryMessengerPort();
     const old = await DocumentEngine.create(
@@ -1106,11 +1106,15 @@ describe("a basis for a new creator device's control state (CTL-28)", () => {
       ...persist,
       controlState: saved as PersistedControlState,
     });
-    await settle(restored, bob); // bob's report shows carol removed and himself a writer
+    // Confirmed before any member reported: nothing to confirm against, so still no basis.
+    await restored.confirmRights();
     expect(restored.controlConfirmed).toBe(false);
+    expect(saved?.basis).toBe(false);
     const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, unthrottled);
     await settle(restored, dave);
-    expect(dave.hasCompletedBootstrap).toBe(false); // not before the confirmation
+    expect(dave.hasCompletedBootstrap).toBe(false);
+    await settle(restored, bob); // bob's report shows carol removed and himself a writer
+    expect(restored.controlConfirmed).toBe(false); // a report alone is no basis (CTL-27)
     // The person confirms each reported value (CTL-33, CTL-43).
     const divergences = restored.controlDivergences;
     expect(divergences.map((divergence) => divergence.target).sort()).toEqual([
