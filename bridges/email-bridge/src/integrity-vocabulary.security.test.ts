@@ -1,4 +1,5 @@
 import type {
+  IntegrityEntry as BrowserIntegrityEntry,
   InviteRejectionReason as BrowserInviteRejectionReason,
   KeyComparison as BrowserKeyComparison,
   KeyReportEntry as BrowserKeyReportEntry,
@@ -7,7 +8,7 @@ import type {
 import { describe, expect, it } from "vitest";
 import type { InviteRejectionReason } from "./invite.ts";
 import type { KeyComparison, KeyReportEntry } from "./key-report.ts";
-import type { RejectionReason } from "./sync-state.ts";
+import type { Rejection, RejectionReason } from "./sync-state.ts";
 
 /**
  * `RejectionReason` (here) and `IntegrityReason` (in `packages/messenger-
@@ -24,10 +25,16 @@ const sameVocabulary: Equal<RejectionReason, IntegrityReason> = true;
 const sameInviteVocabulary: Equal<InviteRejectionReason, BrowserInviteRejectionReason> = true;
 const sameComparisons: Equal<KeyComparison, BrowserKeyComparison> = true;
 const sameKeyReportEntry: Equal<KeyReportEntry, BrowserKeyReportEntry> = true;
+/** An entry has the shape the local bridge interface gives it (BRG-15), on both sides. */
+const sameEntry: Equal<Rejection, BrowserIntegrityEntry> = true;
 
 describe("integrity-log vocabulary", () => {
   it("is the same list in the bridge and in the browser-side package", () => {
     expect(sameVocabulary).toBe(true);
+  });
+
+  it("is an entry of the same shape in the bridge and in the browser-side package (BRG-15)", () => {
+    expect(sameEntry).toBe(true);
   });
 
   it("agrees on why an invitation can be refused, so every reason reaches the UI with wording", () => {

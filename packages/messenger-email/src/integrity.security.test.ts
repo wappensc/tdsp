@@ -6,6 +6,7 @@ import {
   describeKeyWarnings,
   describePgpStatus,
   formatFingerprint,
+  type IntegrityEntry,
   type IntegrityReason,
   type InviteRejectionReason,
   isInviteRejectionReason,
@@ -36,7 +37,8 @@ describe("describeIntegrityEntry", () => {
     "words %s, names the sender, and rates it %s",
     (reason, severity) => {
       const result = describeIntegrityEntry({
-        messageId: "m1",
+        kind: "violation",
+        id: "m1",
         sender: "mallory@example.org",
         reason: reason as IntegrityReason,
       });
@@ -48,12 +50,14 @@ describe("describeIntegrityEntry", () => {
 
   it("keeps 'signed by a key the document does not hold' and 'signed by another participant's key' in distinct words", () => {
     const unknownKey = describeIntegrityEntry({
-      messageId: "m1",
+      kind: "violation",
+      id: "m1",
       sender: "bob@example.org",
       reason: "pgp-signature-invalid",
     });
     const otherParticipant = describeIntegrityEntry({
-      messageId: "m2",
+      kind: "violation",
+      id: "m2",
       sender: "bob@example.org",
       reason: "pgp-identity-changed",
     });
@@ -68,7 +72,12 @@ describe("describeIntegrityEntry", () => {
 
   it("does not fail on an empty sender", () => {
     expect(
-      describeIntegrityEntry({ messageId: "m1", sender: "", reason: "pgp-unsigned" }).text,
+      describeIntegrityEntry({
+        kind: "violation",
+        id: "m1",
+        sender: "",
+        reason: "pgp-unsigned",
+      }).text,
     ).toContain("an unknown sender");
   });
 });
@@ -120,7 +129,12 @@ describe("describePgpStatus", () => {
 });
 
 describe("summarizeIntegrity", () => {
-  const entry = (reason: IntegrityReason) => ({ messageId: "m", sender: "x@example.org", reason });
+  const entry = (reason: IntegrityReason): IntegrityEntry => ({
+    kind: "violation",
+    id: "m",
+    sender: "x@example.org",
+    reason,
+  });
 
   it("says nothing when nothing was rejected", () => {
     expect(summarizeIntegrity([])).toBeNull();

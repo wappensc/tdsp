@@ -86,7 +86,12 @@ describe("a receiver's handling of a resend under an existing Message-ID", () =>
     expect(sync.getDeliveries("doc-1")).toHaveLength(1); // only the original was ever applied
     expect(sync.getDeliveries("doc-1")[0]?.payload).toBe("AQID");
     expect(sync.getRejections("doc-1")).toEqual([
-      { messageId: "<reused@example.org>", sender: "bob@example.org", reason: "message-replaced" },
+      {
+        kind: "violation",
+        id: "<reused@example.org>",
+        sender: "bob@example.org",
+        reason: "message-replaced",
+      },
     ]);
   });
 
@@ -155,7 +160,8 @@ describe("a receiver's handling of a resend under an existing Message-ID", () =>
     expect(sync.getDeliveries("doc-1")).toEqual([]);
     expect(sync.getRejections("doc-1")).toEqual([
       {
-        messageId: "<root@example.org>",
+        kind: "violation",
+        id: "<root@example.org>",
         sender: "mallory@example.org",
         reason: "recipient-list-mismatch",
       },
@@ -176,7 +182,8 @@ describe("a receiver's handling of a resend under an existing Message-ID", () =>
     expect(sync.getDeliveries("doc-1")).toEqual([]);
     expect(sync.getRejections("doc-1")).toEqual([
       {
-        messageId: "<reused@example.org>",
+        kind: "violation",
+        id: "<reused@example.org>",
         sender: "mallory@example.org",
         reason: "recipient-list-mismatch",
       },
@@ -221,7 +228,8 @@ describe("a receiver's handling of a resend under an existing Message-ID", () =>
     expect(sync.getDeliveries("doc-1").map((delivery) => delivery.payload)).toEqual(["AQID"]);
     expect(sync.getRejections("doc-1")).toEqual([
       {
-        messageId: "<reused@example.org>",
+        kind: "violation",
+        id: "<reused@example.org>",
         sender: "mallory@example.org",
         reason: "recipient-list-mismatch",
       },
@@ -239,7 +247,12 @@ describe("a receiver's handling of a resend under an existing Message-ID", () =>
 
     expect(sync.getDeliveries("doc-1").map((delivery) => delivery.payload)).toEqual(["AQID"]);
     expect(sync.getRejections("doc-1")).toEqual([
-      { messageId: "<reused@example.org>", sender: "bob@example.org", reason: "message-replaced" },
+      {
+        kind: "violation",
+        id: "<reused@example.org>",
+        sender: "bob@example.org",
+        reason: "message-replaced",
+      },
     ]);
   });
 
@@ -275,7 +288,12 @@ describe("a receiver's handling of a resend under an existing Message-ID", () =>
       "<later@example.org>",
     ]);
     expect(sync.getRejections("doc-1")).toEqual([
-      { messageId: "<reused@example.org>", sender: "bob@example.org", reason: "message-replaced" },
+      {
+        kind: "violation",
+        id: "<reused@example.org>",
+        sender: "bob@example.org",
+        reason: "message-replaced",
+      },
     ]);
   });
 });

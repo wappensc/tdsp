@@ -24,6 +24,7 @@ import {
   type MailStatus,
   type PgpKeys,
   type PgpStatus,
+  readIntegrityLog,
 } from "./integrity.ts";
 
 export {
@@ -45,6 +46,7 @@ export {
   type MailStatus,
   type PgpKeys,
   type PgpStatus,
+  readIntegrityLog,
   summarizeIntegrity,
 } from "./integrity.ts";
 
@@ -361,7 +363,7 @@ export class EmailMessengerPort implements MessengerPort {
         `integrityLog(${documentId}) failed: ${response.status} ${await response.text()}`,
       );
     }
-    return (await response.json()) as readonly IntegrityEntry[];
+    return readIntegrityLog(await response.json());
   }
 
   /**
