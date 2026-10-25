@@ -383,6 +383,8 @@ After a review of the whole text (2026-10-25), besides wording, references and A
   round's others; the Signal bridge goes on past a line or notification it cannot read instead of
   ending; the email bridge reads a thread's other mails, and reads one that failed again on the
   next poll, three times at most.
+- The email bridge suggests 35 s between messages to a provider, as Appendix B and the email
+  binding do, where it suggested 30 s, which ran into a provider's refusals.
 - `AttributionRange.authorId` is `string | null`, and `AttributionTracker.recordInsert` and
   `recordDelete` take `null` for an unattributed change; the engine no longer invents the
   MemberId `__tdsp:unattributed__` (ATR-2).

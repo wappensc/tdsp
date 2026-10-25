@@ -17,8 +17,9 @@ import type { TlsMode } from "./tls-policy.ts";
  * **What is measured and what is not.** The one figure behind the provider profile is
  * a *measurement of one provider*: GMX refused to send after roughly 35 mails in 20
  * minutes on new accounts, about one per 34 s, and a message took 8 to 35 s to
- * arrive. The **30 s floor is a decision**, taken from several independent sources
- * on providers' limits rather than measured first. Everything else — the 120 s
+ * arrive. The **35 s pacing is a decision**, just above that measurement, where the 30 s
+ * suggested before, taken from several independent sources on providers' limits, ran into
+ * its refusals. Everything else — the 120 s
  * deadline, the 60 s latency (about twice the slowest hop seen) and the 15 s bound — is an
  * **estimate**, to be replaced by numbers from a second provider. A slower pacing for a
  * stricter provider is the application's to offer (§3.5).
@@ -36,10 +37,10 @@ import type { TlsMode } from "./tls-policy.ts";
 
 export const EMAIL_PROVIDER_PROFILE: TransportProfile = {
   bounds: { minIntervalMs: 15_000, maxBytes: 4 * 1024 * 1024 },
-  // One message at most every 30 seconds — sized for a provider that refuses after about 35
-  // mails in 20 minutes.
+  // One message at most every 35 seconds, above the one message per 34 seconds a provider was
+  // measured to allow; 30 seconds ran into its refusals (Appendix B, the email binding).
   pacing: {
-    minIntervalMs: 30_000,
+    minIntervalMs: 35_000,
     maxIntervalMs: 120_000,
     minChars: 0,
     maxChars: null,
