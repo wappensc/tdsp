@@ -16,7 +16,7 @@ import {
   parseAttachmentRef,
   sha256Hex,
 } from "./attachment.ts";
-import { type BindStoreData, loadBindStore } from "./bind-store.ts";
+import { type BindStoreData, loadBindStore, saveBindStore } from "./bind-store.ts";
 import type { CryptoMachine } from "./crypto-machine.ts";
 import {
   downloadMedia,
@@ -236,6 +236,8 @@ export interface SyncState {
   getDeliveries(documentId: DocumentId): readonly Delivery[];
   /** bindings/bridges.md BRG-12, BRG-15 — every edit, redaction and replacement this bridge caught and refused to apply for `documentId`, oldest first. */
   getIntegrityLog(documentId: DocumentId): readonly IntegrityEntry[];
+  /** Whether this bridge has seen `roomId` encrypted while it runs (MTX-5), before a binding to it too. */
+  hasSeenEncrypted(roomId: string): boolean;
 }
 
 export function createSyncState(
@@ -282,11 +284,28 @@ export function createSyncState(
     return Object.values(bindStore).some((record) => record.roomId === roomId && record.encrypted);
   }
 
-  /** Notes `roomId` as encrypted when `event` shows it is. */
+  /**
+   * Notes `roomId` as encrypted when `event` shows it is, and persists that with every binding to
+   * the room (MTX-5): a bridge that forgot it after a restart would take the room's state as the
+   * homeserver reports it again, and would send into the room unencrypted.
+   */
   function noteEncryption(roomId: string, event: RawTimelineEvent): void {
-    if (event.type === ENCRYPTION_STATE_EVENT_TYPE || event.type === ENCRYPTED_EVENT_TYPE) {
-      seenEncrypted.add(roomId);
+    if (event.type !== ENCRYPTION_STATE_EVENT_TYPE && event.type !== ENCRYPTED_EVENT_TYPE) {
+      return;
     }
+    seenEncrypted.add(roomId);
+    const store = loadBindStore(bindStorePath);
+    const plain = Object.entries(store).filter(
+      ([, record]) => record.roomId === roomId && !record.encrypted,
+    );
+    if (plain.length === 0) {
+      return;
+    }
+    for (const [documentId, record] of plain) {
+      store[documentId] = { ...record, encrypted: true };
+    }
+    saveBindStore(bindStorePath, store);
+    logger.info("room-seen-encrypted", { roomId, documents: plain.length });
   }
 
   function reject(
@@ -583,6 +602,13 @@ export function createSyncState(
       result.oneTimeKeyCounts,
     );
 
+    // A room's state comes before its timeline; on a first `/sync` it is where the room's
+    // `m.room.encryption` is (MTX-5).
+    for (const [roomId, events] of result.roomStateEvents) {
+      for (const event of events) {
+        noteEncryption(roomId, event);
+      }
+    }
     if (wasFirstPoll) {
       // Establish the timeline baseline only — see this module's own doc comment — but keep
       // what it shows about which rooms are encrypted.
@@ -639,6 +665,9 @@ export function createSyncState(
     },
     getIntegrityLog(documentId: DocumentId): readonly IntegrityEntry[] {
       return violations.get(documentId) ?? [];
+    },
+    hasSeenEncrypted(roomId: string): boolean {
+      return seenEncrypted.has(roomId);
     },
   };
 }

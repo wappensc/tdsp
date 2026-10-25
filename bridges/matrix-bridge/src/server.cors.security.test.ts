@@ -86,6 +86,12 @@ class FakeSyncState implements SyncState {
   getIntegrityLog(documentId: string): readonly IntegrityEntry[] {
     return this.integrityLog.get(documentId) ?? [];
   }
+
+  seenEncrypted = new Set<string>();
+
+  hasSeenEncrypted(roomId: string): boolean {
+    return this.seenEncrypted.has(roomId);
+  }
 }
 
 /**

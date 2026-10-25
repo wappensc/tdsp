@@ -68,6 +68,23 @@ describe("reading a /sync answer (BRG-18)", () => {
     expect(answer({ rooms: "x", to_device: 5, device_lists: null }).roomEvents.size).toBe(0);
   });
 
+  it("reads each room's state block as its timeline, dropping what is not an event (MTX-5)", () => {
+    const encryption = {
+      type: "m.room.encryption",
+      event_id: "$on",
+      sender: ALICE,
+      state_key: "",
+      content: { algorithm: "m.megolm.v1.aes-sha2" },
+    };
+    const read = answer({
+      rooms: { join: { [ROOM]: { state: { events: [null, encryption] }, timeline: {} } } },
+    });
+    expect(read.roomStateEvents.get(ROOM)?.map((event) => event.type)).toEqual([
+      "m.room.encryption",
+    ]);
+    expect(read.roomEvents.has(ROOM)).toBe(false);
+  });
+
   it("refuses an answer without a position, so that the bridge does not start over", () => {
     expect(() => readSyncAnswer({ rooms: {} })).toThrow(/next_batch/);
     expect(() => readSyncAnswer(null)).toThrow(/next_batch/);
