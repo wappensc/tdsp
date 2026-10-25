@@ -38,6 +38,13 @@ const bytesOf = (length: number, seed: number): Uint8Array =>
   // seed, so a swap between two frames would show.
   Uint8Array.from({ length }, (_, i) => 32 + (((i * 2654435761 + seed * 40503) >>> 24) % 95));
 const textOf = (bytes: Uint8Array): string => new TextDecoder().decode(bytes);
+/** A frame of letters, which need no escape, whose envelope as written takes exactly `bytes` (MTX-7). */
+const frameWithEnvelopeOf = (documentId: string, bytes: number): Uint8Array => {
+  const overhead = new TextEncoder().encode(
+    JSON.stringify({ tdsp: 1, documentId, frame: "" }),
+  ).length;
+  return new TextEncoder().encode("a".repeat(bytes - overhead));
+};
 
 // Real round trips through a shared Synapse: the 5-second default is too tight when the machine is busy.
 describe.skipIf(!available)(
@@ -175,12 +182,12 @@ describe.skipIf(!available)(
           expect(delivery?.payload).toBe(textOf(frame));
         });
 
-        it("keeps the body for a frame at the limit and uses a file one byte over it", async () => {
+        it("keeps the body for a frame whose envelope is at the limit and uses a file one byte over it", async () => {
           const { documentId } = await freshDocument(
             encrypted ? accounts.rooms.encrypted : accounts.rooms.plain,
           );
-          const atLimit = bytesOf(BODY_FRAME_LIMIT, 2);
-          const overLimit = bytesOf(BODY_FRAME_LIMIT + 1, 3);
+          const atLimit = frameWithEnvelopeOf(documentId, BODY_FRAME_LIMIT);
+          const overLimit = frameWithEnvelopeOf(documentId, BODY_FRAME_LIMIT + 1);
           expect((await send(documentId, atLimit)).status).toBe(200);
           expect((await send(documentId, overLimit)).status).toBe(200);
           const deliveries = await bobDeliveries(documentId, 2);

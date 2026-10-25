@@ -26,6 +26,14 @@ const bytesOf = (length: number, seed = 1): Uint8Array =>
   Uint8Array.from({ length }, (_, i) => 32 + (((i * 2654435761 + seed * 40503) >>> 24) % 95));
 const textOf = (bytes: Uint8Array): string => new TextDecoder().decode(bytes);
 
+/** The bytes the envelope around `frame` takes as the bridge writes it, escapes included (MTX-7). */
+const envelopeBytes = (frame: string): number =>
+  new TextEncoder().encode(JSON.stringify({ tdsp: 1, documentId: DOC, frame })).length;
+
+/** A frame of letters, which need no escape, whose envelope takes exactly `bytes`. */
+const frameWithEnvelopeOf = (bytes: number): Uint8Array =>
+  new TextEncoder().encode("a".repeat(bytes - envelopeBytes("")));
+
 interface Sent {
   eventType: string;
   content: Record<string, unknown>;
@@ -104,8 +112,9 @@ describe("the sending side's choice between a body and a file", () => {
   });
 
   describe("in an ordinary room", () => {
-    it("puts a frame up to the body limit in the event, with no upload", async () => {
-      const frame = bytesOf(BODY_FRAME_LIMIT);
+    it("puts a frame whose envelope, as written, is at the body limit in the event, with no upload", async () => {
+      const frame = frameWithEnvelopeOf(BODY_FRAME_LIMIT);
+      expect(envelopeBytes(textOf(frame))).toBe(BODY_FRAME_LIMIT);
       await writer.sendEdit(ROOM, DOC, textOf(frame), false);
       expect(homeserver.uploads).toEqual([]);
       expect(homeserver.sent).toHaveLength(1);
@@ -117,8 +126,8 @@ describe("the sending side's choice between a body and a file", () => {
       });
     });
 
-    it("uploads a frame one byte over the limit and sends a reference to it, exactly what was uploaded", async () => {
-      const frame = bytesOf(BODY_FRAME_LIMIT + 1);
+    it("uploads a frame whose envelope is one byte over the limit and sends a reference to it, exactly what was uploaded", async () => {
+      const frame = frameWithEnvelopeOf(BODY_FRAME_LIMIT + 1);
       await writer.sendEdit(ROOM, DOC, textOf(frame), false);
       expect(homeserver.uploads).toHaveLength(1);
       expect(homeserver.uploads[0]?.bytes).toEqual(frame);
@@ -135,6 +144,16 @@ describe("the sending side's choice between a body and a file", () => {
         },
       });
       expect(event?.content.frame).toBeUndefined();
+    });
+
+    it("counts the escapes: a frame of quotes and backslashes far under the limit goes as a file once its envelope is over it (MTX-7)", async () => {
+      const text = '"\\'.repeat(9_000);
+      expect(new TextEncoder().encode(text).length).toBe(18_000);
+      expect(envelopeBytes(text)).toBeGreaterThan(BODY_FRAME_LIMIT);
+      await writer.sendEdit(ROOM, DOC, text, false);
+      expect(homeserver.uploads).toHaveLength(1);
+      expect(textOf(homeserver.uploads[0]?.bytes as Uint8Array)).toBe(text);
+      expect(homeserver.sent[0]?.content.frame).toBeUndefined();
     });
 
     it("sends a reference the receiver's own parser accepts", async () => {
@@ -169,8 +188,8 @@ describe("the sending side's choice between a body and a file", () => {
   });
 
   describe("in an encrypted room", () => {
-    it("encrypts a frame within the body limit as an event and uploads nothing", async () => {
-      const frame = bytesOf(BODY_FRAME_LIMIT, 2);
+    it("encrypts a frame whose envelope is within the body limit as an event and uploads nothing", async () => {
+      const frame = frameWithEnvelopeOf(BODY_FRAME_LIMIT);
       await writer.sendEdit(ROOM, DOC, textOf(frame), true);
       expect(homeserver.uploads).toEqual([]);
       expect(homeserver.sent.map((sent) => sent.eventType)).toEqual(["m.room.encrypted"]);
