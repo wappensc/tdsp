@@ -366,18 +366,18 @@
     }
   },
   "sections": {
-    "## 4. The payload frame": "3a876f8576d4b1c735006ce5b364eceab5287322789d557c23b5c35140ec6682",
-    "## 5. Document profiles": "5d9bdc88137d0218c67ac06d283b349d716b902f03e41e3e0cdf718854ba516e",
-    "## 7. Control state": "2d0535b4154b667a3d3e9a8ec08a640e9282fcd37f4ea663bb3afdec2d167c9c",
-    "## 11. Invitations": "e660afd505092af20005f1b5df23ab9e997077147d8fe1d19ec8a1973858ea76",
-    "## Appendix A. Profile `yjs-paragraphs/1`": "1cc8d19f5d873a65dedf951c6238cd25803abafc3d6db1b1360cf0913cd97cb1",
-    "## Appendix B. Recommended values": "ffab04b8894d97df4b62e48f144202b6d4caba0a420e8271883850c2b3a28a55"
+    "## 4. The payload frame": "7266daf1a21ca2f7e8db259e7d4ee66e7f6f1ff1f5c31a800b3aee4f9fe91506",
+    "## 5. Document profiles": "d180ef7a51d451cb321dca2378122a70bdb40c4eee2ea9a3512b5c14871be5c4",
+    "## 7. Control state": "2080ce4329a81b57aa96dddfaf7b84ebd1190ee8ed98f315d61e6d6771bf61e7",
+    "## 11. Invitations": "6817cb50d80737c738d7504049898751bcb7883316ccd3268991b3854d70637b",
+    "## Appendix A. Profile `yjs-paragraphs/1`": "6a2846e4ecde920535bf5faa683809db7feeff7611bf8ac258963e32e4715f12",
+    "## Appendix B. Recommended values": "795f8830a50e9c3c001535933bad30ac08c2f8c95d3224fd4ce32e9293b1282f"
   },
   "documents": {
-    "bindings/bridges.md": "58eef0f5237f6e8ccbb602e35faca7ab301b31c5e6b13c37ca7d04fffbfd717c",
-    "bindings/signal.md": "d6991f06f119d4ea4577a068ff6f85d612f880c7536e6e9f19ced72b3a7611fb",
-    "bindings/matrix.md": "1338cbdcec7c48e8216318f6bcc2122b4047dd7c5239d5dc794bbc8b2e6304bf",
-    "bindings/email.md": "90ed06be5da4762f33c42854ae1cdc0b7ed67ee4038d675da7350aba044afa54"
+    "bindings/bridges.md": "e5e07745199aeb532f466eba958f1289f8e4a13dc14e8ab4191c0557b93c8501",
+    "bindings/signal.md": "0d4b61b7244e7a95fd07187914a33e660e64de7564e36d786413727d3793d6be",
+    "bindings/matrix.md": "e82be6d7aa5ef452288efca0cffb9fa14dab6aecca75e145ad788f09f99407dd",
+    "bindings/email.md": "6cadc3db8203b61404ce6f18e7f4b05ecffb05c88970c59f2393237eae3f6a21"
   },
   "draftMarker": "de.wappensc.together.tdsp.probe.draft-5"
 }

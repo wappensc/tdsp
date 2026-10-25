@@ -15,19 +15,20 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
 | Aspect | Binding |
 |---|---|
 | Account | A login yielding an access token and a device, and a persistent crypto store for that device's Megolm and Olm keys |
-| Security (BND-1) | In an encrypted room, inherited from Megolm and cross-signing: the sender is the account whose identity signed the sending device, and the homeserver can neither read a frame nor write one in a member's name (MTX-4, MTX-5). In a plain room, everything rests on the homeserver: it names the sender, and it can read, change and write any frame |
+| Security (BND-1) | In an encrypted room, inherited from Megolm and cross-signing: the sender is the account whose identity signed the sending device, and the homeserver can neither read a frame nor write one in a member's name (MTX-4, MTX-5) — but for a frame of a Megolm session the bridge received before it collected trust information about senders, which it takes from any device (MTX-4), and for a redaction, which Matrix does not encrypt and the homeserver can forge (MTX-5). In a plain room, everything rests on the homeserver: it names the sender, and it can read, change and write any frame |
 | Channel | An existing Matrix room; channel id = the room id |
 | Carrier | One room event of type `de.wappensc.together.tdsp.frame`; in an encrypted room, Megolm-encrypted as `m.room.encrypted` |
 | Envelope | `{"tdsp": 1, "documentId": …, "frame": …}` — no `kind`: the event type carries it |
 | MemberId, sender | The Matrix user id; the event's `sender` (in an encrypted room, the owner of the signed device that sent it, MTX-4) |
 | Delivery id | The event id |
+| Accepted (TRN-6) | The homeserver answered the send with the event's id; it delivers the event to the room's members itself |
 | Inline limit | A frame rides in the event as `frame` when the envelope written around it, escapes included, is at most 32 000 bytes (MTX-7) |
 | Attachment, plain room | A larger frame, up to 4 MiB, is uploaded as a media file; `"attachment": {"url": "mxc://…", "size": …, "sha256": "<64 hex digits>"}` |
 | Attachment, encrypted room | The file is first encrypted as a Matrix `EncryptedFile` v2 (AES-256-CTR, JWK key, SHA-256 of the ciphertext in Matrix's unpadded Base64); `"attachment": {"size": …, "file": {url, key, iv, hashes, v: "v2"}}` travels inside the Megolm-encrypted event |
-| Immutability | A TDSP event carrying `m.relates_to` with `rel_type` `m.replace`, and a redaction of a TDSP event, are integrity violations |
+| Immutability | A TDSP event carrying `m.relates_to` with `rel_type` `m.replace`, and a redaction of a TDSP event, are integrity violations; an event presented again under a delivered event id is compared, before anything is fetched, by its frame's bytes, or by its attachment's `sha256` — for an `EncryptedFile`, its `hashes.sha256` and also its `key` and `iv` (BRG-12) |
 | Rate limit | `M_LIMIT_EXCEEDED` (HTTP 429), the wait in the `Retry-After` header (MTX-6) |
 | Transport profile | Bounds: floor 250 ms, 4 MiB; suggested pacing 1 s / 15 s / 5 s; all estimates ([Appendix B](../SPECIFICATION.md#appendix-b-recommended-values)). The floor is below a homeserver's sustained rate, which comes after a burst and which a floor cannot express ([§3.5](../SPECIFICATION.md#35-transport-profile)); refusals beyond it carry the homeserver's wait (MTX-6) |
-| Frames carried | TDSP 2.0's, and 1.x's, unchanged ([§2.2](../SPECIFICATION.md#22-two-envelopes-two-readers)) |
+| Frames carried | TDSP 2.0's, and 1.x's, unchanged ([§2.2](../SPECIFICATION.md#22-two-wrappers-two-readers)) |
 
 - **MTX-1** · *bridge* — A bridge MUST use the event type
   `de.wappensc.together.tdsp.frame` for every frame.

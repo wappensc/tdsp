@@ -72,13 +72,18 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
   five reasons of [§3.4](../SPECIFICATION.md#34-send-failures), mapping what its messenger said,
   and every refusal that only a person can lift — an identity the account does not
   trust, a device of its own not confirmed, an account signed out, storage full —
-  as `needs-person` (TRN-11).
+  as `needs-person` (TRN-11). Where its messenger reports such a refusal exactly
+  as one that passes, its binding MUST say how the bridge tells them apart, and
+  until it can, the refusal is `unavailable` (SIG-7).
   *Rationale:* only the bridge knows whether its messenger's refusal will pass
   (a rate limit, an outage), will pass once the person acts (a trust decision, a
-  sign-in), or not at all (a size limit, a forbidden sender).
+  sign-in), or not at all (a size limit, a forbidden sender). Where the messenger
+  says the same for a refusal that passes and one that waits for the person,
+  `unavailable` costs retries until the bridge can tell, and `needs-person` would
+  hold every message of a passing outage for the longest back-off (TRN-20).
 - **BRG-9** · *bridge* — A bridge that supports attachments MUST choose between the
-  message body and an attachment by size alone — the frame's, or that of what it
-  writes around the frame, as its binding says (MTX-7) —, MUST state the largest
+  message body and an attachment by size alone (the frame's, or that of what it
+  writes around the frame, as its binding says, MTX-7), MUST state the largest
   frame it carries either way as `bounds.maxBytes`, and MUST refuse a larger frame
   as `too-large`.
   *Rationale:* how a payload travels is the bridge's business; the engine sees only
@@ -108,11 +113,11 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
 - **BRG-11** · *bridge* — A bridge MUST make every delivery received for a document
   available, cumulatively and unfiltered (TRN-7): not filtered by kind, content or
   sender. It MAY drop silently a message its messenger presents again — the same
-  delivery id with the same content; another message under a delivery id it
-  delivered is not that, but BRG-12's. It MAY drop a message whose sender its
-  messenger reports, when the message arrives, as no member of the channel, and
-  MUST then ask its messenger anew for each such message rather than rely on an
-  earlier answer that the sender was not one.
+  delivery id with the same content, compared as BRG-12 says; another message
+  under a delivery id it delivered is not that, but BRG-12's. It MAY drop a
+  message whose sender its messenger reports, when the message arrives, as no
+  member of the channel, and MUST then ask its messenger anew for each such
+  message rather than rely on an earlier answer that the sender was not one.
   *Rationale:* filtering is where messages get lost; de-duplication is the engine's
   job (TRN-8). Content decides what is the same message: a messenger presents a
   message again with the same content, and a bridge that dropped a different one
@@ -123,12 +128,13 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
 - **BRG-12** · *bridge* — A delivered message is immutable. When the messenger
   presents an edit, replacement, redaction or remote deletion of a delivered
   message, or a second message with other content under a delivery id the bridge
-  delivered — in this run, or before a restart under an id it kept across it —
-  compared by the frame's bytes, for an attachment by the hash its
-  envelope names, before anything is fetched — the bridge MUST NOT hand the new
-  content up, MUST NOT treat it as a new message, and MUST record it as an
-  integrity violation for the document where it can attribute it, with the reason
-  the table below gives.
+  delivered (in this run, or before a restart under an id it kept across it), the
+  bridge MUST NOT hand the new content up, MUST NOT treat it as a new message, and
+  MUST record it as an integrity violation for the document where it can
+  attribute it, with the reason the table below gives. It MUST compare content
+  before it fetches anything: a frame in the body by its bytes, a frame in an
+  attachment by the hash its envelope names, and an encrypted file also by its
+  key and iv.
 
   | Reason | What the messenger presented |
   |---|---|
@@ -138,11 +144,12 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
   | `message-replaced` | Another message, with other content, under the delivery id of one delivered |
 
   A binding MAY name reasons of its own for refusals only it defines (a signature
-  that does not verify, say), never another one for the cases above. A message the
-  bridge does not take (BRG-10; MTX-5, an unencrypted edit in an encrypted Matrix
-  room among them) is none of these cases: nothing is recorded for it. A bridge
-  that keeps a delivery id across a restart MUST keep with it what it compares
-  by.
+  that does not verify), never another one for the cases above; whatever else it
+  has a bridge record for a document, it names as a notice (BRG-15, SIG-4). A
+  message the bridge does not take (BRG-10; MTX-5, an unencrypted edit in an
+  encrypted Matrix room among them) is none of these cases: nothing is recorded
+  for it. A bridge that keeps a delivery id across a restart
+  MUST keep with it what it compares by (a hash of key and iv suffices for them).
   *Rationale:* an applied CRDT update cannot be retracted; honouring a change would
   leave participants holding different versions of the same message with nothing
   marking the difference. Every supported messenger allows such edits. One set of
@@ -150,12 +157,15 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
   whichever messenger it came through. A record is evidence of something done to a
   document's channel; a message the bridge does not take records nothing, or
   anyone who can place one where the bridge reads could fill a document's
-  integrity log. A bridge that kept an id across a restart but not what it
-  compared by could not tell a message presented again from a replaced one: it
-  would record every message presented again, or drop a replaced one unrecorded.
-  A bridge that keeps nothing across a restart (BRG-17) compares afresh: a
-  replaced message under an id from before the restart is taken as new, as a
-  message of its own sender.
+  integrity log. An encrypted file is named by the hash of its ciphertext, which
+  says nothing of what it decrypts to: the same ciphertext under another key and
+  iv is another frame, so they belong to what is compared, and a hash of them
+  tells as much without keeping the key. A bridge that kept an id across a restart
+  but not what it compared by could not tell a message presented again from a
+  replaced one: it would record every message presented again, or drop a replaced
+  one unrecorded. A bridge that keeps nothing across a restart (BRG-17) compares
+  afresh: a replaced message under an id from before the restart is taken as new,
+  as a message of its own sender.
 - **BRG-13** · *bridge* — A bridge MUST bound the size of everything it reads before
   it can be verified — envelope bodies, attachment references, invitation blocks,
   header values, participant lists, message bodies handed to a decryption tool —
@@ -176,10 +186,15 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
   *Rationale:* an attachment reference is attacker-chosen data telling the bridge
   what to fetch; following it anywhere else would break BRG-4, and an unbounded
   read or an unchecked file is a resource and integrity attack.
-- **BRG-15** · *bridge* — A bridge MUST make the integrity violations it recorded
-  available to the application, per document.
+- **BRG-15** · *bridge* — A bridge MUST make the integrity violations it recorded,
+  and the notices its binding names, available to the application, per document,
+  as the document's integrity log. Each entry has a `kind`, `violation` or
+  `notice`, and a `reason`; a violation names its `sender`, a notice the
+  `recipient` it concerns instead.
   *Rationale:* a refused message that nobody can see is indistinguishable from one
-  that never came; the application must be able to show it.
+  that never came; the application must be able to show it. A notice is nothing
+  done to the channel, and has no sender to name: what it records, such as a
+  recipient a send skipped (SIG-4), happened to a message the bridge sent.
 - **BRG-16** · *bridge* — A bridge MUST send every message — a frame and an
   invitation alike — as its own messenger account, and nothing else. A request
   that names a sender (`send`'s `sender`, an invitation's `actor`) other than that
@@ -247,10 +262,10 @@ must refuse. Two implementations of the same binding interoperate; two bindings
 never do.
 
 - **BND-1** · *bridge* — A binding MUST state how it meets each requirement of
-  [§15.1](../SPECIFICATION.md#151-what-a-messenger-must-provide) — sender authentication, integrity,
-  confidentiality —, against whom — the provider of the messenger's servers
-  included —, and whether it inherits each from the messenger or adds it
-  itself, and MUST say plainly where it meets one not at all.
+  [§15.1](../SPECIFICATION.md#151-what-a-messenger-must-provide) (sender
+  authentication, integrity, confidentiality), against whom (the provider of the
+  messenger's servers included), and whether it inherits each from the messenger
+  or adds it itself, and MUST say plainly where it meets one not at all.
   *Rationale:* this is where "TDSP inherits its security" becomes checkable per
   messenger; email shows why it must be explicit, since without PGP it meets none
   of them. A property that holds against other people but not against the
@@ -295,7 +310,7 @@ was sent (TRN-3).
   looks like beyond these two fields cannot be known today, so only they decide.
 - **BND-3** · *bridge* — A SHA-256 in a field TDSP defines (an attachment
   reference's `sha256`) MUST be written as 64 lowercase hexadecimal digits in
-  ASCII — the characters `0`–`9` and `a`–`f` —, and a receiving bridge MUST refuse
+  ASCII (the characters `0`–`9` and `a`–`f`), and a receiving bridge MUST refuse
   any other spelling, upper case and the digits other scripts or full-width forms
   write included. A structure a messenger defines itself (Matrix's `EncryptedFile`)
   keeps that messenger's own encoding.
