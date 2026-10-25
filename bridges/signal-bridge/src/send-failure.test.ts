@@ -79,7 +79,7 @@ describe("classifySendFailure", () => {
   });
 
   it("does not wait for the person when another recipient missed it for a reason that passes", () => {
-    for (const other of ["NETWORK_FAILURE", "RATE_LIMIT_FAILURE", "INVALID_PRE_KEY_FAILURE"]) {
+    for (const other of ["NETWORK_FAILURE", "INVALID_PRE_KEY_FAILURE"]) {
       const error = new SignalRpcError(
         "Failed to send message (code -1)",
         -1,
@@ -87,14 +87,71 @@ describe("classifySendFailure", () => {
       );
       expect(classifySendFailure(error).status, other).toBe(502);
     }
-    // Every recipient unregistered: no person can trust anyone into receiving it.
-    expect(
-      classifySendFailure(
-        new SignalRpcError("x", -1, sendResults({ type: "UNREGISTERED_FAILURE" })),
-      ).status,
-    ).toBe(502);
     // A code -1 that is not a send's result, such as a group this account is not in.
     expect(classifySendFailure(new SignalRpcError("x", -1)).status).toBe(502);
+  });
+
+  describe("nobody got it (SIG-4), as signal-cli 0.14.9 raises it: code -1 with the results", () => {
+    const failed = (...results: Record<string, unknown>[]) =>
+      classifySendFailure(
+        new SignalRpcError(
+          "signal-cli JSON-RPC error: Failed to send message (code -1)",
+          -1,
+          sendResults(...results),
+        ),
+      );
+
+    it("is rejected, a 422, when every recipient is not registered: no retry and no person reaches them", () => {
+      expect(failed({ type: "UNREGISTERED_FAILURE" }, { type: "UNREGISTERED_FAILURE" })).toEqual({
+        status: 422,
+      });
+    });
+
+    it("is rate-limited, with the longest wait, when Signal rate-limited one recipient beside the others", () => {
+      expect(
+        failed(
+          { type: "IDENTITY_FAILURE" },
+          { type: "RATE_LIMIT_FAILURE", retryAfterSeconds: 40 },
+          { type: "UNREGISTERED_FAILURE" },
+        ),
+      ).toEqual({ status: 429, retryAfterSeconds: 40 });
+      expect(failed({ type: "UNREGISTERED_FAILURE" }, { type: "RATE_LIMIT_FAILURE" })).toEqual({
+        status: 429,
+      });
+    });
+
+    it("is unavailable when one recipient Signal could not reach is among those not registered", () => {
+      expect(failed({ type: "UNREGISTERED_FAILURE" }, { type: "NETWORK_FAILURE" })).toEqual({
+        status: 502,
+      });
+    });
+
+    it("is never classified as nobody getting it when one recipient got it", () => {
+      // signal-cli raises no error then; were it to, the error's own code decides.
+      expect(failed({ type: "SUCCESS" }, { type: "UNREGISTERED_FAILURE" })).toEqual({
+        status: 502,
+      });
+    });
+  });
+
+  it("takes a proof Signal asks for (a captcha) as a rate limit with its wait: waiting lifts it", () => {
+    // `JsonSendMessageResult` for a `ProofRequiredException`: `RATE_LIMIT_FAILURE`, the challenge's
+    // `token`, and the server's `Retry-After`; code -5 when every recipient got that.
+    const proofRequired = {
+      recipientAddress: { uuid: "aci-bob", number: null },
+      type: "RATE_LIMIT_FAILURE",
+      token: "challenge-token",
+      retryAfterSeconds: 86400,
+    };
+    expect(
+      classifySendFailure(
+        new SignalRpcError(
+          "signal-cli JSON-RPC error: Failed to send message due to rate limiting (code -5)",
+          -5,
+          sendResults(proofRequired),
+        ),
+      ),
+    ).toEqual({ status: 429, retryAfterSeconds: 86400 });
   });
 
   it("does not take signal-cli's 'Specified account does not exist' for an unlinked device: it also means an account it could not load for now", () => {

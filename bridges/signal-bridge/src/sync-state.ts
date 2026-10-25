@@ -180,7 +180,8 @@ export interface SyncStateOptions {
  * `update` may be an attachment, exactly one attachment must accompany it, and what is read
  * is bounded. A failure of the RPC is tried again a couple of times (the file is already
  * on disk, so a real failure is rare); a wrong size or hash is final. Whatever is dropped
- * is a lost message, which loss detection treats like any other.
+ * is a lost message, which loss detection treats like any other. The files an attachment
+ * envelope's message brought are deleted whatever becomes of it (SIG-1).
  */
 export interface SyncState {
   pollOnce(): Promise<void>;
@@ -199,11 +200,44 @@ export function createSyncState(
   const readTimeoutMs = options.readTimeoutMs ?? 60_000;
   const retention = options.retention ?? DEFAULT_DELIVERY_RETENTION;
   const deliveries = new Map<DocumentId, Delivery[]>();
-  /** `"sender:timestamp"` (the same shape as a `Delivery.id`) -> `documentId`, populated as an `update` envelope is recorded — lets a later edit/remote-delete of the same message attribute itself to the right document's own integrity log. */
+  /** `"sender:timestamp"` (the same shape as a `Delivery.id`) -> `documentId`, set as a message is delivered: an edit or remote-delete is recorded only against a message in here, in its document's integrity log (BRG-12). */
   const recordedIdDocument = new Map<string, DocumentId>();
   const violations = new Map<DocumentId, IntegrityEntry[]>();
-  /** Every bound document's message by delivery id: the SHA-256 of its text, and its document. */
+  /**
+   * Every message delivered, by delivery id: the SHA-256 of its text, and its document. Only a
+   * delivered one: BRG-12 records another message under the id of one delivered, and a message
+   * the bridge did not deliver has no content another could replace.
+   */
   const firstSeen = new Map<string, { readonly digest: string; readonly documentId: DocumentId }>();
+  /**
+   * An attachment message by delivery id while it is read back, not delivered yet: its digest and
+   * document, and how many messages with other content came under its id meanwhile. Those are
+   * recorded as replacing it once it is delivered (BRG-12), and none is taken in the meantime.
+   */
+  const pending = new Map<
+    string,
+    {
+      readonly digest: string;
+      readonly documentId: DocumentId;
+      readonly sender: string;
+      others: number;
+    }
+  >();
+
+  /** Ends the wait of the attachment message under `id`: delivered, or not. */
+  function settlePending(id: string, delivered: boolean): void {
+    const entry = pending.get(id);
+    pending.delete(id);
+    if (!delivered || entry === undefined) {
+      return;
+    }
+    firstSeen.set(id, { digest: entry.digest, documentId: entry.documentId });
+    if (isBound(entry.documentId)) {
+      for (let other = 0; other < entry.others; other += 1) {
+        reject(entry.documentId, id, entry.sender, "message-replaced");
+      }
+    }
+  }
 
   function reject(documentId: string, id: string, sender: string, reason: IntegrityReason): void {
     const list = violations.get(documentId) ?? [];
@@ -264,6 +298,13 @@ export function createSyncState(
     return options.attachmentsDir === undefined ? undefined : join(options.attachmentsDir, id);
   }
 
+  /**
+   * How many messages being taken now hold each attachment file. `signal-cli` names the file by the
+   * attachment's remote id (`AttachmentStore`, 0.14.9), so a message presented again names the same
+   * file as the one being read back, and deleting it then would lose a frame on its way in.
+   */
+  const holders = new Map<string, number>();
+
   /** Best effort: the file holds a plaintext frame, and `signal-cli` never removes it itself. */
   function deleteAttachmentFile(id: string): void {
     const file = attachmentFile(id);
@@ -274,6 +315,50 @@ export function createSyncState(
       rmSync(file, { force: true });
     } catch (error) {
       logger.warn("attachment-file-not-deleted", { error });
+    }
+  }
+
+  /**
+   * Deletes the files `incoming` brought that no message being taken now still holds (SIG-1). Only
+   * an id that names a file inside the attachments directory is touched (`isPlainAttachmentId`).
+   */
+  function discardAttachments(incoming: IncomingGroupMessage): void {
+    for (const { id } of incoming.attachments) {
+      if (isPlainAttachmentId(id) && !holders.has(id)) {
+        deleteAttachmentFile(id);
+      }
+    }
+  }
+
+  /**
+   * Takes an attachment envelope, and deletes every file its message brought once done with it,
+   * whatever became of it (SIG-1): delivered, refused, or not read back. A frame refused or never
+   * read is a lost message, which loss detection treats like any other; a plaintext copy of it
+   * kept on disk serves nothing.
+   */
+  async function takeAttachment(
+    incoming: IncomingGroupMessage,
+    envelope: Envelope,
+    ref: AttachmentRef,
+  ): Promise<void> {
+    const held = incoming.attachments.map(({ id }) => id).filter(isPlainAttachmentId);
+    for (const id of held) {
+      holders.set(id, (holders.get(id) ?? 0) + 1);
+    }
+    try {
+      await processAttachment(incoming, envelope, ref);
+    } finally {
+      // Not delivered unless `processAttachment` settled it so.
+      settlePending(`${incoming.sender}:${incoming.timestamp}`, false);
+      for (const id of held) {
+        const left = (holders.get(id) ?? 1) - 1;
+        if (left > 0) {
+          holders.set(id, left);
+        } else {
+          holders.delete(id);
+        }
+      }
+      discardAttachments(incoming);
     }
   }
 
@@ -322,7 +407,6 @@ export function createSyncState(
       try {
         if (statSync(file).size > ATTACHMENT_FRAME_LIMIT) {
           logger.warn("attachment-rejected", { reason: "too-large" });
-          deleteAttachmentFile(attached.id);
           return;
         }
       } catch {
@@ -342,14 +426,13 @@ export function createSyncState(
         envelope,
         frameTextOf(checkAttachment(ref, bytes)),
       );
+      settlePending(`${incoming.sender}:${incoming.timestamp}`, true);
     } catch (error) {
       if (error instanceof AttachmentRejectedError) {
         logger.warn("attachment-rejected", { reason: error.reason });
       } else {
         throw error;
       }
-    } finally {
-      deleteAttachmentFile(attached.id);
     }
   }
 
@@ -363,14 +446,11 @@ export function createSyncState(
       const editOrDelete = parseIncomingEditOrDelete(params, ownAci);
       if (editOrDelete) {
         const targetId = `${editOrDelete.sender}:${editOrDelete.targetTimestamp}`;
-        // Prefer the ground truth of what this bridge itself recorded for
-        // the targeted message over whatever documentId a tampered edit's
-        // own text claims — the latter is only a fallback for a message
-        // this bridge never saw in the first place.
-        let documentId = recordedIdDocument.get(targetId);
-        if (documentId === undefined && editOrDelete.editedMessage !== undefined) {
-          documentId = parseEnvelope(editOrDelete.editedMessage)?.documentId;
-        }
+        // Only an edit or a delete of a message this bridge delivered is recorded, against that
+        // message's document (BRG-12). One of a message it never delivered changed nothing it
+        // handed up, whatever document the edit's text names; recording it would let anyone in a
+        // bound group fill that document's integrity log.
+        const documentId = recordedIdDocument.get(targetId);
         const reason: IntegrityReason =
           editOrDelete.kind === "edit" ? "message-edited" : "message-remote-deleted";
         // An edit or a delete from another group is not this document's (BRG-10).
@@ -394,28 +474,48 @@ export function createSyncState(
       return;
     }
     const envelope = parseEnvelope(incoming.message);
-    if (!envelope || !isBoundTo(envelope.documentId, incoming.groupId)) {
+    // An envelope with neither a frame nor an attachment is no protocol message: nothing is
+    // delivered or recorded from it (BRG-10).
+    if (
+      !envelope ||
+      (envelope.frame === undefined && envelope.attachment === undefined) ||
+      !isBoundTo(envelope.documentId, incoming.groupId)
+    ) {
       return;
     }
     // Signal identifies a message by its author and sent timestamp, which is its delivery id. The
-    // same message again is nothing new (BRG-11); another one under that id is never delivered and
-    // is recorded against the first one's document (BRG-12).
+    // same message again is nothing new (BRG-11); another one under the id of one delivered is
+    // never delivered and is recorded against the first one's document (BRG-12).
     const id = `${incoming.sender}:${incoming.timestamp}`;
     const digest = createHash("sha256").update(incoming.message, "utf8").digest("hex");
     const first = firstSeen.get(id);
-    if (first !== undefined) {
-      if (first.digest !== digest && isBound(first.documentId)) {
+    const reading = pending.get(id);
+    if (first !== undefined || reading !== undefined) {
+      if (first !== undefined && first.digest !== digest && isBound(first.documentId)) {
         reject(first.documentId, id, incoming.sender, "message-replaced");
+      }
+      if (reading !== undefined && reading.digest !== digest) {
+        reading.others += 1;
+      }
+      // Not taken, so whatever file it brought is of no use either (SIG-1).
+      if (envelope.attachment !== undefined) {
+        discardAttachments(incoming);
       }
       return;
     }
-    firstSeen.set(id, { digest, documentId: envelope.documentId });
     if (typeof envelope.frame === "string") {
+      firstSeen.set(id, { digest, documentId: envelope.documentId });
       processEnvelope(incoming.sender, incoming.timestamp, envelope, envelope.frame);
       return;
     }
     if (envelope.attachment !== undefined) {
-      processAttachment(incoming, envelope, envelope.attachment).catch((error: unknown) => {
+      pending.set(id, {
+        digest,
+        documentId: envelope.documentId,
+        sender: incoming.sender,
+        others: 0,
+      });
+      takeAttachment(incoming, envelope, envelope.attachment).catch((error: unknown) => {
         logger.warn("attachment-failed", { error });
       });
     }

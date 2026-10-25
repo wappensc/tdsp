@@ -320,6 +320,17 @@ describe("signal-bridge HTTP API", () => {
         )
       ).status,
     ).toBe(409);
+    // Nobody got it, every recipient not registered: no retry reaches anyone (SIG-4), so the
+    // adapter reads `rejected`.
+    expect(
+      (
+        await sendFailingWith(
+          new SignalRpcError("signal-cli JSON-RPC error: Failed to send message (code -1)", -1, {
+            response: { timestamp: 1, results: [{ type: "UNREGISTERED_FAILURE" }] },
+          }),
+        )
+      ).status,
+    ).toBe(422);
     expect((await sendFailingWith(new Error("signal-cli daemon socket closed"))).status).toBe(502);
     // A frame over what the bridge carries in one message can never be retried into fitting.
     expect((await sendFailingWith(new FrameTooLargeError(5_000_000))).status).toBe(413);
