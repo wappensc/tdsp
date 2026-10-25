@@ -14,6 +14,7 @@ import {
   type GroupReader,
   type GroupSummary,
   type GroupWriter,
+  type SentMessage,
 } from "./server.ts";
 import { SignalRpcError } from "./signal-daemon.ts";
 import type { IntegrityEntry, SyncState } from "./sync-state.ts";
@@ -64,27 +65,34 @@ class FakeGroups implements GroupReader {
   }
 }
 
-interface SentMessage {
+interface Recorded {
   readonly groupId: string;
   readonly documentId: string;
   readonly envelope: unknown;
 }
 
 class FakeWriter implements GroupWriter {
-  sent: SentMessage[] = [];
+  sent: Recorded[] = [];
+  /** The recipients each send reports as untrusted and as reached (SIG-4). */
+  untrusted: string[] = [];
+  reached: string[] = [];
   #nextTimestamp = 1;
 
-  async sendEdit(groupId: string, documentId: string, payload: string): Promise<string> {
+  async sendEdit(groupId: string, documentId: string, payload: string): Promise<SentMessage> {
     return this.#record(groupId, documentId, { kind: "edit", payload });
   }
 
-  async sendInviteMessage(groupId: string, text: string): Promise<string> {
+  async sendInviteMessage(groupId: string, text: string): Promise<SentMessage> {
     return this.#record(groupId, "(invite)", { kind: "invite", text });
   }
 
-  #record(groupId: string, documentId: string, envelope: unknown): string {
+  #record(groupId: string, documentId: string, envelope: unknown): SentMessage {
     this.sent.push({ groupId, documentId, envelope });
-    return `fake-account:${this.#nextTimestamp++}`;
+    return {
+      deliveryId: `fake-account:${this.#nextTimestamp++}`,
+      untrusted: [...this.untrusted],
+      reached: [...this.reached],
+    };
   }
 }
 
@@ -106,6 +114,12 @@ class FakeSync implements SyncState {
 
   getIntegrityLog(documentId: string) {
     return this.integrityLog.get(documentId) ?? [];
+  }
+
+  sendResults: { documentId: string; id: string; untrusted: readonly string[] }[] = [];
+
+  noteSendResult(documentId: string, id: string, untrusted: readonly string[]): void {
+    this.sendResults.push({ documentId, id, untrusted });
   }
 }
 
@@ -280,6 +294,20 @@ describe("signal-bridge HTTP API", () => {
     expect(body.deliveryId).toBeTruthy();
     expect(writer.sent).toHaveLength(1);
     expect(writer.sent[0]?.groupId).toBe("g1");
+  });
+
+  it("POST /channels/:id/send hands the recipients the send skipped as untrusted to the integrity log (SIG-4)", async () => {
+    await bindDocument("doc-1");
+    writer.untrusted = ["bob-aci"];
+    const response = await fetch(`${baseUrl}/channels/doc-1/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sender: "alice", payload: "aGVsbG8=" }),
+    });
+    const { deliveryId } = (await response.json()) as { deliveryId: string };
+    expect(sync.sendResults).toEqual([
+      { documentId: "doc-1", id: deliveryId, untrusted: ["bob-aci"] },
+    ]);
   });
 
   it("GET /transport-profile serves the Signal profile", async () => {

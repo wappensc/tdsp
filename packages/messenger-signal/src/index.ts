@@ -17,7 +17,7 @@ import {
   type TransportProfile,
   transportSendErrorFromHttp,
 } from "@tdsp/messenger-port";
-import type { IntegrityEntry } from "./integrity.ts";
+import { type IntegrityEntry, readIntegrityLog } from "./integrity.ts";
 
 /**
  * The browser-side half of the Signal adapter — a thin `fetch()` wrapper
@@ -235,7 +235,7 @@ export class SignalMessengerPort implements MessengerPort {
         `integrityLog(${documentId}) failed: ${response.status} ${await response.text()}`,
       );
     }
-    return (await response.json()) as readonly IntegrityEntry[];
+    return readIntegrityLog(await response.json());
   }
 
   /** `POST /channels/:documentId/send` — `payload` — the frame's JSON text — rides opaque, same rule as Matrix's own `send()`. */
@@ -319,5 +319,7 @@ export {
   type IntegrityEntry,
   type IntegrityReason,
   type IntegritySeverity,
+  type NoticeReason,
+  readIntegrityLog,
   summarizeSignalIntegrity,
 } from "./integrity.ts";

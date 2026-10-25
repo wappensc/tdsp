@@ -44,6 +44,7 @@ async function sendFrameWith(...results: Record<string, unknown>[]): Promise<unk
   rpc.results = results;
   return createGroupWriter(rpc, auth)
     .sendEdit("g1", "doc-1", '{"tdsp":1}')
+    .then((sent) => sent.deliveryId)
     .catch((error: unknown) => error);
 }
 
@@ -136,9 +137,9 @@ describe("a frame that did not reach every member of the group", () => {
   it("does not hold back an invitation that some members missed: people read it, and a retry would show it twice", async () => {
     const rpc = new FakeRpc();
     rpc.results = [result("SUCCESS"), result("RATE_LIMIT_FAILURE", 30)];
-    await expect(createGroupWriter(rpc, auth).sendInviteMessage("g1", "hello")).resolves.toBe(
-      "alice-aci:1700000000001",
-    );
+    await expect(
+      createGroupWriter(rpc, auth).sendInviteMessage("g1", "hello"),
+    ).resolves.toMatchObject({ deliveryId: "alice-aci:1700000000001" });
   });
 });
 
@@ -155,5 +156,41 @@ describe("a frame the writer is asked to send without a linked account", () => {
       .sendEdit("g1", "doc-1", '{"tdsp":1}')
       .catch((error: unknown) => error);
     expect(classifySendFailure(refusal)).toEqual({ status: 409 });
+  });
+});
+
+describe("the recipients a sent message skipped as identities to trust (SIG-4)", () => {
+  const sentWith = (...results: Record<string, unknown>[]) => {
+    const rpc = new FakeRpc();
+    rpc.results = results;
+    return createGroupWriter(rpc, auth).sendEdit("g1", "doc-1", '{"tdsp":1}');
+  };
+
+  it("names each untrusted identity by its ACI, and who the message reached", async () => {
+    await expect(
+      sentWith(result("SUCCESS"), result("IDENTITY_FAILURE"), result("UNREGISTERED_FAILURE")),
+    ).resolves.toEqual({
+      deliveryId: "alice-aci:1700000000001",
+      untrusted: ["aci-identity_failure"],
+      reached: ["aci-success"],
+    });
+  });
+
+  it("takes a proof Signal requires, which signal-cli reports as an identity failure with a token, for no untrusted identity", async () => {
+    const proof = { ...result("IDENTITY_FAILURE"), token: "captcha-token" };
+    await expect(sentWith(result("SUCCESS"), proof)).resolves.toMatchObject({ untrusted: [] });
+  });
+
+  it("names a recipient without an ACI by its number, and skips a result that names nobody", async () => {
+    const byNumber = {
+      recipientAddress: { uuid: null, number: "+15550000002" },
+      type: "IDENTITY_FAILURE",
+    };
+    const nobody = { recipientAddress: null, type: "IDENTITY_FAILURE" };
+    await expect(
+      sentWith(result("SUCCESS"), byNumber, nobody, null as never),
+    ).resolves.toMatchObject({
+      untrusted: ["+15550000002"],
+    });
   });
 });

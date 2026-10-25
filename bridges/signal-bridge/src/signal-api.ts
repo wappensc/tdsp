@@ -93,6 +93,48 @@ export function missedRecipients(results: unknown): MissedRecipients {
 }
 
 /**
+ * Who a group message reached and who it skipped as an identity this account does not trust, by
+ * `signal-cli`'s result per recipient (`JsonSendMessageResult` in its 0.14.9 source): each names
+ * its recipient as `recipientAddress`, by ACI (`uuid`) where it has one, else by number. A result
+ * `IDENTITY_FAILURE` with a `token` is a proof Signal requires, which that type stands for too, not
+ * an untrusted identity.
+ */
+export function recipientsByResult(results: unknown): {
+  readonly untrusted: readonly string[];
+  readonly reached: readonly string[];
+} {
+  const untrusted: string[] = [];
+  const reached: string[] = [];
+  if (Array.isArray(results)) {
+    for (const result of results) {
+      if (typeof result !== "object" || result === null) {
+        continue;
+      }
+      const { type, token, recipientAddress } = result as {
+        type?: unknown;
+        token?: unknown;
+        recipientAddress?: { uuid?: unknown; number?: unknown } | null;
+      };
+      const recipient =
+        typeof recipientAddress?.uuid === "string"
+          ? recipientAddress.uuid
+          : typeof recipientAddress?.number === "string"
+            ? recipientAddress.number
+            : undefined;
+      if (recipient === undefined) {
+        continue;
+      }
+      if (type === "SUCCESS") {
+        reached.push(recipient);
+      } else if (type === "IDENTITY_FAILURE" && (token === undefined || token === null)) {
+        untrusted.push(recipient);
+      }
+    }
+  }
+  return { untrusted, reached };
+}
+
+/**
  * The longest `retryAfterSeconds` among `signal-cli`'s results per recipient, if any states a
  * usable one: the wait after which a retry can reach every recipient Signal rate-limited.
  */

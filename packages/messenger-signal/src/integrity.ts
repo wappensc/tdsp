@@ -18,16 +18,69 @@ export type { IntegritySeverity };
  */
 export type IntegrityReason = "message-edited" | "message-remote-deleted" | "message-replaced";
 
-export interface IntegrityEntry {
-  readonly id: string;
-  readonly sender: string;
-  readonly reason: IntegrityReason;
+/** What a notice records (BRG-15): a recipient a send skipped as an identity to trust (SIG-4). */
+export type NoticeReason = "recipient-untrusted";
+
+/**
+ * An entry of a document's integrity log (BRG-15): a violation, naming the message's id and its
+ * sender, or a notice, naming the id of a message this bridge sent and the recipient it concerns.
+ */
+export type IntegrityEntry =
+  | {
+      readonly kind: "violation";
+      readonly id: string;
+      readonly sender: string;
+      readonly reason: IntegrityReason;
+    }
+  | {
+      readonly kind: "notice";
+      readonly id: string;
+      readonly recipient: string;
+      readonly reason: NoticeReason;
+    };
+
+/**
+ * The entries of `GET /channels/:documentId/integrity-log` as the bridge serves them. An entry
+ * without `kind`, from a bridge of TDSP 1.x, is a violation (the local bridge interface); what is
+ * not an object is no entry.
+ */
+export function readIntegrityLog(raw: unknown): readonly IntegrityEntry[] {
+  if (!Array.isArray(raw)) {
+    throw new Error("integrityLog: the bridge answered something that is not a list of entries");
+  }
+  return raw
+    .filter(
+      (entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null,
+    )
+    .map(
+      (entry): IntegrityEntry =>
+        entry.kind === "notice"
+          ? {
+              kind: "notice",
+              id: String(entry.id ?? ""),
+              recipient: String(entry.recipient ?? ""),
+              reason: entry.reason as NoticeReason,
+            }
+          : {
+              kind: "violation",
+              id: String(entry.id ?? ""),
+              sender: String(entry.sender ?? ""),
+              reason: entry.reason as IntegrityReason,
+            },
+    );
 }
 
 export function describeSignalIntegrityEntry(entry: IntegrityEntry): {
   readonly severity: IntegritySeverity;
   readonly text: string;
 } {
+  if (entry.kind === "notice") {
+    const whom = entry.recipient || "a member";
+    return {
+      severity: "warning",
+      text: `A message of yours did not reach ${whom}: your account does not trust their identity in Signal (their safety number changed, say). Verify it with them in Signal; until then they get nothing you write here.`,
+    };
+  }
   const who = entry.sender || "an unknown sender";
   switch (entry.reason) {
     case "message-edited":
@@ -52,10 +105,17 @@ export function describeSignalIntegrityEntry(entry: IntegrityEntry): {
 export function summarizeSignalIntegrity(
   entries: readonly IntegrityEntry[],
 ): { readonly severity: IntegritySeverity; readonly text: string } | null {
-  if (entries.length === 0) {
-    return null;
+  const violations = entries.filter((entry) => entry.kind === "violation").length;
+  const notices = entries.length - violations;
+  if (violations === 0) {
+    return notices === 0
+      ? null
+      : {
+          severity: "warning",
+          text: `${notices} member${notices === 1 ? " was" : "s were"} skipped by a message of yours: an identity your account does not trust yet.`,
+        };
   }
-  const rejected = `${entries.length} incoming message${entries.length === 1 ? " was" : "s were"} rejected instead of applied`;
+  const rejected = `${violations} incoming message${violations === 1 ? " was" : "s were"} rejected instead of applied`;
   return {
     severity: "alert",
     text: `${rejected} — every reason this bridge currently detects looks like an attempt to break this document's rules.`,

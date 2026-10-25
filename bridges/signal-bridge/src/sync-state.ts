@@ -40,11 +40,26 @@ const RECEIVE_NOTIFICATION_METHOD = "receive";
  */
 export type IntegrityReason = "message-edited" | "message-remote-deleted" | "message-replaced";
 
-export interface IntegrityEntry {
-  readonly id: string;
-  readonly sender: string;
-  readonly reason: IntegrityReason;
-}
+/** What a notice records (BRG-15): a recipient a send skipped as an identity to trust (SIG-4). */
+export type NoticeReason = "recipient-untrusted";
+
+/**
+ * An entry of a document's integrity log (BRG-15): a violation, naming the message's id and its
+ * sender, or a notice, naming the id of a message this bridge sent and the recipient it concerns.
+ */
+export type IntegrityEntry =
+  | {
+      readonly kind: "violation";
+      readonly id: string;
+      readonly sender: string;
+      readonly reason: IntegrityReason;
+    }
+  | {
+      readonly kind: "notice";
+      readonly id: string;
+      readonly recipient: string;
+      readonly reason: NoticeReason;
+    };
 
 /**
  * What a protocol message carries: the frame inline (`frame`, its JSON text as a string), or — for a frame too large
@@ -186,8 +201,19 @@ export interface SyncStateOptions {
 export interface SyncState {
   pollOnce(): Promise<void>;
   getDeliveries(documentId: DocumentId): readonly Delivery[];
-  /** bindings/bridges.md BRG-12, BRG-15 — every edit/remote-delete this bridge caught and refused to apply for `documentId`, oldest first. */
+  /** bindings/bridges.md BRG-12, BRG-15 — every edit/remote-delete this bridge caught and refused to apply for `documentId`, and every notice of a send, oldest first. */
   getIntegrityLog(documentId: DocumentId): readonly IntegrityEntry[];
+  /**
+   * Records, for a message this bridge sent for `documentId` (`id`), the recipients it skipped as
+   * identities this account does not trust, and forgets those it reached (SIG-4): a recipient is
+   * recorded once for as long as its identity stays untrusted, not once per message.
+   */
+  noteSendResult(
+    documentId: DocumentId,
+    id: string,
+    untrusted: readonly string[],
+    reached: readonly string[],
+  ): void;
 }
 
 export function createSyncState(
@@ -239,9 +265,12 @@ export function createSyncState(
     }
   }
 
+  /** The recipients recorded as untrusted per document, until a send reaches them again (SIG-4). */
+  const perDocumentUntrusted = new Map<DocumentId, Set<string>>();
+
   function reject(documentId: string, id: string, sender: string, reason: IntegrityReason): void {
     const list = violations.get(documentId) ?? [];
-    list.push({ id, sender, reason });
+    list.push({ kind: "violation", id, sender, reason });
     violations.set(documentId, list);
     logger.warn("integrity-violation", { documentId, id, reason });
   }
@@ -531,6 +560,23 @@ export function createSyncState(
     },
     getIntegrityLog(documentId: DocumentId): readonly IntegrityEntry[] {
       return violations.get(documentId) ?? [];
+    },
+    noteSendResult(documentId, id, untrusted, reached) {
+      const recorded = perDocumentUntrusted.get(documentId) ?? new Set<string>();
+      perDocumentUntrusted.set(documentId, recorded);
+      for (const recipient of reached) {
+        recorded.delete(recipient);
+      }
+      for (const recipient of untrusted) {
+        if (recorded.has(recipient)) {
+          continue;
+        }
+        recorded.add(recipient);
+        const list = violations.get(documentId) ?? [];
+        list.push({ kind: "notice", id, recipient, reason: "recipient-untrusted" });
+        violations.set(documentId, list);
+        logger.warn("recipient-untrusted", { documentId, id, recipient });
+      }
     },
   };
 }

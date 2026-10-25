@@ -172,7 +172,7 @@ describe("a receiver's handling of a messenger-native edit or withdrawal", () =>
     );
     expect(sync.getDeliveries("doc-1")).toHaveLength(1); // only the original — the edit was never applied
     expect(sync.getIntegrityLog("doc-1")).toEqual([
-      { id: "alice:1000", sender: ALICE, reason: "message-edited" },
+      { kind: "violation", id: "alice:1000", sender: ALICE, reason: "message-edited" },
     ]);
   });
 
@@ -191,7 +191,7 @@ describe("a receiver's handling of a messenger-native edit or withdrawal", () =>
     );
     expect(sync.getDeliveries("doc-1").map((delivery) => delivery.payload)).toEqual(["AQID"]);
     expect(sync.getIntegrityLog("doc-1")).toEqual([
-      { id: "alice:1000", sender: ALICE, reason: "message-replaced" },
+      { kind: "violation", id: "alice:1000", sender: ALICE, reason: "message-replaced" },
     ]);
   });
 
@@ -244,7 +244,7 @@ describe("a receiver's handling of a messenger-native edit or withdrawal", () =>
     rpc.emit("receive", remoteDeleteEnvelope(ALICE, 1000, 3000));
     expect(sync.getDeliveries("doc-1")).toHaveLength(1); // the earlier, already-applied delivery stands
     expect(sync.getIntegrityLog("doc-1")).toEqual([
-      { id: "alice:1000", sender: ALICE, reason: "message-remote-deleted" },
+      { kind: "violation", id: "alice:1000", sender: ALICE, reason: "message-remote-deleted" },
     ]);
   });
 
@@ -322,7 +322,7 @@ describe("what another device of the bridge's own account sent (SIG-3)", () => {
     rpc.emit("receive", transcriptEdit(ALICE, 1000, frameText("BBBB")));
     expect(sync.getDeliveries("doc-1").map((d) => d.payload)).toEqual(["AQID"]);
     expect(sync.getIntegrityLog("doc-1")).toEqual([
-      { id: "alice:1000", sender: ALICE, reason: "message-edited" },
+      { kind: "violation", id: "alice:1000", sender: ALICE, reason: "message-edited" },
     ]);
   });
 
@@ -333,7 +333,7 @@ describe("what another device of the bridge's own account sent (SIG-3)", () => {
     rpc.emit("receive", transcriptRemoteDelete(ALICE, 1000));
     expect(sync.getDeliveries("doc-1")).toHaveLength(1);
     expect(sync.getIntegrityLog("doc-1")).toEqual([
-      { id: "alice:1000", sender: ALICE, reason: "message-remote-deleted" },
+      { kind: "violation", id: "alice:1000", sender: ALICE, reason: "message-remote-deleted" },
     ]);
   });
 

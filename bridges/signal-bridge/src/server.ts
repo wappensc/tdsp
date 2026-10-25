@@ -27,7 +27,12 @@ import {
   nobodyGotIt,
   PartialSendError,
 } from "./send-failure.ts";
-import { listGroups as listGroupsApi, type SignalRpc, sendGroupMessage } from "./signal-api.ts";
+import {
+  listGroups as listGroupsApi,
+  recipientsByResult,
+  type SignalRpc,
+  sendGroupMessage,
+} from "./signal-api.ts";
 import { createSyncState, type SyncState } from "./sync-state.ts";
 import { SIGNAL_PROFILE } from "./transport-profile.ts";
 
@@ -118,6 +123,16 @@ export function createGroupReader(rpc: SignalRpc, auth: AuthStatusSource): Group
   };
 }
 
+/**
+ * A message this bridge sent: its `DeliveryId`, and the recipients it reached and those it skipped
+ * as identities the account does not trust (SIG-4), which the integrity log records.
+ */
+export interface SentMessage {
+  readonly deliveryId: string;
+  readonly untrusted: readonly string[];
+  readonly reached: readonly string[];
+}
+
 export interface GroupWriter {
   /**
    * Sends `{tdsp:1, kind:"frame", documentId, frame}` — `frame` the frame's JSON text as a
@@ -128,7 +143,7 @@ export interface GroupWriter {
    * envelope carries `attachment:{size, sha256}` in place of `frame`
    *.
    */
-  sendEdit(groupId: string, documentId: string, payload: string): Promise<string>;
+  sendEdit(groupId: string, documentId: string, payload: string): Promise<SentMessage>;
   /**
    * Sends an invitation (SPECIFICATION.md §11): `text` as an ordinary group
    * text message — deliberately **not** wrapped in the `{tdsp:1,...}`
@@ -139,7 +154,7 @@ export interface GroupWriter {
    * human chat message... not our own envelope" case), so this needs no
    * receive-side change at all.
    */
-  sendInviteMessage(groupId: string, text: string): Promise<string>;
+  sendInviteMessage(groupId: string, text: string): Promise<SentMessage>;
 }
 
 /**
@@ -159,7 +174,7 @@ export function createGroupWriter(rpc: SignalRpc, auth: AuthStatusSource): Group
     groupId: string,
     envelope: Record<string, unknown>,
     attachments?: readonly string[],
-  ): Promise<string> {
+  ): Promise<SentMessage> {
     const { timestamp, missed, results } = await sendGroupMessage(
       rpc,
       requirePhoneNumber(auth),
@@ -173,7 +188,7 @@ export function createGroupWriter(rpc: SignalRpc, auth: AuthStatusSource): Group
     if (missed.rateLimited > 0 || missed.unreachable > 0) {
       throw new PartialSendError(missed);
     }
-    return `${requireAccountId(auth)}:${timestamp}`;
+    return { deliveryId: `${requireAccountId(auth)}:${timestamp}`, ...recipientsByResult(results) };
   }
 
   return {
@@ -205,7 +220,10 @@ export function createGroupWriter(rpc: SignalRpc, auth: AuthStatusSource): Group
       );
       // Sent once one member got it (SIG-4), so not when none did.
       throwIfNobodyGotIt(results);
-      return `${requireAccountId(auth)}:${timestamp}`;
+      return {
+        deliveryId: `${requireAccountId(auth)}:${timestamp}`,
+        ...recipientsByResult(results),
+      };
     },
   };
 }
@@ -526,7 +544,10 @@ export function createServer(deps: ServerDependencies): Server {
             sendJson(res, 404, { error: `${documentId} is not bound to a group yet` });
             return;
           }
-          const deliveryId = await deps.writer.sendEdit(bound.groupId, documentId, body.payload);
+          const sent = await deps.writer.sendEdit(bound.groupId, documentId, body.payload);
+          // A recipient skipped as an identity to trust is the application's to show (SIG-4).
+          deps.sync.noteSendResult(documentId, sent.deliveryId, sent.untrusted, sent.reached);
+          const deliveryId = sent.deliveryId;
           sendJson(res, 200, { deliveryId });
         })
         .catch((error: unknown) => sendSendFailure(res, error));
@@ -596,7 +617,9 @@ export function createServer(deps: ServerDependencies): Server {
             });
             return;
           }
-          const deliveryId = await deps.writer.sendInviteMessage(bound.groupId, body.text);
+          const sent = await deps.writer.sendInviteMessage(bound.groupId, body.text);
+          deps.sync.noteSendResult(documentId, sent.deliveryId, sent.untrusted, sent.reached);
+          const deliveryId = sent.deliveryId;
           sendJson(res, 200, { deliveryId });
         })
         .catch((error: unknown) => {
