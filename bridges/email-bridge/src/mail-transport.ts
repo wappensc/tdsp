@@ -343,7 +343,14 @@ async function fetchDocumentMessages(
         });
         continue;
       }
-      const parsed = await simpleParser(message.source);
+      let parsed: Awaited<ReturnType<typeof simpleParser>>;
+      try {
+        parsed = await simpleParser(message.source);
+      } catch {
+        // A mail the parser cannot read is none the bridge could take, and must not keep it from
+        // the thread's others: the whole fetch would fail on every poll (BRG-18).
+        continue;
+      }
       messages.push({
         messageId: parsed.messageId ?? "",
         from: parsed.from?.value[0]?.address ?? "",

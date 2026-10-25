@@ -523,7 +523,17 @@ export function createSyncState(
         pendingAttachments.splice(pendingAttachments.indexOf(pending), 1);
         continue;
       }
-      const frame = await fetchAttachment(pending.attachment);
+      let frame: string | "retry" | null;
+      try {
+        frame = await fetchAttachment(pending.attachment);
+      } catch (error) {
+        // One attachment that cannot be read must not stop every later poll before its events
+        // (BRG-18): it is given up on.
+        logger.warn("attachment-unreadable", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        frame = null;
+      }
       if (frame === "retry") {
         pending.attempts += 1;
         if (pending.attempts >= MAX_ATTACHMENT_ATTEMPTS) {
@@ -597,9 +607,19 @@ export function createSyncState(
           });
           continue;
         }
-        const logical = await resolveLogicalEvent(event, roomId);
-        if (logical) {
-          await processLogicalEvent(logical, roomId, bindStore);
+        // One event the bridge cannot read must not keep it from the others: this round's
+        // position has moved on already, so the events after it would be lost (BRG-18).
+        try {
+          const logical = await resolveLogicalEvent(event, roomId);
+          if (logical) {
+            await processLogicalEvent(logical, roomId, bindStore);
+          }
+        } catch (error) {
+          logger.warn("event-unreadable", {
+            roomId,
+            eventId: event.event_id,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       }
     }

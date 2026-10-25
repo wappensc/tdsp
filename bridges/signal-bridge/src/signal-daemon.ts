@@ -185,6 +185,10 @@ export class SocketRpcClient {
       this.#logger.warn("signal-cli-unparseable-line", { line });
       return;
     }
+    if (typeof message !== "object" || message === null || Array.isArray(message)) {
+      this.#logger.warn("signal-cli-unparseable-line", { line });
+      return;
+    }
     if (message.id === undefined) {
       // An unsolicited notification (e.g. an incoming-message "receive"
       // push) — `sync-state.ts` builds `receive()` on these via
@@ -193,7 +197,16 @@ export class SocketRpcClient {
       // an error, the "unrecognized ⇒ dropped" rule for foreign traffic.
       if (typeof message.method === "string") {
         for (const handler of this.#notificationHandlers) {
-          handler(message.method, message.params);
+          // A notification one handler cannot read must not keep the lines after it, or the
+          // other handlers, from being read, nor end the process (BRG-18).
+          try {
+            handler(message.method, message.params);
+          } catch (error) {
+            this.#logger.warn("notification-unreadable", {
+              method: message.method,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
       }
       return;

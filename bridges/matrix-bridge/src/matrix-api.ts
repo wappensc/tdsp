@@ -252,26 +252,62 @@ export async function syncOnce(config: MatrixApiConfig, since?: string): Promise
       `sync failed: ${response.status} ${await response.text()}`,
     );
   }
-  const body = (await response.json()) as {
-    next_batch: string;
-    rooms?: { join?: Record<string, { timeline?: { events?: RawTimelineEvent[] } }> };
-    to_device?: { events?: RawToDeviceEvent[] };
-    device_lists?: { changed?: string[]; left?: string[] };
-    device_one_time_keys_count?: Record<string, number>;
-  };
+  const body: unknown = await response.json();
+  return readSyncAnswer(body);
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+
+/**
+ * A `/sync` answer, read as far as it can be: whatever one room, event or field holds that is not
+ * what Matrix defines is dropped and the rest is read (BRG-18). Whoever can reach the account
+ * chooses part of what the answer holds, an invitation included; one that failed the whole answer
+ * would stop every document of the account. Only an answer without a position fails, since a
+ * bridge that moved on without one would ask from the start again.
+ */
+export function readSyncAnswer(body: unknown): SyncResult {
+  if (!isRecord(body) || typeof body.next_batch !== "string") {
+    throw new MatrixApiError(502, "sync answered without a next_batch position");
+  }
   const roomEvents = new Map<string, readonly RawTimelineEvent[]>();
-  for (const [roomId, room] of Object.entries(body.rooms?.join ?? {})) {
-    if (room.timeline?.events && room.timeline.events.length > 0) {
-      roomEvents.set(roomId, room.timeline.events);
+  const rooms = isRecord(body.rooms) && isRecord(body.rooms.join) ? body.rooms.join : {};
+  for (const [roomId, room] of Object.entries(rooms)) {
+    const events =
+      isRecord(room) && isRecord(room.timeline) && Array.isArray(room.timeline.events)
+        ? room.timeline.events.filter(
+            (event): event is RawTimelineEvent =>
+              isRecord(event) &&
+              typeof event.type === "string" &&
+              typeof event.event_id === "string" &&
+              typeof event.sender === "string" &&
+              (event.unsigned === undefined || isRecord(event.unsigned)),
+          )
+        : [];
+    if (events.length > 0) {
+      roomEvents.set(roomId, events);
     }
   }
+  const toDevice =
+    isRecord(body.to_device) && Array.isArray(body.to_device.events) ? body.to_device.events : [];
+  const deviceLists = isRecord(body.device_lists) ? body.device_lists : {};
+  const counts = isRecord(body.device_one_time_keys_count) ? body.device_one_time_keys_count : {};
   return {
     nextBatch: body.next_batch,
     roomEvents,
-    toDeviceEvents: body.to_device?.events ?? [],
-    deviceListsChanged: body.device_lists?.changed ?? [],
-    deviceListsLeft: body.device_lists?.left ?? [],
-    oneTimeKeyCounts: body.device_one_time_keys_count ?? {},
+    toDeviceEvents: toDevice.filter(
+      (event): event is RawToDeviceEvent => isRecord(event) && typeof event.type === "string",
+    ),
+    deviceListsChanged: strings(deviceLists.changed),
+    deviceListsLeft: strings(deviceLists.left),
+    oneTimeKeyCounts: Object.fromEntries(
+      Object.entries(counts).filter((entry): entry is [string, number] =>
+        Number.isFinite(entry[1]),
+      ),
+    ),
   };
 }
 
