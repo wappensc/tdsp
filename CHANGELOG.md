@@ -324,6 +324,10 @@ Bridges and bindings:
   Message-ID it delivered, compared by the frame, and no longer for the thread's root or a mail
   it refused. `@tdsp/messenger-matrix`'s gains `message-replaced`: another event under a
   delivered event id is recorded, not delivered again (BRG-11, BRG-12).
+- The Matrix bridge shares a room key also with a device that uploaded its keys between the
+  bridge's start and its first `/sync`: after that `/sync` it queries each member's devices once
+  more before sharing a key with them, where such a device got no room key until the member's
+  device list changed again (MTX-4).
 - `AttributionRange.authorId` is `string | null`, and `AttributionTracker.recordInsert` and
   `recordDelete` take `null` for an unattributed change; the engine no longer invents the
   MemberId `__tdsp:unattributed__` (ATR-2).
