@@ -7,7 +7,7 @@ import type {
   RawChannel,
 } from "@tdsp/messenger-port";
 import { TransportSendError } from "@tdsp/messenger-port";
-import { getPlainText, insertPlainText } from "@tdsp/reconciliation";
+import { encodeUpdate, getPlainText, insertPlainText } from "@tdsp/reconciliation";
 import { describe, expect, it, vi } from "vitest";
 import { ControlState } from "./control-state";
 import { encodeControlFrame, encodeResyncResponseFrame } from "./framing";
@@ -885,6 +885,48 @@ describe("bounded against anything a peer sends (CTL-30)", () => {
     expect(bob.mayEdit).toBe(false);
   });
 
+  it("a union over the bound on targets is a capacity conflict, never a silent cut of someone's right (CTL-30, CTL-32)", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { alice, bob, applyErrors } = await pair(messenger);
+    await settle(alice, bob);
+    alice.dispose();
+    expect(bob.mayEdit).toBe(true);
+    // Two devices of the creator that each added 2 600 members: each within what it may issue,
+    // together 200 beyond the 5 000 members a receiver holds beside the close and the pace.
+    for (const [device, from] of [
+      ["A".repeat(22), 0],
+      ["B".repeat(22), 2_600],
+    ] as const) {
+      for (let i = 0; i < 2_600; i++) {
+        await messenger.send(
+          DOCUMENT_ID,
+          "alice",
+          encodeControlFrame({
+            documentId: DOCUMENT_ID,
+            device,
+            counter: i + 1,
+            target: `member:m${String(from + i).padStart(5, "0")}` as "member:bob",
+            value: "write",
+            seen: {},
+          }),
+        );
+      }
+    }
+    await bob.sync();
+    expect(bob.capacityConflict).toBe(true);
+    expect(bob.mayEdit).toBe(false);
+    expect(bob.memberPermissions.size).toBe(5_000);
+    expect(
+      applyErrors.filter((e) => e instanceof ControlFrameRejectedError && e.reason === "refused"),
+    ).toHaveLength(200);
+    // What it holds it still changes, and a close still closes (CTL-32, CTL-36).
+    await messenger.send(DOCUMENT_ID, "alice", op(1, "member:m00000", null));
+    await messenger.send(DOCUMENT_ID, "alice", op(2, "close", true));
+    await bob.sync();
+    expect(bob.rightOf("m00000")).toBe("revoked");
+    expect(bob.closed).toBe(true);
+  });
+
   it("takes the operation that fills the hole, so the bound does not block its own healing", async () => {
     const messenger = new InMemoryMessengerPort();
     const { bob } = await pair(messenger);
@@ -937,14 +979,217 @@ describe("a basis for a new creator device's control state (CTL-28)", () => {
     expect(dave.permissionOf("dave")).toBe("read");
   });
 
-  it("is given by the creator's operations read from the channel's history", async () => {
+  it("is not given by the creator's operations read from the channel's history: their device may have had none", async () => {
     const messenger = new InMemoryMessengerPort(); // keeps history
     const old = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await old.setMembership("carol", null); // carol was removed
     await old.setMembership("bob", "write");
     old.dispose();
     const fresh = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
-    expect(fresh.controlConfirmed).toBe(true);
+    expect(fresh.permissionOf("bob")).toBe("write"); // held, as operations of the creator are
+    expect(fresh.controlConfirmed).toBe(false);
+    // So a joiner it never decided about itself gets no snapshot from it (RSY-8).
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
+    await settle(fresh, dave);
+    expect(dave.hasCompletedBootstrap).toBe(false);
+  });
+
+  it("is not given by a snapshot of the creator that answers another requester", async () => {
+    const { messenger, fresh } = await lost();
+    const state = new ControlState();
+    state.add({ device: TAG, counter: 1, target: "member:erin", value: "write", seen: {} });
+    await messenger.send(DOCUMENT_ID, "alice", forgedResponse(snapshotOf(state)));
+    await settle(fresh);
+    expect(fresh.permissionOf("erin")).toBe("write"); // merged by union, as the creator's (CTL-25)
+    expect(fresh.controlConfirmed).toBe(false);
+  });
+
+  it("two devices without one never give each other one: a removed member is not bootstrapped by the second", async () => {
+    const { messenger, bob, fresh } = await lost();
+    const second = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await settle(fresh, second, bob);
+    // The first decides about dave and bootstraps him; the second hears the operation and the
+    // snapshot in the answer to dave.
+    await fresh.setMembership("dave", "read");
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
+    await new Promise((resolve) => setTimeout(resolve, 1_100)); // past the throttle of its last answer (RSY-9)
+    await settle(fresh, second, dave);
+    expect(dave.hasCompletedBootstrap).toBe(true);
+    expect(second.permissionOf("dave")).toBe("read");
+    expect(second.controlConfirmed).toBe(false);
+    expect(fresh.controlConfirmed).toBe(false);
+    // Carol, whom the lost device removed, asks while only the second is online.
+    fresh.dispose();
+    const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", messenger, undefined, AS_ALICE);
+    await settle(second, carol);
+    expect(carol.hasCompletedBootstrap).toBe(false);
+    expect(carol.mayEdit).toBe(false);
+  });
+
+  it("is given by another device's answer to its own request, though it lacks nothing else (RSY-16, RSY-17)", async () => {
+    const messenger = new InMemoryMessengerPort(); // keeps history
+    let laptopState: PersistedControlState | undefined;
+    const laptop = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      onControlStateChange: (state) => {
+        laptopState = state;
+      },
+    });
+    await laptop.setMembership("carol", null);
+    laptop.dispose();
+    // A new device reads every operation from the history while the laptop is away: no basis.
+    let phoneState: PersistedControlState | undefined;
+    const phone = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      onControlStateChange: (state) => {
+        phoneState = state;
+      },
+    });
+    await settle(phone);
+    expect(phone.rightOf("carol")).toBe("revoked");
+    expect(phone.controlConfirmed).toBe(false);
+    expect(phoneState?.basis).toBe(false);
+    const content = encodeUpdate(phone.document);
+    phone.dispose();
+    // Both come back; the phone restored all it held, so it lacks nothing the laptop holds. Its
+    // request says it has no basis (`control: null`), so the laptop answers it all the same.
+    const back = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      controlState: laptopState as PersistedControlState,
+    });
+    const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      controlState: phoneState as PersistedControlState,
+      restore: { state: content },
+    });
+    expect(restarted.controlConfirmed).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 1_100)); // past the throttle (RSY-9)
+    await settle(back, restarted);
+    expect(restarted.controlConfirmed).toBe(true);
+    // With its basis it bootstraps a joiner it never decided about, the laptop gone again.
+    back.dispose();
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
+    await new Promise((resolve) => setTimeout(resolve, 1_100)); // past the throttle (RSY-9)
+    await settle(restarted, dave);
+    expect(dave.hasCompletedBootstrap).toBe(true);
+  });
+
+  it("is given by the person's confirmation once a member reported, and only then bootstraps a joiner it never decided about (CTL-33)", async () => {
+    const unthrottled = { ...AS_ALICE, resyncResponseThrottleMs: 0 };
+    const messenger = new NoHistoryMessengerPort();
+    const old = await DocumentEngine.create(
+      DOCUMENT_ID,
+      "alice",
+      messenger,
+      undefined,
+      unthrottled,
+    );
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, unthrottled);
+    await old.setMembership("carol", null); // carol was removed
+    await old.setMembership("bob", "write");
+    await settle(old, bob);
+    old.dispose(); // the creator's only device is lost
+    let saved: PersistedControlState | undefined;
+    const persist = {
+      ...unthrottled,
+      onControlStateChange: (state: PersistedControlState) => {
+        saved = state;
+      },
+    };
+    const fresh = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, persist);
+    await fresh.setMembership("frank", "read"); // a decision of its own, persisted with its state
+    await settle(fresh, bob);
+    expect(saved?.basis).toBe(false);
+    fresh.dispose();
+    // Restored as it persisted itself, without a basis: still a device without one (CTL-26).
+    const restored = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...persist,
+      controlState: saved as PersistedControlState,
+    });
+    // Confirmed before any member reported: nothing to confirm against, so still no basis.
+    await restored.confirmRights();
+    expect(restored.controlConfirmed).toBe(false);
+    expect(saved?.basis).toBe(false);
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, unthrottled);
+    await settle(restored, dave);
+    expect(dave.hasCompletedBootstrap).toBe(false);
+    await settle(restored, bob); // bob's report shows carol removed and himself a writer
+    expect(restored.controlConfirmed).toBe(false); // a report alone is no basis (CTL-27)
+    // The person confirms each reported value (CTL-33, CTL-43).
+    const divergences = restored.controlDivergences;
+    expect(divergences.map((divergence) => divergence.target).sort()).toEqual([
+      "member:bob",
+      "member:carol",
+    ]);
+    await restored.confirmRights(
+      new Map(divergences.map((divergence) => [divergence.target, divergence.reported ?? null])),
+    );
+    expect(restored.controlConfirmed).toBe(true);
+    expect(saved?.basis).toBe(true); // persisted with it, so a restart keeps it
+    const erin = await DocumentEngine.join(DOCUMENT_ID, "erin", messenger, undefined, unthrottled);
+    await settle(restored, erin);
+    expect(erin.hasCompletedBootstrap).toBe(true);
+    expect(erin.rightOf("carol")).toBe("revoked");
+    expect(erin.permissionOf("bob")).toBe("write");
+  });
+
+  it("without one, a member's other device it never decided about gets no snapshot from it either", async () => {
+    const { messenger, bob, fresh } = await lost();
+    // Another device of the creator decides about bob; the first hears it.
+    const second = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await settle(fresh, second, bob);
+    await second.setMembership("bob", "write");
+    await settle(fresh, second);
+    second.dispose();
+    bob.dispose();
     expect(fresh.permissionOf("bob")).toBe("write");
+    // Bob's laptop asks while only the first device is online: it decided nothing about bob.
+    const laptop = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await new Promise((resolve) => setTimeout(resolve, 1_100)); // past the throttle of its last answer (RSY-9)
+    await settle(fresh, laptop);
+    expect(laptop.hasCompletedBootstrap).toBe(false);
+  });
+});
+
+describe("a device in a capacity conflict hands on no control state (RSY-8, CTL-32)", () => {
+  /** Two operations on one target whose `seen` together name more than 64 devices (CTL-30). */
+  async function pushIntoConflict(messenger: MessengerPort, ...engines: DocumentEngine[]) {
+    const seen = (prefix: string) =>
+      Object.fromEntries(
+        Array.from({ length: 40 }, (_, k) => [`${prefix}${String(k).padStart(21, "0")}`, 1]),
+      );
+    await messenger.send(DOCUMENT_ID, "alice", op(1, "member:x", "read", seen("P")));
+    await messenger.send(DOCUMENT_ID, "alice", op(2, "member:x", "read", seen("Q")));
+    for (const engine of engines) {
+      await engine.sync();
+      expect(engine.capacityConflict).toBe(true);
+    }
+  }
+
+  it("a device of the creator in a conflict answers a joiner without a snapshot", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await alice.setMembership("dave", "read");
+    await pushIntoConflict(messenger, alice);
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
+    await settle(alice, dave);
+    expect(dave.hasCompletedBootstrap).toBe(false);
+    expect(dave.mayEdit).toBe(false);
+  });
+
+  it("a member's device in a conflict answers its other device without control state", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await alice.setMembership("bob", "write");
+    const phone = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await settle(alice, phone);
+    expect(phone.hasCompletedBootstrap).toBe(true);
+    alice.dispose(); // from here on the creator is offline
+    await pushIntoConflict(messenger, phone);
+    const laptop = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await settle(phone, laptop);
+    expect(laptop.hasCompletedBootstrap).toBe(false);
+    expect(laptop.mayEdit).toBe(false);
   });
 });
 
@@ -1040,6 +1285,57 @@ describe("a revoked member is not an unknown one (CTL-13, CTL-23, §7.1)", () =>
     expect(restarted.mayEdit).toBe(false);
     await expect(restarted.resync()).rejects.toMatchObject({ reason: "revoked" });
   });
+});
+
+describe("a decision's loss is noticed while the creator keeps typing (SND-3, SND-23, LOS-10)", () => {
+  it("the heartbeat a control frame owes goes out within its due though a change is always pending", async () => {
+    vi.useFakeTimers();
+    try {
+      await lostWhileTyping();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  async function lostWhileTyping(): Promise<void> {
+    const watched = {
+      batchWindowMs: 500,
+      creatorMemberId: "alice",
+      syncPolicy: { minIntervalMs: 1_000, maxIntervalMs: 20_000, expectedLatencyMs: 5_000 },
+    };
+    const messenger = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, watched);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, watched);
+    for (let round = 0; round < 3; round++) {
+      await alice.sync();
+      await bob.sync();
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+    expect(bob.hasCompletedBootstrap).toBe(true);
+    await vi.advanceTimersByTimeAsync(60_000); // every heartbeat the join owed has gone out
+    await bob.sync();
+    expect(bob.syncHealth.state).toBe("ok");
+
+    // The revocation is lost; only the heartbeat after it can show bob that it exists (LOS-10).
+    messenger.dropNextSend("alice");
+    const decided = alice.setMembership("carol", null);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await decided;
+    // Alice types on and on, never pausing for her quiet time: a change is always pending.
+    let at = 0;
+    for (let elapsed = 0; elapsed < 30_000; elapsed += 100) {
+      alice.edit((fragment) => insertPlainText(fragment, at++, "x"));
+      await vi.advanceTimersByTimeAsync(100);
+      if (elapsed % 1_000 === 0) await bob.sync();
+    }
+    expect(bob.rightOf("carol")).toBeUndefined(); // bob never saw the revocation...
+    // ...but within the frame's due, a floor and the waiting time, he knows he lacks it.
+    expect(bob.syncHealth.suspicions).toContainEqual(
+      expect.objectContaining({ kind: "control-behind" }),
+    );
+    alice.dispose();
+    bob.dispose();
+  }
 });
 
 describe("what only a member's report holds, and the creator's confirmation (CTL-29, CTL-33)", () => {

@@ -1549,6 +1549,70 @@ describe("SendScheduler heartbeat", () => {
     expect(h.heartbeats).toEqual([]);
   });
 
+  describe("while the person keeps typing (SND-3, SND-14, SND-23)", () => {
+    /** A typist who never pauses for the quiet time: a keystroke every 100 ms. */
+    function typing(policy: Partial<SyncPolicy>) {
+      const heartbeats: number[] = [];
+      const edits: number[] = [];
+      const writer = typist();
+      const scheduler = new SendScheduler({
+        quietMs: 500,
+        policy: resolveSyncPolicy(policy),
+        send: async () => {
+          edits.push(Date.now());
+        },
+        classify: () => ({ retryable: true }),
+        onDropped: () => {},
+        sendHeartbeat: async () => {
+          heartbeats.push(Date.now());
+        },
+      });
+      const keepTyping = async (ms: number) => {
+        for (let elapsed = 0; elapsed < ms; elapsed += 100) {
+          scheduler.enqueue(writer.type(), 1);
+          await vi.advanceTimersByTimeAsync(100);
+        }
+      };
+      return { scheduler, heartbeats, edits, keepTyping };
+    }
+
+    it("a control frame's heartbeat is not held back: the pending change goes a floor before its time, the heartbeat on time", async () => {
+      const h = typing({ minIntervalMs: 1_000, maxIntervalMs: 20_000 });
+      // A control frame at T0 promises a follow-up within 20 s; only a heartbeat or another control
+      // frame keeps it at receivers (LOS-16), never an edit.
+      await h.scheduler.submit(async () => {}, { armsHeartbeat: true, promise: "control" });
+      await vi.advanceTimersByTimeAsync(100);
+      await h.keepTyping(60_000);
+      expect(h.edits).toContain(T0 + 19_000); // the change pending a floor before its time, then
+      expect(h.heartbeats[0]).toBe(T0 + 20_000); // the heartbeat, within the frame's due
+      // What was typed meanwhile goes after it, a floor later at the earliest.
+      expect(h.edits.filter((at) => at > T0 + 19_000 && at < T0 + 21_000)).toEqual([]);
+    });
+
+    it("an edit's own promise is kept by the next edit, at the heartbeat's time at the latest, with no heartbeat", async () => {
+      const h = typing({ minIntervalMs: 1_000, maxIntervalMs: 20_000 });
+      h.scheduler.enqueue(typist().type(), 1);
+      await vi.advanceTimersByTimeAsync(500); // sent at T0 + 500 ms: a follow-up within 20 s
+      expect(h.edits).toEqual([T0 + 500]);
+      await vi.advanceTimersByTimeAsync(300); // the next keystroke comes 300 ms later
+      await h.keepTyping(45_000);
+      // Each edit keeps the one before it (LOS-16), no later than its `due` — not 20 s after the
+      // first keystroke pending — and owes no heartbeat of its own while the next one is pending.
+      expect(h.edits.slice(0, 3)).toEqual([T0 + 500, T0 + 20_500, T0 + 40_500]);
+      expect(h.heartbeats).toEqual([]);
+    });
+
+    it("a heartbeat owed at once sends the pending change first and follows it a floor later (SND-24)", async () => {
+      const h = typing({ minIntervalMs: 5_000, maxIntervalMs: 60_000 });
+      await h.scheduler.submit(async () => {}, { armsHeartbeat: false }); // a message at T0
+      await h.keepTyping(1_000);
+      h.scheduler.oweHeartbeat({ now: true });
+      await h.keepTyping(30_000);
+      expect(h.edits[0]).toBe(T0 + 5_000); // a floor after T0, not 60 s after the first keystroke
+      expect(h.heartbeats).toEqual([T0 + 10_000]);
+    });
+  });
+
   it("counts against the floor: an edit right after it waits for the floor from the heartbeat", async () => {
     const heartbeats: number[] = [];
     const h = harnessWith({ maxIntervalMs: 20_000, minIntervalMs: 10_000 }, async () => {

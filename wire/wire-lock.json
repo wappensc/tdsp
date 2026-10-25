@@ -366,12 +366,12 @@
     }
   },
   "sections": {
-    "## 4. The payload frame": "7266daf1a21ca2f7e8db259e7d4ee66e7f6f1ff1f5c31a800b3aee4f9fe91506",
+    "## 4. The payload frame": "db9351fa5fb9380a2ede92d78506c9390dc058ead32f19c7a5dd42869db516a0",
     "## 5. Document profiles": "d180ef7a51d451cb321dca2378122a70bdb40c4eee2ea9a3512b5c14871be5c4",
-    "## 7. Control state": "2080ce4329a81b57aa96dddfaf7b84ebd1190ee8ed98f315d61e6d6771bf61e7",
+    "## 7. Control state": "ad350c83d3e19d5b0cbfa6cb12e7a34b6c5e5c80b4eebdea17de1d520dc11564",
     "## 11. Invitations": "6817cb50d80737c738d7504049898751bcb7883316ccd3268991b3854d70637b",
     "## Appendix A. Profile `yjs-paragraphs/1`": "6a2846e4ecde920535bf5faa683809db7feeff7611bf8ac258963e32e4715f12",
-    "## Appendix B. Recommended values": "795f8830a50e9c3c001535933bad30ac08c2f8c95d3224fd4ce32e9293b1282f"
+    "## Appendix B. Recommended values": "15011a297e119210f8910f834bfeebb8776513737acb90b0b6e204434ac21fdd"
   },
   "documents": {
     "bindings/bridges.md": "e5e07745199aeb532f466eba958f1289f8e4a13dc14e8ab4191c0557b93c8501",

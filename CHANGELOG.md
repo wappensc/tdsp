@@ -102,10 +102,17 @@ Control state (§7):
   its own tag.
 - **A new device of the creator decides at once** (CTL-27 to CTL-29); members may tell it which
   counters to supersede, never what holds, and a device counts reported counters only until it
-  has a basis. **What only members hold** (CTL-27, CTL-31, CTL-33, §15.5): a device of the
-  creator shows every target on which a member's report holds an operation it neither holds nor
-  supersedes, for display only, and an explicit confirmation issues each such target again with
-  the value it holds, counting the reported counters as seen.
+  has a basis. It has one only once it created the document, restored a state that was one,
+  merged a snapshot another device of the creator sent in answer to its own request, or the
+  person confirmed it (CTL-33); operations and snapshots of the creator it applied otherwise give
+  none. Until then its requests carry `control: null` (RSY-16), and it answers any request with a
+  snapshot only for a member it decided about itself (CTL-28). **What only members hold**
+  (CTL-27, CTL-31, CTL-33, §15.5): a device of the creator shows every target on which a member's
+  control report holds an operation it neither holds nor supersedes, for display only, and an
+  explicit confirmation issues each such target again with the value it holds, counting the
+  reported counters as seen, and, once a member's control report has reached the device, gives
+  it a basis; before any control report it stays unconfirmed, waiting for a member. A member
+  should answer a device of the creator with its control report (RSY-8).
 - **Persisting and restoring** (CTL-13, CTL-26, CTL-28, §6.3, LIF-5, RSY-16): the creating device
   reports its control state before the start frame and creates nothing if that fails; a device
   of the creator persists whether it had a basis, and a restored state is a basis only if it was
@@ -113,17 +120,20 @@ Control state (§7):
   once it has read on from the cursor persisted with its content. An engine reports every change
   of its control state before its cursor reads past the delivery that brought it.
 - **Bounds** (CTL-30, CTL-32, §15.3, §15.4): 64 devices, 1 024 counters above a hole (the
-  operation that fills a hole is always taken), 5 002 targets, and bytes: a receiver holds up to
+  operation that fills a hole is always taken), 5 000 members and rights on layers beside the
+  close and the pace, and bytes: a receiver holds up to
   3 MiB of control state, measured as the UTF-8 of the RFC 8785 serialisation of the snapshot's
   `vector` and `targets` without the close; a device of the creator adds a target only up to
   1 MiB and refuses, as `too-large`, an operation after which no answer of its transport could
-  carry the snapshot (SND-18). The close is a bounded record — each device's latest, of the 64
+  carry the snapshot (SND-18), or one beyond the bound on targets. The close is a bounded record — each device's latest, of the 64
   devices first in code point order, without `seen` — and is never refused for the bytes, so a
-  full document can always be closed; a target's `seen` names at most 64 devices. At a bound a
-  receiver keeps those first in code point order, so what it holds does not depend on the order
-  of arrival. Beyond the bytes a receiver is in a **capacity conflict** for good: it reports it,
-  takes no new member or layer right, refuses its own edits, and is bootstrapped by no snapshot it
-  refused; an application persists and shows it.
+  full document can always be closed; a target's `seen` names at most 64 devices. At the bound
+  on devices a receiver keeps those first in code point order, so what it holds does not depend
+  on the order of arrival. Beyond the bytes or the targets a receiver is in a **capacity
+  conflict** for good: it reports it, takes no new member or layer right, refuses its own edits,
+  answers every request with `control: null` but for a member's control report to a device of
+  the creator (RSY-8), and is bootstrapped by no snapshot it refused; an application persists and
+  shows it.
 - **What a later right must keep** (VER-5): a revision that defines a new value for a member's
   permission or a layer right defines the capabilities it grants and a merge that grants no more
   than every merged value, commutative, associative and idempotent, with decisions made in
@@ -149,9 +159,11 @@ Sending and pacing (§9):
   large update into pieces that are updates themselves; the `fragment` kind and its reassembly
   are withdrawn. A refused piece drops the rest of its update. An application writes indivisible
   units no larger than the profile allows.
-- **The heartbeat** (SND-11, SND-14) counts from the earlier of the last `edit` and the last
-  `control` frame, so an answer to a joiner does not push it past an edit's `due`; an engine that
-  hears a request stating exactly what it holds, while what it deleted within its latest report
+- **The heartbeat** (SND-3, SND-11, SND-14, SND-23) counts from the earlier of the last `edit`
+  and the last `control` frame, so an answer to a joiner does not push it past an edit's `due`; a
+  change pending goes out by the time the heartbeat requires (a floor before it after a control
+  frame), and one made after that waits behind the heartbeat, so a person who keeps typing does
+  not hold it back; an engine that hears a request stating exactly what it holds, while what it deleted within its latest report
   has changed, sends one as soon as the floor permits.
 - **What the text left open about sending** (SND-1, SND-2, SND-7 to SND-10, RSY-3, RSY-4, LOS-2,
   LOS-8, §10): `flush()` and `dispose()` keep the floor and the waits the provider asked for; a
@@ -240,11 +252,13 @@ What a peer can make a receiver hold or wait for:
 One person's devices (ARC-5, ARC-2):
 
 - **An application may carry a document between one person's devices** through another service,
-  and tells the person. A device of the creator that takes over carried control state continues
-  under a new tag, its engine merges the state as a snapshot carried from another device of the
-  creator (CTL-25), which is a basis only if it was one there (CTL-28), and the device counts as
-  bootstrapped (RSY-14). ARC-2's ban on connections other than to the bridge names that service
-  as its one exception.
+  and tells the person (ARC-5): content and the binding for any participant, control state only
+  between devices of the creator; a member's control state comes from the creator. A device of
+  the creator that takes over carried control state continues under a new tag; the state is a
+  basis only if it was one there (CTL-28), and the device counts as bootstrapped (RSY-14). ARC-2's
+  ban on connections other than to the bridge names that service as its one exception. The
+  reference engine has no path for carried control state yet: an application can hand it over
+  only as the device's own persisted state, which keeps the state's tag (CONFORMANCE.md).
 
 Bridges and bindings:
 

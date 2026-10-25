@@ -64,9 +64,15 @@ describe("a restarted participant's request (RSY-16, CTL-13)", () => {
     expect(restarted.permissionOf("bob")).toBe("write");
     expect(restarted.hasCompletedBootstrap).toBe(false);
     expect((await requestsOf(port, "bob")).at(-1)?.control).toBeNull();
-    // A device of the creator sends its control vector, bootstrapped or not.
-    await DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
-    expect((await requestsOf(port, "alice")).at(-1)?.control).toEqual({}); // what it held when it asked
+    // A device of the creator sends its control vector, bootstrapped or not, once it has a basis
+    // (CTL-28): a new one that read every operation from the history still asks with `null`.
+    const phone = await DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
+    expect(phone.controlConfirmed).toBe(false);
+    expect((await requestsOf(port, "alice")).at(-1)?.control).toBeNull();
+    await settle(alice, phone); // the other device answers it, which gives it its basis
+    expect(phone.controlConfirmed).toBe(true);
+    await phone.requestResync();
+    expect((await requestsOf(port, "alice")).at(-1)?.control).toEqual(alice.controlVector);
   });
 });
 
