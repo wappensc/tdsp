@@ -307,6 +307,12 @@ Bridges and bindings:
   default profile had — for a server on the same machine the engine's defaults — and the adapters
   refuse the 1.x form.
 - `transportSendErrorFromHttp` maps `409` to `needs-person` instead of `rejected` (LBI-6).
+- The bridges answer `409` to every document operation while they are not provisioned, and
+  `503` to `/transport-profile`, where a send was refused as `rejected` or `unavailable` before
+  (BRG-1). A send refused for what only a person can lift is `409` too: Signal's untrusted
+  identities; Matrix's signed-out, locked, suspended or consent errors and a full homeserver;
+  email's refused SMTP login, a full mailbox, and for PGP a missing gpg or own secret key, which
+  were `502`, `413`, `503` or `422` (BRG-8).
 - `AttributionRange.authorId` is `string | null`, and `AttributionTracker.recordInsert` and
   `recordDelete` take `null` for an unattributed change; the engine no longer invents the
   MemberId `__tdsp:unattributed__` (ATR-2).
