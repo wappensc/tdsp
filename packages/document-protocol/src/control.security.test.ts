@@ -1042,6 +1042,57 @@ describe("a revoked member is not an unknown one (CTL-13, CTL-23, §7.1)", () =>
   });
 });
 
+describe("a decision's loss is noticed while the creator keeps typing (SND-3, SND-23, LOS-10)", () => {
+  it("the heartbeat a control frame owes goes out within its due though a change is always pending", async () => {
+    vi.useFakeTimers();
+    try {
+      await lostWhileTyping();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  async function lostWhileTyping(): Promise<void> {
+    const watched = {
+      batchWindowMs: 500,
+      creatorMemberId: "alice",
+      syncPolicy: { minIntervalMs: 1_000, maxIntervalMs: 20_000, expectedLatencyMs: 5_000 },
+    };
+    const messenger = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, watched);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, watched);
+    for (let round = 0; round < 3; round++) {
+      await alice.sync();
+      await bob.sync();
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+    expect(bob.hasCompletedBootstrap).toBe(true);
+    await vi.advanceTimersByTimeAsync(60_000); // every heartbeat the join owed has gone out
+    await bob.sync();
+    expect(bob.syncHealth.state).toBe("ok");
+
+    // The revocation is lost; only the heartbeat after it can show bob that it exists (LOS-10).
+    messenger.dropNextSend("alice");
+    const decided = alice.setMembership("carol", null);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await decided;
+    // Alice types on and on, never pausing for her quiet time: a change is always pending.
+    let at = 0;
+    for (let elapsed = 0; elapsed < 30_000; elapsed += 100) {
+      alice.edit((fragment) => insertPlainText(fragment, at++, "x"));
+      await vi.advanceTimersByTimeAsync(100);
+      if (elapsed % 1_000 === 0) await bob.sync();
+    }
+    expect(bob.rightOf("carol")).toBeUndefined(); // bob never saw the revocation...
+    // ...but within the frame's due, a floor and the waiting time, he knows he lacks it.
+    expect(bob.syncHealth.suspicions).toContainEqual(
+      expect.objectContaining({ kind: "control-behind" }),
+    );
+    alice.dispose();
+    bob.dispose();
+  }
+});
+
 describe("what only a member's report holds, and the creator's confirmation (CTL-29, CTL-33)", () => {
   it("a forged report is shown, never applied, and a confirmation grants nothing it names", async () => {
     const messenger = new InMemoryMessengerPort();
