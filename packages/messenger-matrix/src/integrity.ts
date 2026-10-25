@@ -27,10 +27,33 @@ export type { IntegritySeverity };
  */
 export type IntegrityReason = "message-edited" | "message-redacted" | "message-replaced";
 
+/** An entry of a document's integrity log (BRG-15): a violation, naming the event's id and sender. */
 export interface IntegrityEntry {
-  readonly eventId: string;
+  readonly kind: "violation";
+  readonly id: string;
   readonly sender: string;
   readonly reason: IntegrityReason;
+}
+
+/**
+ * The entries of `GET /channels/:documentId/integrity-log` as the bridge serves them. An entry
+ * without `kind`, from a bridge of TDSP 1.x, is a violation (the local bridge interface), its id
+ * under the name 1.x gave it; what is not an object is no entry.
+ */
+export function readIntegrityLog(raw: unknown): readonly IntegrityEntry[] {
+  if (!Array.isArray(raw)) {
+    throw new Error("integrityLog: the bridge answered something that is not a list of entries");
+  }
+  return raw
+    .filter(
+      (entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null,
+    )
+    .map((entry) => ({
+      kind: "violation" as const,
+      id: String(entry.id ?? entry.eventId ?? ""),
+      sender: String(entry.sender ?? ""),
+      reason: entry.reason as IntegrityReason,
+    }));
 }
 
 export function describeMatrixIntegrityEntry(entry: IntegrityEntry): {

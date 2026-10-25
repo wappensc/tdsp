@@ -567,7 +567,7 @@ describe("a receiver's handling of attachments", () => {
       expect(payloads()).toEqual([textOf(frame)]);
       expect(homeserver.mediaRequests).toEqual(["a"]);
       expect(state.getIntegrityLog(DOC)).toEqual([
-        { eventId: "$1", sender: ALICE, reason: "message-replaced" },
+        { kind: "violation", id: "$1", sender: ALICE, reason: "message-replaced" },
       ]);
     });
 
@@ -582,7 +582,7 @@ describe("a receiver's handling of attachments", () => {
       expect(payloads()).toEqual([textOf(delivered)]);
       expect(homeserver.mediaRequests).toEqual(["w"]);
       expect(state.getIntegrityLog(DOC)).toEqual([
-        { eventId: "$1", sender: ALICE, reason: "message-replaced" },
+        { kind: "violation", id: "$1", sender: ALICE, reason: "message-replaced" },
       ]);
     });
   });

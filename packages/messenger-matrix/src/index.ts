@@ -17,7 +17,7 @@ import {
   type TransportProfile,
   transportSendErrorFromHttp,
 } from "@tdsp/messenger-port";
-import type { IntegrityEntry } from "./integrity.ts";
+import { type IntegrityEntry, readIntegrityLog } from "./integrity.ts";
 
 /**
  * The browser-side half of the Matrix adapter — a thin `fetch()` wrapper against
@@ -246,7 +246,7 @@ export class MatrixMessengerPort implements MessengerPort {
         `integrityLog(${documentId}) failed: ${response.status} ${await response.text()}`,
       );
     }
-    return (await response.json()) as readonly IntegrityEntry[];
+    return readIntegrityLog(await response.json());
   }
 
   /** `POST /channels/:documentId/send` — `payload` — the frame's JSON text — rides opaque, exactly as `framing.ts`'s own doc comment requires: this class never parses it, only the bridge's envelope carries `documentId` for routing (bindings/bridges.md §13.1). */
@@ -352,5 +352,6 @@ export {
   type IntegrityEntry,
   type IntegrityReason,
   type IntegritySeverity,
+  readIntegrityLog,
   summarizeMatrixIntegrity,
 } from "./integrity.ts";
