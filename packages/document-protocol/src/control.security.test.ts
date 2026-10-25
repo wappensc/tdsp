@@ -885,6 +885,48 @@ describe("bounded against anything a peer sends (CTL-30)", () => {
     expect(bob.mayEdit).toBe(false);
   });
 
+  it("a union over the bound on targets is a capacity conflict, never a silent cut of someone's right (CTL-30, CTL-32)", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const { alice, bob, applyErrors } = await pair(messenger);
+    await settle(alice, bob);
+    alice.dispose();
+    expect(bob.mayEdit).toBe(true);
+    // Two devices of the creator that each added 2 600 members: each within what it may issue,
+    // together 200 beyond the 5 000 members a receiver holds beside the close and the pace.
+    for (const [device, from] of [
+      ["A".repeat(22), 0],
+      ["B".repeat(22), 2_600],
+    ] as const) {
+      for (let i = 0; i < 2_600; i++) {
+        await messenger.send(
+          DOCUMENT_ID,
+          "alice",
+          encodeControlFrame({
+            documentId: DOCUMENT_ID,
+            device,
+            counter: i + 1,
+            target: `member:m${String(from + i).padStart(5, "0")}` as "member:bob",
+            value: "write",
+            seen: {},
+          }),
+        );
+      }
+    }
+    await bob.sync();
+    expect(bob.capacityConflict).toBe(true);
+    expect(bob.mayEdit).toBe(false);
+    expect(bob.memberPermissions.size).toBe(5_000);
+    expect(
+      applyErrors.filter((e) => e instanceof ControlFrameRejectedError && e.reason === "refused"),
+    ).toHaveLength(200);
+    // What it holds it still changes, and a close still closes (CTL-32, CTL-36).
+    await messenger.send(DOCUMENT_ID, "alice", op(1, "member:m00000", null));
+    await messenger.send(DOCUMENT_ID, "alice", op(2, "close", true));
+    await bob.sync();
+    expect(bob.rightOf("m00000")).toBe("revoked");
+    expect(bob.closed).toBe(true);
+  });
+
   it("takes the operation that fills the hole, so the bound does not block its own healing", async () => {
     const messenger = new InMemoryMessengerPort();
     const { bob } = await pair(messenger);
