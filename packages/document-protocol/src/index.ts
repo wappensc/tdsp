@@ -3185,13 +3185,15 @@ export class DocumentEngine {
         // and before only to a member it decided about itself — so never to another device of the
         // creator, which is no member (CTL-4, CTL-28); to another device of its own member, what it
         // holds once bootstrapped (a union cannot undo anything, CTL-25); to a device of the creator,
-        // what it holds as a report (CTL-27).
+        // what it holds as a report (CTL-27). In a capacity conflict it hands on nothing as control
+        // state, since it knows what it holds lacks something (CTL-32); a report it still gives.
+        const inConflict = this.#control.capacityConflict;
         const control: ControlSnapshot | null = isCreator
-          ? this.#controlBasis || this.#decidedHere.has(request.requester)
+          ? !inConflict && (this.#controlBasis || this.#decidedHere.has(request.requester))
             ? this.controlState
             : null
           : requesterIsOwnDevice
-            ? this.#hasCompletedBootstrap
+            ? this.#hasCompletedBootstrap && !inConflict
               ? this.controlState
               : null
             : this.#control.isEmpty

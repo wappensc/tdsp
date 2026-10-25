@@ -1044,6 +1044,48 @@ describe("a basis for a new creator device's control state (CTL-28)", () => {
   });
 });
 
+describe("a device in a capacity conflict hands on no control state (RSY-8, CTL-32)", () => {
+  /** Two operations on one target whose `seen` together name more than 64 devices (CTL-30). */
+  async function pushIntoConflict(messenger: MessengerPort, ...engines: DocumentEngine[]) {
+    const seen = (prefix: string) =>
+      Object.fromEntries(
+        Array.from({ length: 40 }, (_, k) => [`${prefix}${String(k).padStart(21, "0")}`, 1]),
+      );
+    await messenger.send(DOCUMENT_ID, "alice", op(1, "member:x", "read", seen("P")));
+    await messenger.send(DOCUMENT_ID, "alice", op(2, "member:x", "read", seen("Q")));
+    for (const engine of engines) {
+      await engine.sync();
+      expect(engine.capacityConflict).toBe(true);
+    }
+  }
+
+  it("a device of the creator in a conflict answers a joiner without a snapshot", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await alice.setMembership("dave", "read");
+    await pushIntoConflict(messenger, alice);
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
+    await settle(alice, dave);
+    expect(dave.hasCompletedBootstrap).toBe(false);
+    expect(dave.mayEdit).toBe(false);
+  });
+
+  it("a member's device in a conflict answers its other device without control state", async () => {
+    const messenger = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await alice.setMembership("bob", "write");
+    const phone = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await settle(alice, phone);
+    expect(phone.hasCompletedBootstrap).toBe(true);
+    alice.dispose(); // from here on the creator is offline
+    await pushIntoConflict(messenger, phone);
+    const laptop = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await settle(phone, laptop);
+    expect(laptop.hasCompletedBootstrap).toBe(false);
+    expect(laptop.mayEdit).toBe(false);
+  });
+});
+
 describe("a revoked member is not an unknown one (CTL-13, CTL-23, §7.1)", () => {
   it("refuses to send once the creator revoked its permission, as a reader does, and says why", async () => {
     const messenger = new InMemoryMessengerPort();
