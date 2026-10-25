@@ -242,7 +242,7 @@ describe("bridges/email-bridge server", () => {
       expect(profile?.bounds).toEqual({ minIntervalMs: null, maxBytes: null });
     });
 
-    it("serves the provider profile — one message per 30 s, never faster than 15 s — for a real provider", async () => {
+    it("serves the provider profile — one message per 35 s, never faster than 15 s — for a real provider", async () => {
       for (const tls of ["implicit", "starttls-required"] as const) {
         server.close();
         start({ sender: Object.assign(sender, { tls }) });
@@ -251,7 +251,7 @@ describe("bridges/email-bridge server", () => {
         const url =
           typeof address === "object" && address ? `http://127.0.0.1:${address.port}` : "";
         const { profile } = await profileFrom(url);
-        expect(profile?.pacing.minIntervalMs).toBe(30_000);
+        expect(profile?.pacing.minIntervalMs).toBe(35_000);
         expect(profile?.bounds.minIntervalMs).toBe(15_000);
         // A frame the client may send in one mail: a larger change goes as pieces, not
         // refused by the provider and dropped (SPECIFICATION.md §9.4).
