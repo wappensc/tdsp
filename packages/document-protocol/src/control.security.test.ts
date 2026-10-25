@@ -1074,6 +1074,61 @@ describe("a basis for a new creator device's control state (CTL-28)", () => {
     expect(dave.hasCompletedBootstrap).toBe(true);
   });
 
+  it("is given by the person's confirmation of what members reported, and only then bootstraps a joiner it never decided about (CTL-33)", async () => {
+    const unthrottled = { ...AS_ALICE, resyncResponseThrottleMs: 0 };
+    const messenger = new NoHistoryMessengerPort();
+    const old = await DocumentEngine.create(
+      DOCUMENT_ID,
+      "alice",
+      messenger,
+      undefined,
+      unthrottled,
+    );
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, unthrottled);
+    await old.setMembership("carol", null); // carol was removed
+    await old.setMembership("bob", "write");
+    await settle(old, bob);
+    old.dispose(); // the creator's only device is lost
+    let saved: PersistedControlState | undefined;
+    const persist = {
+      ...unthrottled,
+      onControlStateChange: (state: PersistedControlState) => {
+        saved = state;
+      },
+    };
+    const fresh = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, persist);
+    await fresh.setMembership("frank", "read"); // a decision of its own, persisted with its state
+    await settle(fresh, bob);
+    expect(saved?.basis).toBe(false);
+    fresh.dispose();
+    // Restored as it persisted itself, without a basis: still a device without one (CTL-26).
+    const restored = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...persist,
+      controlState: saved as PersistedControlState,
+    });
+    await settle(restored, bob); // bob's report shows carol removed and himself a writer
+    expect(restored.controlConfirmed).toBe(false);
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, unthrottled);
+    await settle(restored, dave);
+    expect(dave.hasCompletedBootstrap).toBe(false); // not before the confirmation
+    // The person confirms each reported value (CTL-33, CTL-43).
+    const divergences = restored.controlDivergences;
+    expect(divergences.map((divergence) => divergence.target).sort()).toEqual([
+      "member:bob",
+      "member:carol",
+    ]);
+    await restored.confirmRights(
+      new Map(divergences.map((divergence) => [divergence.target, divergence.reported ?? null])),
+    );
+    expect(restored.controlConfirmed).toBe(true);
+    expect(saved?.basis).toBe(true); // persisted with it, so a restart keeps it
+    const erin = await DocumentEngine.join(DOCUMENT_ID, "erin", messenger, undefined, unthrottled);
+    await settle(restored, erin);
+    expect(erin.hasCompletedBootstrap).toBe(true);
+    expect(erin.rightOf("carol")).toBe("revoked");
+    expect(erin.permissionOf("bob")).toBe("write");
+  });
+
   it("without one, a member's other device it never decided about gets no snapshot from it either", async () => {
     const { messenger, bob, fresh } = await lost();
     // Another device of the creator decides about bob; the first hears it.

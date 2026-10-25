@@ -829,8 +829,8 @@ export class DocumentEngine {
   // supersedes (CTL-33), oldest reporter first; at most MAX_TARGETS targets in all.
   readonly #divergences = new Map<MemberId, Map<string, ReportedDivergence>>();
   // Whether this device of the creator has a basis for its control state (CTL-28) — it created the
-  // document, restored its state that was one, or merged a snapshot another of its devices sent in
-  // answer to its own request. Reports, its own new operations, and the creator's operations and
+  // document, restored its state that was one, merged a snapshot another of its devices sent in
+  // answer to its own request, or the person confirmed it (CTL-33). Reports, its own new operations, and the creator's operations and
   // snapshots it overheard are none: the wire does not say whether the device that issued them had a
   // basis. Without one it answers a request with a snapshot only when it decided about the
   // requester itself (`#decidedHere`).
@@ -1387,7 +1387,9 @@ export class DocumentEngine {
    * the close, each with a value the target can take; otherwise nothing is issued. The one place a
    * device with a basis counts reported counters as seen (CTL-27, CTL-28), and only on this explicit
    * call: a report supplies no value that holds unless the person chose it. A device of the creator
-   * only; resolves once every operation went out, as `setMembership` does.
+   * only; resolves once every operation went out, as `setMembership` does. Then the device has a
+   * basis for its control state (CTL-28): the person decided again whatever the reports showed it
+   * lacks — with none diverging, confirmed what it holds.
    */
   async confirmRights(values?: ReadonlyMap<ControlTarget, ControlValue>): Promise<void> {
     if (this.#creatorMemberId !== this.memberId) {
@@ -1407,6 +1409,7 @@ export class DocumentEngine {
       }
     }
     if (divergences.length === 0) {
+      this.#confirmedByPerson();
       return;
     }
     const covered: Record<string, number> = {};
@@ -1434,13 +1437,26 @@ export class DocumentEngine {
         return this.#issueControl(target, value, covered);
       }),
     );
+    this.#confirmedByPerson();
+  }
+
+  /**
+   * The person confirmed this device's control state (CTL-33): a basis for it (CTL-28), persisted
+   * with it (CTL-26), so that it bootstraps the members it did not decide about itself from now on.
+   */
+  #confirmedByPerson(): void {
+    if (this.#controlBasis) {
+      return;
+    }
+    this.#gainBasis();
+    this.#notifyControlStateChange();
   }
 
   /**
    * Whether this client's control state is confirmed (CTL-28, CTL-29): always for anyone but the
    * creator, who learns it from the creator; for a device of the creator once it has a basis — it
-   * created the document, restored its state that had one, or merged a snapshot another of its
-   * devices sent in answer to its own request. A device without one may still decide, but what it
+   * created the document, restored its state that had one, merged a snapshot another of its
+   * devices sent in answer to its own request, or the person confirmed it (`confirmRights`). A device without one may still decide, but what it
    * shows of the others' rights is unconfirmed, and an application should not decide anything for
    * the person on it.
    */
