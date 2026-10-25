@@ -15,7 +15,7 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
 | Aspect | Binding |
 |---|---|
 | Account | A linked device of an existing Signal account (`signal-cli link`; the person scans a QR code on the phone). The bridge holds the device's keys |
-| Security (BND-1) | Sender authentication, integrity and confidentiality inherited from Signal, always on |
+| Security (BND-1) | Sender authentication, integrity and confidentiality, inherited from Signal's protocol and always on, also against Signal's servers, which can still delay or withhold a message. The binding adds none of them, and TDSP has not verified them: they are what Signal states of its protocol |
 | Channel | An existing Signal group; channel id = the group id |
 | Carrier | One group text message whose body is the envelope JSON |
 | MemberId | The account's ACI (UUID). Never the phone number |
@@ -24,9 +24,10 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
 | Own devices | What one device of an account sends reaches the account's other devices as a sync transcript, delivered like any other message (SIG-3) |
 | Inline limit | A frame of at most 800 bytes rides in the body as `frame` |
 | Attachment | A larger frame, up to 4 MiB, is the message's only attachment; the envelope carries `"attachment": {"size": <bytes>, "sha256": "<64 hex digits>"}` in place of `frame`. `signal-cli` downloads every attachment of a message it receives itself, up to its own limit (150 MiB in 0.14.9), before the bridge sees the message: BRG-13 and BRG-14 bound what the bridge reads from `signal-cli`, not that download |
-| Accepted (TRN-6) | The client sends to every member itself and answers per recipient (SIG-4) |
+| Accepted (TRN-6) | The client sends to every member itself and answers per recipient; a recipient skipped as an identity to trust is recorded in the integrity log (SIG-4) |
+| Refusals (BRG-8) | A send `signal-cli` refuses because it cannot load the account is `unavailable` while the bridge's link status shows its device linked, and `needs-person` once it shows it unlinked (SIG-7) |
 | Transport profile | Bounds: floor 500 ms, 4 MiB; suggested pacing 2 s / 20 s / 10 s; all estimates ([Appendix B](../SPECIFICATION.md#appendix-b-recommended-values)) |
-| Frames carried | TDSP 2.0's, and 1.x's, unchanged ([§2.2](../SPECIFICATION.md#22-two-envelopes-two-readers)) |
+| Frames carried | TDSP 2.0's, and 1.x's, unchanged ([§2.2](../SPECIFICATION.md#22-two-wrappers-two-readers)) |
 | Immutability | An `editMessage` or a remote delete targeting a delivered message is an integrity violation, inside a sync transcript too |
 
 - **SIG-1** · *bridge* — A receiving bridge MUST accept an attachment envelope only
@@ -68,12 +69,18 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
 
   A recipient refused for a reason no retry of the message changes — not
   registered, or an identity the account does not trust — does not make the send
-  fail while another recipient got it.
+  fail while another recipient got it. The bridge MUST make every recipient a send
+  skipped as an identity the account does not trust observable to its
+  application: in the document's integrity log (BRG-15), as an entry whose `id` is
+  the message's delivery id, `sender` the bridge's own account, `recipient` the
+  recipient's ACI and `reason` `recipient-untrusted`. It MAY record a recipient so
+  once for as long as its identity stays untrusted, rather than once per message.
 
-  When nobody got it, the send fails as `rejected` when every recipient is
-  unregistered, as `needs-person` when the others are identities to trust, and as
-  `unavailable` otherwise. An invitation (`sendInvitation`) MAY count as sent once
-  one member got it.
+  When nobody got it, and no recipient was refused for a reason that may pass, the
+  send fails as `rejected` when every recipient is unregistered; as `needs-person`
+  when every recipient is unregistered or an identity the account does not trust,
+  and one at least is the latter; and as `unavailable` otherwise. An invitation
+  (`sendInvitation`) MAY count as sent once one member got it.
   *Rationale:* Signal has no server that fans a group message out: the client
   encrypts and sends it to every member's devices itself, and `signal-cli` reports
   the message as sent once one member got it. Taking that as accepted makes every
@@ -84,12 +91,17 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
   account that is gone stays in it until someone removes it — so the message counts
   as accepted for the others, and the member who missed it asks for what it lacks
   once it receives again ([§10](../SPECIFICATION.md#10-loss-detection)). Trusting a changed
-  identity is the person's (TRN-11). An invitation is read by people, and sent
-  again it would show twice.
+  identity is the person's (TRN-11), and so the person has to learn of it: while
+  every send succeeds, that member receives nothing, and nothing else shows it. The
+  send's answer reaches the engine, which tells its application only of what
+  failed (SND-10); the integrity log is what a bridge already hands the
+  application per document. An invitation is read by people, and sent again it
+  would show twice.
 - **SIG-5** · *bridge* — A bridge to which `signal-cli` pushes received messages on
   its own (`--receive-mode on-connection`) MUST be reading a connection as soon as
   it opens — whether the bridge opens it to listen or a call opens it — and MUST
-  keep, bounded (BRG-13), what arrives before anything consumes it.
+  keep what arrives before anything consumes it, bounded in size and in count
+  (BRG-13).
   *Rationale:* in that mode `signal-cli` hands everything waiting on Signal's
   servers to a connection the moment it opens, and Signal gives each message to a
   device once: one pushed into a connection nobody reads is gone for this device,
@@ -98,15 +110,28 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
 - **SIG-6** · *bridge* — A bridge that receives through a subscription
   (`--receive-mode manual`, `subscribeReceive`) MUST be reading the connection
   before it subscribes, as SIG-5 asks, and MUST subscribe again on every new
-  connection. A bridge that keeps its instance (TRN-19) across ending the
-  subscription (`unsubscribeReceive`) MUST read what `signal-cli` writes until it
-  answers, and MUST NOT keep it unless the `signal-cli` it runs still hands on the
-  message it is handling when the last subscription ends: `signal-cli` 0.14.9
-  removes the subscription's handler before it stops receiving, and a message it
-  has already acknowledged to the server goes to no one.
+  connection. A bridge that ends the subscription (`unsubscribeReceive`) and keeps
+  its instance (TRN-19) across it MUST read what `signal-cli` writes until
+  `signal-cli` answers, and MUST NOT keep its instance so unless the `signal-cli`
+  it runs still hands on the message it is handling when the last subscription
+  ends: `signal-cli` 0.14.9 removes the subscription's handler before it stops
+  receiving, and a message it has already acknowledged to the server goes to no
+  one.
   *Rationale:* `signal-cli` keeps each message in its cache from before it
   acknowledges it to the server until after it has handed it on, and answers the
   end of a subscription only once it has stopped receiving; a bridge that reads up
   to that answer has everything — except what the client itself dropped. A
   subscription belongs to its connection, and the messages waiting on Signal's
   servers come the moment it begins.
+- **SIG-7** · *bridge* — A send that `signal-cli` refuses because it cannot load
+  the account MUST fail as `unavailable` while the bridge's link status — what it
+  answers on `GET /auth/status` of the
+  [local bridge interface](local-bridge-interface.md) — shows its device linked,
+  and as `needs-person` once that status shows the device unlinked (BRG-8).
+  *Rationale:* `signal-cli` refuses a send so whether the account's state could
+  not be read for a moment or the device was unlinked from the phone, and only the
+  second waits for the person, who links the device again. Taken for
+  `needs-person` at once, a passing refusal would hold every message for the
+  longest back-off (TRN-20); taken for `unavailable` for good, an unlinked device
+  would be tried again without end. The link status is how the bridge tells the
+  two apart.

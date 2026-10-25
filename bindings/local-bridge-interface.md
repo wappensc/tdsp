@@ -29,7 +29,8 @@ resolves to one (`localtest.me`) is not, nor is one that begins with
 ([Appendix F](../SPECIFICATION.md#appendix-f-reference-implementation)) is this definition.
 
 - **LBI-1** · *bridge* — A bridge offering this interface MUST listen on a loopback
-  address only (`127.0.0.1` or `::1`), never on a wildcard or external interface.
+  address only (such as `127.0.0.1` or `::1`), never on a wildcard or external
+  interface.
   *Rationale:* the interface has no authentication (LBI-2); loopback-only confines
   it to the user's own machine.
 - **LBI-2** · *bridge* — The interface has no authentication of its own; its trust
@@ -61,12 +62,12 @@ unknown route answers 404.
 | 400 | A malformed field |
 | 403 | Not permitted |
 | 404 | Unknown document, channel or route |
-| 409 | Refused until a person acts: not provisioned or not linked yet, an identity to trust, a device to confirm |
+| 409 | Refused until a person acts: not provisioned or not linked yet, signed out, an identity to trust, a device to confirm, storage full |
 | 413 | Too large |
 | 422 | Refused at message level |
 | 429 | Rate-limited |
 | 502 | Anything else that failed |
-| 503 | A dependency is not configured |
+| 503 | A dependency is not configured; never for a send, which a bridge not provisioned refuses with 409 (BRG-1) |
 
 **Routes.**
 
@@ -82,7 +83,7 @@ unknown route answers 404.
 | `GET /channels/:documentId/deliveries` | → `receive` | — | `[{id, documentId, sender, payload}]` |
 | `GET /channels/:documentId/deliveries-since?after=` | Optional → `receiveSince` (TRN-18, TRN-21); `after` absent for all still held | — | `{deliveries: [{id, documentId, sender, payload}], truncated: boolean}`; 404 where the bridge does not offer it |
 | `POST /channels/:documentId/invite` | Send a human-readable invitation into the bound channel | `{actor, text}` — `actor` must be the bridge's own account and the document's creator, else 403 | `{deliveryId}` |
-| `GET /channels/:documentId/integrity-log` | The integrity violations recorded (BRG-15) | — | a list of `{id, sender, reason, …}`, `reason` one of BRG-12's |
+| `GET /channels/:documentId/integrity-log` | The integrity violations recorded (BRG-15) | — | a list of `{id, sender, reason, …}`, `reason` one of BRG-12's or one its binding names (SIG-4) |
 
 Email has no pre-existing channel to bind to; starting and joining a thread
 replace binding:
@@ -105,8 +106,9 @@ Provisioning routes are binding-specific: Signal's `GET /auth/status` and
   messenger stated a wait) for a rate limit, `413` for a message too large, `409`
   for a refusal only a person can lift, `400`, `403`, `404` or `422` for a refusal
   waiting cannot change, and `5xx` for everything else. An adapter MUST map `429`
-  to `rate-limited`, `413` to `too-large`, `409` to `needs-person`, `400`, `403`,
-  `404` and `422` to `rejected`, and every other status to `unavailable`.
+  to `rate-limited`, with `Retry-After` passed on as `retryAfterMs` as TRN-11
+  says, `413` to `too-large`, `409` to `needs-person`, `400`, `403`, `404` and
+  `422` to `rejected`, and every other status to `unavailable`.
   *Rationale:* the classification of [§3.4](../SPECIFICATION.md#34-send-failures) has to survive the
   HTTP hop; an unclassified status landing on `unavailable` means a change is never
   dropped on a guess. `409` already answered a bridge not provisioned or not

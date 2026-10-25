@@ -4,7 +4,8 @@
 
 Part of TDSP 2.0, whose core is [SPECIFICATION.md](../SPECIFICATION.md). This
 document holds what TDSP 1.4 had in §13.4 of its specification, unchanged in
-substance: its requirements keep their IDs, and its sections their numbers, so a
+substance but for the changes [Appendix G](../SPECIFICATION.md#appendix-g-changes-from-tdsp-1x)
+of the core lists: its requirements keep their IDs, and its sections their numbers, so a
 reference to either stays unambiguous. The requirement language and the
 conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-language),
 [§1.4](../SPECIFICATION.md#14-conformance-classes)).
@@ -18,7 +19,7 @@ thread starts and checks every message against them.
 | Aspect | Binding |
 |---|---|
 | Account | An SMTP and an IMAP account at one provider, over TLS (EML-7); for PGP, the person's own secret key in their `gpg` keyring, and a keyring of each document's own for the participants' keys (EML-4) |
-| Security (BND-1) | Without PGP: none — `From` is as forgeable as any header, and a document is as confidential as plain email. With PGP: sender authentication, integrity and confidentiality added by the binding (EML-3) |
+| Security (BND-1) | Without PGP: none, against anyone — `From` is as forgeable as any header, and a document is as confidential as plain email, to every mail provider on the way included (EML-9). With PGP, added by the binding (EML-3): the body confidential, its integrity, and the sender authentic as the holder of the key the invitation pinned (EML-8), also against the mail providers; the headers — the documentId in `Subject` and `x-tdsp-document`, every participant's address, the times — stay readable to every provider on the way |
 | Channel | A thread: a closed set of participants fixed when the thread starts, rooted at the invitation's `Message-ID` |
 | Carrier | One email per frame. `Subject: tdsp document <documentId>`; header `x-tdsp-document: <documentId>`; `In-Reply-To` and `References` name the thread root; `To`/`Cc` name every participant but the sender |
 | Body, PGP off | The envelope JSON as plain text |
@@ -26,9 +27,12 @@ thread starts and checks every message against them.
 | Own devices | A copy of every frame mail in the sender's own sent folder, which every device of the address searches (EML-12) |
 | MemberId, sender | The email address in its canonical form (EML-10); the `From` address, canonicalised |
 | Delivery id | The `Message-ID` |
+| Accepted (TRN-6) | The mail server accepted the message for every recipient (EML-11) |
 | Message-ID | `<local@domain>`, at most 200 characters, local part and domain from `[A-Za-z0-9._~+-]` and `[A-Za-z0-9.-]` |
-| Invitation | The thread's first message: human-readable text with the invitation link; with PGP, followed by exactly one armoured block, signed by the creator and encrypted to each participant, whose plaintext is `{"tdsp":1, "kind":"invite", documentId, creator, profile, participants: [{address, fingerprint}], keys, policy?}` — `policy` is TDSP 1.x's, which an application of TDSP 2.0 neither writes nor reads |
+| Invitation | The thread's first message: human-readable text with the invitation link; with PGP, followed by exactly one armoured block, signed by the creator and encrypted to each participant, whose plaintext is `{"tdsp":1, "kind":"invite", documentId, creator, profile, participants: [{address, fingerprint}], keys, policy?}` — `policy` is TDSP 1.x's, which a bridge or application of TDSP 2.0 neither writes nor reads |
 | Immutability | A second message under an already-seen `Message-ID` with different content is an integrity violation; one with identical content is a harmless re-read |
+| Transport profile | To a provider — bounds: floor 15 s, 4 MiB; suggested pacing 35 s / 120 s / 60 s, of which only the 35 s are a decision, the rest estimates. To a server on the same machine — no bounds; the engine's defaults as pacing ([Appendix B](../SPECIFICATION.md#appendix-b-recommended-values)) |
+| Frames carried | TDSP 2.0's, and 1.x's, unchanged ([§2.2](../SPECIFICATION.md#22-two-wrappers-two-readers)) |
 
 - **EML-1** · *bridge* — The participant set MUST be fixed when the thread starts
   and MUST NOT change for the life of the document, in either direction.
@@ -100,7 +104,7 @@ thread starts and checks every message against them.
 - **EML-13** · *bridge, application* — An application MUST show the creator key's
   fingerprint in every trust state of EML-8, and MUST NOT call the creator
   *verified* or *authenticated as a person* in *first contact* or *consistent*. A
-  binding or application that does not record a person's comparison — the
+  bridge or application that does not record a person's comparison — the
   reference implementation does not — never reaches *verified* and MUST say so
   rather than imply it.
   *Rationale:* the fingerprint is what a person compares with the creator outside
