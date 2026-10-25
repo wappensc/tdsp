@@ -143,6 +143,14 @@ export async function createCryptoMachine(
   // shareRoomKey/encrypt call assumes it's already done.
   await processOutgoingRequests(machine, config);
 
+  // A `/sync` reports a device-list change only after its `since` position, and the bridge's
+  // first `/sync` has none. A device that uploaded its keys between this machine's key query and
+  // that first `/sync` would never be reported, and never get a room key (MTX-4). So, after the
+  // first `/sync`, each user a key is shared with is queried once more, outside the machine's own
+  // tracking; every later change comes in a `/sync`'s `device_lists`.
+  let firstSyncDone = false;
+  const queriedAfterFirstSync = new Set<string>();
+
   return {
     userId,
     deviceId,
@@ -152,6 +160,18 @@ export async function createCryptoMachine(
       const memberIds = memberUserIds.map((id) => new UserId(id));
       await machine.updateTrackedUsers(memberIds);
       await processOutgoingRequests(machine, config);
+
+      const unqueried = firstSyncDone
+        ? [...new Set(memberUserIds)].filter((id) => !queriedAfterFirstSync.has(id))
+        : [];
+      if (unqueried.length > 0) {
+        const query = machine.queryKeysForUsers(unqueried.map((id) => new UserId(id)));
+        const response = await queryKeys(config, query.body);
+        await machine.markRequestAsSent(query.id, query.type, response);
+        for (const id of unqueried) {
+          queriedAfterFirstSync.add(id);
+        }
+      }
 
       const missingSessions = await machine.getMissingSessions(memberIds);
       if (missingSessions) {
@@ -212,6 +232,7 @@ export async function createCryptoMachine(
         [],
       );
       await processOutgoingRequests(machine, config);
+      firstSyncDone = true;
     },
 
     close() {

@@ -44,25 +44,26 @@ describe.skipIf(!available)(
         await loginFresh(alice, TEST_ACCOUNT_PASSWORD),
       ];
       expect(logins[0]?.deviceId).not.toBe(logins[1]?.deviceId);
-      devices = await Promise.all(
-        logins.map(async (login) => {
-          const dir = mkdtempSync(join(tmpdir(), "matrix-own-device-"));
-          const bindStorePath = join(dir, "tdsp-channels.json");
-          const deps = await createLiveServerDependencies(
-            { homeserverUrl: BASE_URL, accessToken: login.accessToken },
-            bindStorePath,
-          );
-          const server = createServer({
-            homeserverUrl: BASE_URL,
-            accessToken: login.accessToken,
-            bindStorePath,
-            ...deps,
-          });
-          await new Promise<void>((resolve) => server.listen(0, resolve));
-          const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-          return { url, server, crypto: deps.crypto, dir };
-        }),
-      );
+      // One after the other, the sending device first: it queries its account's devices before the
+      // receiving one has uploaded its keys, and its first /sync reports no change (MTX-4).
+      devices = [];
+      for (const login of logins) {
+        const dir = mkdtempSync(join(tmpdir(), "matrix-own-device-"));
+        const bindStorePath = join(dir, "tdsp-channels.json");
+        const deps = await createLiveServerDependencies(
+          { homeserverUrl: BASE_URL, accessToken: login.accessToken },
+          bindStorePath,
+        );
+        const server = createServer({
+          homeserverUrl: BASE_URL,
+          accessToken: login.accessToken,
+          bindStorePath,
+          ...deps,
+        });
+        await new Promise<void>((resolve) => server.listen(0, resolve));
+        const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        devices.push({ url, server, crypto: deps.crypto, dir });
+      }
       for (const device of devices) {
         const bound = await fetch(`${device.url}/channels/${documentId}/bind`, {
           method: "POST",
