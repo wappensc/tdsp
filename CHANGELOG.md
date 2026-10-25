@@ -323,6 +323,12 @@ After a review of the whole text (2026-10-25), besides wording, references and A
 - `@tdsp/messenger-port`: `MessengerPort.receiveSince()` and `instance()`, both optional
   (TRN-18, TRN-19); the send failure `needs-person` with `TransportSendError.needsPerson`
   (TRN-11, TRN-20).
+- The bridges name the instance of their window on `GET /health` (`instance`, TRN-19), a new one on
+  every start, since each keeps its window only in memory; `SignalMessengerPort`,
+  `MatrixMessengerPort` and `EmailMessengerPort` offer `instance()`, which refuses a bridge that
+  names none (TRN-9). An engine on one of them now takes a restart of its bridge as a truncated
+  history and asks with `force` (LOS-9); the adapters need a bridge of this version.
+- The conformance suite (§3.6) checks `instance()` where a transport offers it.
 - `wire/signal-v1.json`: the §4.5 edit as a 2.0 frame in the Signal envelope, Appendix D's
   example — an entry added within envelope version 1.
 - `wire/frames-draft-5.json`: a control operation on a right on a layer, and an edit with an
