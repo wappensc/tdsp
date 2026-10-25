@@ -1449,6 +1449,17 @@ export class DocumentEngine {
   }
 
   /**
+   * Whether a resync request of this client carries its control vector and digest (RSY-16): for
+   * anyone but the creator once it is bootstrapped (CTL-13), for a device of the creator once it
+   * has a basis (CTL-28); `null` before, which asks for the creator's word.
+   */
+  #asksWithVector(): boolean {
+    return this.#creatorMemberId === this.memberId
+      ? this.#controlBasis
+      : this.#hasCompletedBootstrap;
+  }
+
+  /**
    * Whether this client is in a capacity conflict (CTL-32): it could not hold an operation or a
    * snapshot of the creator for the bytes, a target's `seen` or the targets of control state
    * (CTL-30), so it may lack a decision — about itself, too. From then on it takes no new member or layer right, and refuses its own
@@ -2555,7 +2566,6 @@ export class DocumentEngine {
       if (this.#profile.isEmptyStateVector(stateVector)) {
         this.#bootstrapRequestIds.add(requestId);
       }
-      const ownsControl = this.#creatorMemberId === this.memberId;
       // Written when it goes out, not when it was asked for: it may wait for the floor, and what
       // it says this client holds must be what it holds then (RSY-16, LOS-12).
       const frame = () =>
@@ -2564,9 +2574,11 @@ export class DocumentEngine {
           requestId,
           // Until the creator has answered, the answer itself is what this engine lacks — the
           // creator's confirmation of the profile and its control state — even when the content
-          // has already arrived by ordinary edits (RSY-16, CTL-10): `null` says so.
-          control: ownsControl || this.#hasCompletedBootstrap ? this.#control.vector : null,
-          controlDigest: ownsControl || this.#hasCompletedBootstrap ? this.#controlDigest() : null,
+          // has already arrived by ordinary edits (RSY-16, CTL-10): `null` says so. A device of the
+          // creator without a basis says the same, so that another device that has one answers it
+          // even when it lacks nothing, and the snapshot gives it its basis (CTL-28, RSY-17).
+          control: this.#asksWithVector() ? this.#control.vector : null,
+          controlDigest: this.#asksWithVector() ? this.#controlDigest() : null,
           // After a truncated history only an answer can say nothing was lost (LOS-19).
           force: this.#historyTruncatedSince !== undefined,
           ...this.#reporting(this.#ownState()),

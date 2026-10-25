@@ -7,7 +7,7 @@ import type {
   RawChannel,
 } from "@tdsp/messenger-port";
 import { TransportSendError } from "@tdsp/messenger-port";
-import { getPlainText, insertPlainText } from "@tdsp/reconciliation";
+import { encodeUpdate, getPlainText, insertPlainText } from "@tdsp/reconciliation";
 import { describe, expect, it, vi } from "vitest";
 import { ControlState } from "./control-state";
 import { encodeControlFrame, encodeResyncResponseFrame } from "./framing";
@@ -1024,6 +1024,54 @@ describe("a basis for a new creator device's control state (CTL-28)", () => {
     await settle(second, carol);
     expect(carol.hasCompletedBootstrap).toBe(false);
     expect(carol.mayEdit).toBe(false);
+  });
+
+  it("is given by another device's answer to its own request, though it lacks nothing else (RSY-16, RSY-17)", async () => {
+    const messenger = new InMemoryMessengerPort(); // keeps history
+    let laptopState: PersistedControlState | undefined;
+    const laptop = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      onControlStateChange: (state) => {
+        laptopState = state;
+      },
+    });
+    await laptop.setMembership("carol", null);
+    laptop.dispose();
+    // A new device reads every operation from the history while the laptop is away: no basis.
+    let phoneState: PersistedControlState | undefined;
+    const phone = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      onControlStateChange: (state) => {
+        phoneState = state;
+      },
+    });
+    await settle(phone);
+    expect(phone.rightOf("carol")).toBe("revoked");
+    expect(phone.controlConfirmed).toBe(false);
+    expect(phoneState?.basis).toBe(false);
+    const content = encodeUpdate(phone.document);
+    phone.dispose();
+    // Both come back; the phone restored all it held, so it lacks nothing the laptop holds. Its
+    // request says it has no basis (`control: null`), so the laptop answers it all the same.
+    const back = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      controlState: laptopState as PersistedControlState,
+    });
+    const restarted = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, {
+      ...AS_ALICE,
+      controlState: phoneState as PersistedControlState,
+      restore: { state: content },
+    });
+    expect(restarted.controlConfirmed).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 1_100)); // past the throttle (RSY-9)
+    await settle(back, restarted);
+    expect(restarted.controlConfirmed).toBe(true);
+    // With its basis it bootstraps a joiner it never decided about, the laptop gone again.
+    back.dispose();
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
+    await new Promise((resolve) => setTimeout(resolve, 1_100)); // past the throttle (RSY-9)
+    await settle(restarted, dave);
+    expect(dave.hasCompletedBootstrap).toBe(true);
   });
 
   it("without one, a member's other device it never decided about gets no snapshot from it either", async () => {
