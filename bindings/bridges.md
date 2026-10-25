@@ -143,11 +143,12 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
   | `message-remote-deleted` | A deletion of a delivered message for everyone (Signal's remote delete) |
   | `message-replaced` | Another message, with other content, under the delivery id of one delivered |
 
-  A binding MAY name reasons of its own for refusals and records only it defines (a
-  signature that does not verify, a recipient a send skipped, SIG-4), never another
-  one for the cases above. A message the bridge does not take (BRG-10; MTX-5, an
-  unencrypted edit in an encrypted Matrix room among them) is none of these cases:
-  nothing is recorded for it. A bridge that keeps a delivery id across a restart
+  A binding MAY name reasons of its own for refusals only it defines (a signature
+  that does not verify), never another one for the cases above; whatever else it
+  has a bridge record for a document, it names as a notice (BRG-15, SIG-4). A
+  message the bridge does not take (BRG-10; MTX-5, an unencrypted edit in an
+  encrypted Matrix room among them) is none of these cases: nothing is recorded
+  for it. A bridge that keeps a delivery id across a restart
   MUST keep with it what it compares by (a hash of key and iv suffices for them).
   *Rationale:* an applied CRDT update cannot be retracted; honouring a change would
   leave participants holding different versions of the same message with nothing
@@ -185,10 +186,15 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
   *Rationale:* an attachment reference is attacker-chosen data telling the bridge
   what to fetch; following it anywhere else would break BRG-4, and an unbounded
   read or an unchecked file is a resource and integrity attack.
-- **BRG-15** · *bridge* — A bridge MUST make the integrity violations it recorded
-  available to the application, per document.
+- **BRG-15** · *bridge* — A bridge MUST make the integrity violations it recorded,
+  and the notices its binding names, available to the application, per document,
+  as the document's integrity log. Each entry has a `kind`, `violation` or
+  `notice`, and a `reason`; a violation names its `sender`, a notice the
+  `recipient` it concerns instead.
   *Rationale:* a refused message that nobody can see is indistinguishable from one
-  that never came; the application must be able to show it.
+  that never came; the application must be able to show it. A notice is nothing
+  done to the channel, and has no sender to name: what it records, such as a
+  recipient a send skipped (SIG-4), happened to a message the bridge sent.
 - **BRG-16** · *bridge* — A bridge MUST send every message — a frame and an
   invitation alike — as its own messenger account, and nothing else. A request
   that names a sender (`send`'s `sender`, an invitation's `actor`) other than that

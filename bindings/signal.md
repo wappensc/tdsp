@@ -15,7 +15,7 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
 | Aspect | Binding |
 |---|---|
 | Account | A linked device of an existing Signal account (`signal-cli link`; the person scans a QR code on the phone). The bridge holds the device's keys |
-| Security (BND-1) | Sender authentication, integrity and confidentiality, inherited from Signal's protocol and always on, also against Signal's servers, which can still delay or withhold a message. The binding adds none of them, and TDSP has not verified them: they are what Signal states of its protocol |
+| Security (BND-1) | Sender authentication, integrity and confidentiality, inherited from Signal's protocol and always on, also against Signal's servers, which can still delay or withhold a message. The binding adds none of them, and TDSP has not verified them: they are what Signal states of its protocol. A member's first identity key is trusted on first use — `signal-cli`'s default (`--trust-new-identities on-first-use`), and the bridge of this repository sets no other mode — so against Signal's servers a member is authenticated only as far as safety numbers are compared outside TDSP; a changed key is not trusted until the person trusts it (SIG-4) |
 | Channel | An existing Signal group; channel id = the group id |
 | Carrier | One group text message whose body is the envelope JSON |
 | MemberId | The account's ACI (UUID). Never the phone number |
@@ -24,7 +24,7 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
 | Own devices | What one device of an account sends reaches the account's other devices as a sync transcript, delivered like any other message (SIG-3) |
 | Inline limit | A frame of at most 800 bytes rides in the body as `frame` |
 | Attachment | A larger frame, up to 4 MiB, is the message's only attachment; the envelope carries `"attachment": {"size": <bytes>, "sha256": "<64 hex digits>"}` in place of `frame`. `signal-cli` downloads every attachment of a message it receives itself, up to its own limit (150 MiB in 0.14.9), before the bridge sees the message: BRG-13 and BRG-14 bound what the bridge reads from `signal-cli`, not that download |
-| Accepted (TRN-6) | The client sends to every member itself and answers per recipient; a recipient skipped as an identity to trust is recorded in the integrity log (SIG-4) |
+| Accepted (TRN-6) | The client sends to every member itself and answers per recipient; a recipient skipped as an identity to trust is recorded as a notice in the integrity log (SIG-4) |
 | Refusals (BRG-8) | A send `signal-cli` refuses because it cannot load the account is `unavailable` while the bridge's link status shows its device linked, and `needs-person` once it shows it unlinked (SIG-7) |
 | Transport profile | Bounds: floor 500 ms, 4 MiB; suggested pacing 2 s / 20 s / 10 s; all estimates ([Appendix B](../SPECIFICATION.md#appendix-b-recommended-values)) |
 | Frames carried | TDSP 2.0's, and 1.x's, unchanged ([§2.2](../SPECIFICATION.md#22-two-wrappers-two-readers)) |
@@ -71,9 +71,9 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
   registered, or an identity the account does not trust — does not make the send
   fail while another recipient got it. The bridge MUST make every recipient a send
   skipped as an identity the account does not trust observable to its
-  application: in the document's integrity log (BRG-15), as an entry whose `id` is
-  the message's delivery id, `sender` the bridge's own account, `recipient` the
-  recipient's ACI and `reason` `recipient-untrusted`. It MAY record a recipient so
+  application: in the document's integrity log, as a notice (BRG-15) whose `id` is
+  the message's delivery id, `recipient` the recipient's ACI and `reason`
+  `recipient-untrusted`. It MAY record a recipient so
   once for as long as its identity stays untrusted, rather than once per message.
 
   When nobody got it, and no recipient was refused for a reason that may pass, the
@@ -124,10 +124,17 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
   subscription belongs to its connection, and the messages waiting on Signal's
   servers come the moment it begins.
 - **SIG-7** · *bridge* — A send that `signal-cli` refuses because it cannot load
-  the account MUST fail as `unavailable` while the bridge's link status — what it
-  answers on `GET /auth/status` of the
-  [local bridge interface](local-bridge-interface.md) — shows its device linked,
-  and as `needs-person` once that status shows the device unlinked (BRG-8).
+  the account MUST fail as `unavailable` while the bridge's link status shows its
+  device linked, and as `needs-person` once that status shows the device unlinked
+  (BRG-8). The link status is *linked* from when `signal-cli` names an account of
+  the bridge's device — after a link the bridge completed, or one `signal-cli` kept
+  across a restart — and *unlinked* while it names none, and from when the bridge
+  learns from `signal-cli` that Signal's servers no longer accept the device (an
+  authorization failure, as after the device was removed on the phone) until a
+  link completes again. Without such word from `signal-cli` the status stays
+  linked. A bridge that offers the
+  [local bridge interface](local-bridge-interface.md) exposes the status as
+  `linked` of `GET /auth/status`.
   *Rationale:* `signal-cli` refuses a send so whether the account's state could
   not be read for a moment or the device was unlinked from the phone, and only the
   second waits for the person, who links the device again. Taken for

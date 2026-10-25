@@ -19,7 +19,8 @@ Two consequences shape everything below:
   TDSP document is exactly as confidential as the channel it rides on, and a
   message's sender is exactly as authentic as the messenger makes it. TDSP adds
   no encryption of its own; where a messenger has none, as email, its binding
-  adds it — with PGP ([email binding](bindings/email.md)).
+  may add it — the [email binding](bindings/email.md)'s optional PGP, without
+  which email is no conformant binding (EML-9).
 - **The transport is assumed to be poor.** Messages may be delayed by tens of
   seconds, duplicated, reordered, rate-limited, size-limited and lost, and a
   newly joined participant may see nothing that was sent before it joined.
@@ -53,8 +54,8 @@ TDSP 1.x incompatibly, in four places, and keeps every use case 1.x covers
 
 The transport contract gains an optional cursor and a bridge instance id
 ([§3.2](#32-operations)), a fifth send failure, `needs-person`
-([§3.4](#34-send-failures)), and a transport profile of bounds and a suggested
-pacing ([§3.5](#35-transport-profile)); none of these travels between
+([§3.4](#34-send-failures)), and its transport profile becomes bounds and one
+suggested pacing ([§3.5](#35-transport-profile)); none of these travels between
 participants. An application may carry a document between one person's devices
 through another service (ARC-5), the one connection beyond the bridge that ARC-2
 allows. The bridges and the messenger bindings, and the optional local bridge
@@ -310,7 +311,8 @@ the bridge.** Permissions are such a rule. A message size limit is a fact.
   only component that talks to the outside world is the bridge, and it talks only
   to its messenger (BRG-4, [bindings/bridges.md](bindings/bridges.md)). The
   service of ARC-5 carries nothing between participants: it is storage the person
-  was told of, through which no one else reads or writes the document.
+  was told of, through which no one but the person and that storage's provider
+  reads or writes the document.
 - **ARC-3** · *adapter, bridge* — An adapter or bridge MUST NOT parse, validate or
   act on the content of a frame. It routes by the envelope's documentId and
   hands the frame on unchanged.
@@ -340,7 +342,7 @@ the bridge.** Permissions are such a rule. A message size limit is a fact.
   application MAY carry a document's content and binding between the devices of
   one person through another service (storage of the person's own account at
   another provider, say), as it may keep a backup there; it MAY carry the control
-  state so only between devices of the document's creator. It MUST tell the
+  state that way only between devices of the document's creator. It MUST tell the
   person, before it first does so, that the document's content is then stored
   there, as confidential as that service makes it rather than as the channel does,
   and MUST use for it only storage through which no one but the person, and the
@@ -369,7 +371,8 @@ the bridge.** Permissions are such a rule. A message size limit is a fact.
   member's control state is the creator's operations as its engine received them;
   carried through another service it would be that service's word, and a member's
   engine takes control state only from the channel (CTL-25), from the creator or
-  from another device of its own member (RSY-8).
+  from another device of its own member (RSY-8), or, on the same device, from what
+  it persisted (CTL-39).
 
 ### 2.2 Two wrappers, two readers
 
@@ -491,7 +494,7 @@ type Permission = "read" | "write" | "creator";
 | `listChannels(member)` → `RawChannel[]` | The channels this account can see, to populate a picker. Answers "which channels exist", never "which documents do I have" |
 | `transportProfile()` → `TransportProfile \| undefined` | Optional. The messenger's bounds and suggested pacing ([§3.5](#35-transport-profile)) |
 | `channelMembers(channelId)` → `MemberId[]` | Optional. The members of a channel this account belongs to, as the messenger reports them at the moment of the call (TRN-17); `channelId` as `listChannels` names it, so it can be asked before a document is bound |
-| `sendInvitation(documentId, sender, text)` → `DeliveryId` | Optional. Sends a human-readable invitation ([§11](#11-invitations)) into the document's bound channel as `sender`, who must be the bridge's own account and the document's creator (BRG-16). A binding whose invitation *is* how its channel begins — email: the thread's root message — has no separate step and omits it |
+| `sendInvitation(documentId, sender, text)` → `DeliveryId` | Optional. Sends a human-readable invitation ([§11](#11-invitations)) into the document's bound channel as `sender`, who must be the bridge's own account (BRG-16) and the document's creator (the invite route of the [local bridge interface](bindings/local-bridge-interface.md#126-the-local-bridge-interface-optional)). A binding whose invitation *is* how its channel begins — email: the thread's root message — has no separate step and omits it |
 
 - **TRN-5** · *adapter* — `createDocument` MUST NOT change the membership,
   permissions or configuration of any existing channel.
@@ -638,7 +641,7 @@ for the person where only the person can help (TRN-20).
 
 | Reason | Meaning | Retryable |
 |---|---|---|
-| `rate-limited` | The messenger is throttling; carries `retryAfterMs`, the wait the messenger asked for, where it stated one (TRN-11) | Yes |
+| `rate-limited` | The messenger is throttling; may carry `retryAfterMs`, the wait the messenger asked for (TRN-11) | Yes |
 | `unavailable` | The bridge or the messenger could not be reached or failed | Yes |
 | `needs-person` | Refused until a person acts on an account: none is set up or signed in, an identity is not trusted, a device is not confirmed, the storage that holds the messages is full | Once a person acted (TRN-20, TRN-22) |
 | `too-large` | The payload exceeds what one message can carry | No |
@@ -1071,8 +1074,9 @@ A value that does not match it is no profile id: where a frame's layout asks for
 one it is `invalid-field` ([§4.4](#44-decoding-and-rejection)), and an invitation
 that carries one cannot be read (INV-6). The grammar is closed so that one id has
 one spelling — `foo/1` and `foo/01` are not two names for one profile — and its
-length is bounded. A profile defined outside this specification begins its name
-with a reverse domain name its definer controls (`com.example.markdown/1`, PRF-7).
+length is bounded. A profile defined outside this specification should begin its
+name with a reverse domain name its definer controls (`com.example.markdown/1`,
+PRF-7).
 An incompatible change to a profile is a new major version, and a new profile id.
 This specification defines one profile, `yjs-paragraphs/1`, in
 [Appendix A](#appendix-a-profile-yjs-paragraphs1).
@@ -1225,7 +1229,7 @@ A frame, an invitation and a snapshot name a profile by its id and nothing else.
 That is enough only when everyone who meets the id can find out what it means,
 and when what it means reaches an engine the way the engine itself does.
 
-- **PRF-7** · *application* — An application MUST NOT use a profile defined
+- **PRF-7** · *all* — An application MUST NOT use a profile defined
   outside this specification unless the profile has a public definition at a
   stable location, under terms that let anyone implement it. The definition MUST
   cover every item of PRF-1 and the document's structure, at the level of detail
@@ -1260,8 +1264,8 @@ edits the content; one whose application knows it sees more.
 
 A layer is named by a layer id of the same form as a profile id, `<name>/<major>`
 in the grammar of [§5](#5-document-profiles). A layer defined outside this
-specification begins its name with a reverse domain name its definer controls
-(`com.example.comments/1`, LAY-4); this specification defines no layer. A
+specification should begin its name with a reverse domain name its definer
+controls (`com.example.comments/1`, LAY-4); this specification defines no layer. A
 profile says whether, and where, it admits layers; `yjs-paragraphs/1` does
 ([Appendix A](#appendix-a-profile-yjs-paragraphs1)). No frame, invitation or
 snapshot announces the layers a document uses: the document's state is the
@@ -1292,7 +1296,7 @@ announcement.
   *Rationale:* the projection and the overlay are exchanged between engines whose
   applications implement different layers; counting a layer in either would shift
   every offset between them.
-- **LAY-4** · *application* — An application MUST NOT use a layer unless the layer
+- **LAY-4** · *all* — An application MUST NOT use a layer unless the layer
   has a public definition at a stable location, under terms that let anyone
   implement it, stating its structure, what in the content it points into and how,
   and what a reader shows when that content is gone or has moved. The definition
@@ -1626,7 +1630,7 @@ a device that lost its state is simply a new device.
   is absent (FRM-14).
   *Rationale:* a tag per device instead of one counter per document is what lets
   several devices of the creator decide without a conflict; with 16 random bytes,
-  that two devices choose one tag is negligible. A device's own earlier counters are
+  the chance that two devices choose one tag is negligible. A device's own earlier counters are
   implied (CTL-22); an entry for them at or above the operation's own counter
   would make the operation supersede itself, so that it held nowhere, and
   rejecting it keeps every receiver reading it alike.
@@ -1638,9 +1642,10 @@ a device that lost its state is simply a new device.
   operation that holds only after its send succeeds would show the person nothing
   while the messenger is away, and what a device decided is as much its state as
   what it typed.
-- **CTL-4** · *engine* — No one but the creator MUST send a `control` frame; an
-  operation on a member or on a member's right on a layer MUST NOT name the creator
-  and MUST NOT carry the permission `creator` (the wire has no value for it).
+- **CTL-4** · *engine* — A participant other than the creator MUST NOT send a
+  `control` frame; an operation on a member or on a member's right on a layer MUST
+  NOT name the creator and MUST NOT carry the permission `creator` (the wire has no
+  value for it).
   *Rationale:* the creator's role is fixed (LIF-2) and cannot be granted,
   transferred or revoked.
 - **CTL-5** · *engine* — A receiver MUST apply a control operation if and only if
@@ -1942,7 +1947,7 @@ the creator among the targets — rejects the whole `resync-response` (FRM-6).
   because it must come from the creator. A device of one's own member is the
   exception: the messenger authenticates its MemberId like one's own, and whoever
   controls an account controls all of its devices anyway. A snapshot carried
-  between one person's devices is as much the creator's as the service that
+  between the creator's devices is as much the creator's as the service that
   carries it keeps it so (ARC-5). A union cannot undo anything, so a snapshot need
   not be newer than what a receiver holds, and state with a hole may be passed on.
   Merged so, a snapshot gives what its
@@ -1953,8 +1958,8 @@ the creator among the targets — rejects the whole `resync-response` (FRM-6).
   vector, or only by what an operation had seen, is no device to drop: what it had
   seen is what supersedes an operation that arrives later (CTL-22).
 - **CTL-10** · *engine* — A receiver MUST reject a `resync-response` whose snapshot
-  it would apply (CTL-25), the creator's or another device's of its own member,
-  when the snapshot names a profile other than the document's — applying none of
+  it would apply (CTL-25), the creator's or that of another device of its own
+  member, when the snapshot names a profile other than the document's — applying none of
   it, update included — and MUST report it to its application.
   *Rationale:* the profile a joiner learned from the invitation is only a claim of
   whoever wrote the invitation; the creator's snapshot is where the creator
@@ -2581,7 +2586,9 @@ follow-up: `due`, the time within which the sender will speak again (SND-14).
   *Rationale:* a piece is retried because the pieces before it are already out,
   and an answer missing one is incomplete. The seed goes out once, as the document
   is created and before anyone is invited (§6.2): an application told that the
-  creation failed can create the document again, and nobody has missed anything.
+  creation failed can create a new document, and nobody invited has missed
+  anything. It cannot create the failed one again: its documentId stays marked
+  (LIF-5), and a seed reported as failed may still have reached someone listening.
 - **SND-3** · *engine* — A pending change MUST be sent no later than the first
   moment at which the floor permits after either `maxIntervalMs` has passed since
   its oldest edit or `maxChars` changed characters are pending; otherwise it
@@ -2925,7 +2932,11 @@ leave no trace an engine can see (§10.6).
   without gaps, so a missing counter is a missing decision; the heartbeat makes
   even the last operation's loss visible. A heartbeat from a creator device that
   knows less is no evidence: a vector compares per device, so a lagging device
-  shows only lower entries.
+  shows only lower entries. Only a heartbeat brings the creator's control vector
+  into this check, deliberately; a creator's request is judged by its control
+  digest alone (LOS-12). Every control frame makes a heartbeat owed (SND-11) that
+  carries the same vector, so a lost operation shows by the heartbeat that follows
+  it, and a request would add no evidence of its own.
 
 ### 10.3 Reports and streams
 
@@ -2988,7 +2999,7 @@ piece carry digests beside their vectors (LOS-12).
   a divergence that is not there, or hide one. `aboveHoles` is left out because a
   hole is evidence of its own (LOS-10). Eight bytes keep every report small; two
   different states share a digest only by chance, and then a difference goes
-  unseen until the next one, which no state takes as its own.
+  unseen until either state changes.
 
 A receiver that holds every insertion a sender's vector counts compares the
 sender's state digest with that of what it deleted itself of those items, its own
@@ -3502,7 +3513,10 @@ it is only *worth using* with it.
 4. **A service that carries a document between one person's devices** (ARC-5) is
    trusted as that person's machine is (INV-9): whoever can write there can hand
    the person's other devices a creator to obey and, on a device of the creator,
-   the creator's operations.
+   the creator's operations — and can hand a device content and a binding of its
+   choosing, to a channel the person never chose, into which the device then
+   sends what the person writes: a loss of confidentiality, not only of
+   authority.
 
 ### 15.3 What TDSP enforces itself
 
@@ -3607,7 +3621,9 @@ The reference implementation uses all five.
 - **A forged invitation** naming a false creator hands control authority to that
   identity in the joiner's engine; INV-3 puts a person in the loop. One that names
   the person themselves as its creator is presented as that claim, never taken for
-  a document they created on another device (INV-7).
+  a document they created on another device on the invitation's word alone
+  (INV-7); only what the person confirmed on a device of theirs, carried from there
+  unchanged, lets another device join without asking again (INV-9).
 - **Attachments** let any member make other members fetch data; BRG-13 and BRG-14
   bound how much a bridge reads, and the fetch itself where the bridge makes it.
   Where a messenger's client fetches attachments before the bridge sees a message,
@@ -3619,8 +3635,8 @@ The reference implementation uses all five.
   (SEC-2).
 
 - **SEC-2** · *application* — An application that creates or opens an email
-  document without PGP MUST tell the person so, persistently, as the experimental
-  mode EML-9 labels: the document has no sender authentication.
+  document without PGP MUST tell the person so, persistently, as EML-9 labels the
+  experimental mode: the document has no sender authentication.
   *Rationale:* anyone who can send mail with a forged `From` can issue control
   frames as the creator.
 
@@ -3834,10 +3850,10 @@ keeps its own version 1, with the frame as a JSON string:
    the same message presented again, record another one under a delivered id, and
    compare them as BRG-12 says (BRG-11, BRG-12). Bound what you keep of each
    document (BRG-17).
-6. Resolve a send only once the messenger accepted it for every member (TRN-6),
-   and classify send failures (BRG-8): a refusal only a person can lift is
-   `needs-person`, `409` over the local bridge interface (LBI-6). If the bridge
-   runs in its own process, offer the local bridge interface
+6. Resolve a send only once the messenger accepted it as its binding defines
+   accepted (TRN-6), and classify send failures (BRG-8): a refusal only a person
+   can lift is `needs-person`, `409` over the local bridge interface (LBI-6). If
+   the bridge runs in its own process, offer the local bridge interface
    ([§12.6](bindings/local-bridge-interface.md#126-the-local-bridge-interface-optional)):
    loopback only, loopback origins only.
 7. Reach exactly one endpoint, and fetch attachments only from it, bounded and
@@ -3862,8 +3878,8 @@ keeps its own version 1, with the frame as a JSON string:
    there (LAY-2).
 3. Persist the creator's control state — with its device tag, its counter and the
    operations not yet sent (CTL-26) — and the list of documents the user has,
-   marking a document as the person's own before its initial state goes out
-   (LIF-5); where you can persist only asynchronously, hold every message until
+   marking a document as the person's own before it creates the engine that
+   sends the initial state (LIF-5); where you can persist only asynchronously, hold every message until
    the state is durable (CTL-38). Persist a capacity conflict with the control
    state, and show it (CTL-32). Persist the cursor and the instance with content,
    never a cursor ahead of the control state restored with it (LIF-8, CTL-40). On
@@ -3922,7 +3938,7 @@ engine runs on Node.js and in the browser, its bridges on Node.js.
 | `messenger-signal`, `messenger-matrix`, `messenger-email` | adapter | The adapters, each an HTTP client of its bridge through the [local bridge interface](bindings/local-bridge-interface.md) |
 | `bridges/signal-bridge`, `bridges/matrix-bridge`, `bridges/email-bridge` | bridge | The bridges, one per binding ([bindings/](bindings/)), each offering the local bridge interface on loopback |
 | `loopback` | adapter, bridge | The one check of whether an address is a loopback address, as the local bridge interface defines it |
-| `bridge-log` | bridge | The bridges' structured log, which never records a credential or a document's content |
+| `bridge-log` | bridge | The bridges' structured log. Its callers log identifiers, never message bodies, keys or credentials; as a safety net it redacts a field whose name suggests a secret (`password`, `token`, `secret`, `credential`, …), cuts every string at a bound, and escapes control characters so that a value cannot begin a line of its own |
 
 The adapters and bridges are those of the release that implements TDSP 1.4,
 changed to serve the transport profile of [§3.5](#35-transport-profile) (TRN-13).
@@ -4007,7 +4023,7 @@ The changes have six reasons, which the tables below cite by letter:
 | CTL-6, TRN-8 | An operation already held is inert, where 1.x judged a frame by its sequence | A: a duplicate is the expected result of a re-offered message, and a set makes it harmless without a sequence. |
 | CTL-15 | The snapshot's layout: operations per target with a control vector and the counters held above a hole, and no policy | A, B; the counters, because an operation superseded above a hole is in no target's heads, and a state restored without them lost the hole. |
 | RSY-8 (with RSY-18) | What `control` carries in an answer; a member reports the creator's counters; every piece names the responder's stream and its own number, the last the count | A: the reports are how a new device of the creator learns what to supersede (CTL-27). D: a requester that holds more than the responder cannot otherwise tell whether a piece is missing. |
-| SND-2 (with SND-20) | Which messages go first and which are retried, a part of 1.x's SND-2, is a requirement of its own (SND-20): a control frame is retried until the messenger takes it, and a piece of an answer; the seed is not, and a failed seed fails the document's creation. A send asked for at once keeps the floor | A: the operation already holds, so its send is owed, as an edit's is. And a conformance check: a send at once could push the next message into a refusal. The seed is an edit, which SND-6 would keep; it goes out before anyone is invited, so the creation fails instead, and the application can create the document again. |
+| SND-2 (with SND-20) | Which messages go first and which are retried, a part of 1.x's SND-2, is a requirement of its own (SND-20): a control frame is retried until the messenger takes it, and a piece of an answer; the seed is not: it is no pending change, and a failed send of it fails the document's creation (LIF-3). A send asked for at once keeps the floor | A: the operation already holds, so its send is owed, as an edit's is. And a conformance check: a send at once could push the next message into a refusal. The seed goes out before anyone is invited, so its failure fails the creation instead of waiting as a pending change, and the application can create a new document. |
 | SND-1 | A floor, `minChars` or latency that is not finite falls back to its default | A conformance check: an infinite floor stopped every send. |
 | SND-7, SND-9 | A refusal of a message of any kind holds back, and widens the spacing of, the next send of every kind | A conformance check: an answer refused as rate-limited went out again every second. |
 | SND-8 (with SND-21 and SND-22), PRF-1 (item 7) | Pieces instead of fragments; a dropped answer, request or heartbeat leaves nothing undistributed. What the application shows (SND-21) and a refusal the profile ruled out (SND-22), parts of 1.x's SND-8, are requirements of their own, and SND-8 is the engine's alone; the application shows undistributed changes and offers to send the whole state again | D; and a conformance check: an application that only avoided the word "synchronised" met the rule while it showed everything as sent. |
@@ -4034,7 +4050,7 @@ The changes have six reasons, which the tables below cite by letter:
 | FRM-7 | A rejection carries the delivery's sender | So that an application can say whom a version skew concerns (VER-4). |
 | PRF-6, LIF-5 | Restored control state is what CTL-26 persists; an application marks a document it creates before the initial state goes out, and resumes one without control state as a new device of the creator | A: the persisted form changed with the control state, and a new device decides at once (CTL-27). Creating a document issues no operation, so without the mark a stop right after creating it left nothing that said it existed. |
 | LAY-2 | A copy is the same document; a new document from its content, and an export, may leave layers out and say so | Whether continuing in a new document was a copy that must keep every layer was left open. |
-| PRF-7, LAY-4 | The id of a profile or a layer defined outside this specification should begin with a reverse domain name its definer controls, as an extension's does (FRM-15) | The text said so only informatively; two definers must not choose one id, and one that does not control the domain cannot be sure of it. |
+| PRF-7, LAY-4 | The id of a profile or a layer defined outside this specification should begin with a reverse domain name its definer controls, as an extension's does (FRM-15); both requirements are of the class *all*, not *application* | The text said so only informatively; two definers must not choose one id, and one that does not control the domain cannot be sure of it. What a definition must hold binds its definer, whom only the class *all* names (§1.4). |
 | DCL-3 | At most one report per sender for as long as the engine runs; across a restart, what a person saw is the application's to remember | An engine keeps no state of a decline, so the 1.x wording could not be kept across a restart. |
 | RSY-5, RSY-14 | A device of the creator is bootstrapped by any answer to its own request, and at once with restored content and a basis; its automatic requests on loss evidence do not depend on its bootstrap | A: a restarted device of the creator otherwise asked for a bootstrap no one owed it, and stopped asking about real evidence once those attempts ran out. |
 | LIF-6 | After a close, an operation issued before it still goes out; an application shows a closed document as synchronising while its engine suspects a loss, so the class names it too | A: it already holds on its device, and receivers must learn of it to agree. And a closed document can still change until the last edits sent before the close arrive. |
@@ -4047,13 +4063,13 @@ The changes have six reasons, which the tables below cite by letter:
 | FRM-14 | No entry of 0 in a control vector; one received is read as absent | The control digest is computed over the vectors a participant holds; two spellings of one state would make equal states look diverged. |
 | FRM-13 | Which reason a frame with several faults is rejected for: the version before the kind, the kind before the fields | A frame of another version is judged by its version alone, which is what an application shows a person (VER-4). |
 | FRM-9 to FRM-12 (with FRM-15 to FRM-17) | Extension fields, `crit`, their bounds and what a definition states: an extension's name (FRM-15), checking the value of an extension one implements (FRM-16); an extension is not passed on (FRM-17) | C; wappensc/tdsp#71: ignoring an extension is not passing it on. |
-| ARC-5 | An application may carry a document's content and binding between one person's devices through another service, and tells the person; the control state only between devices of the creator. A device of the creator that takes over carried control state continues under a new tag, and the state gives it a basis only if it was one (with CTL-25, CTL-28, RSY-14) | ARC-1 concerns participants; it said nothing about one person's devices, which a messenger without history cannot bring up to date. Two devices under one tag would notice only once one received what the other issued (CTL-24). A member's control state carried through another service would be that service's word, and a member's engine takes control state only from the channel. |
+| ARC-5 | An application may carry a document's content and binding between one person's devices through another service, and tells the person; the control state only between devices of the creator. A device of the creator that takes over carried control state continues under a new tag, and the state gives it a basis only if it was one (with CTL-25, CTL-28, RSY-14) | ARC-1 concerns participants; it said nothing about one person's devices, which a messenger without history cannot bring up to date. Two devices under one tag would notice only once one received what the other issued (CTL-24). A member's control state carried through another service would be that service's word, and a member's engine takes control state only from the channel or, on the same device, from what it persisted (CTL-39). |
 | INV-9 | Joining on another device of the person without asking again, when the confirmation travels from where the person gave it | INV-3 protects the creator's identity; the service that carries it is trusted as the person's machine. |
 | INV-10 | The `MUST` of §11.3's opening, to use the link's form, as a requirement of its own | A `MUST` without an ID, which §1.3 left informative although it was meant to bind; the content is unchanged |
 | TRN-20 (with TRN-22) | A send refused as `needs-person` is kept, shown, and tried again when the application says the person acted, or after the longest back-off; what the application shows meanwhile (TRN-22) | The person can lift the refusal and waiting cannot; without its own handling it would spin or be dropped. |
 | TRN-18 (with TRN-21), TRN-19 | An optional cursor with `truncated`, answered in the window's order (TRN-21), and truncated also behind what the bridge passed over; a bridge instance id, the epoch of the window, that changes whenever the bridge may have lost something | E: the engine continues after the last delivery an answer held; a gap the bridge skipped, or a loss in a restart, is what it cannot see by itself. |
 | CTL-20 to CTL-29 (with CTL-38) | Operations, merging, the snapshot, persistence, a new device of the creator; reported counters only for a device without a basis; a basis persisted with the state, and holding every message as the alternative to persisting synchronously (CTL-38) | A. |
-| CTL-39, CTL-41 (with LIF-8 and CTL-40) | Any participant may persist its control state; a member that restored it, and read on from the cursor persisted with its content without a gap, is bootstrapped by it; an application persists the cursor and the instance with content (LIF-8), never a cursor ahead of the control state restored with it (CTL-40) | E: 1.x had no cursor, and a restarted member waited for the creator's answer before it edited, for hours if the creator was offline. A member that reads on without a gap stands where one that never restarted stands; a cursor ahead of its control state would read past a revocation unseen. |
+| CTL-39, CTL-41 (with LIF-8 and CTL-40) | Any participant may persist its control state and restore it on that device only; a member that restored it, and read on from the cursor persisted with its content without a gap, is bootstrapped by it; an application persists the cursor and the instance with content (LIF-8), never a cursor ahead of the control state restored with it (CTL-40) | E: 1.x had no cursor, and a restarted member waited for the creator's answer before it edited, for hours if the creator was offline. A member that reads on without a gap stands where one that never restarted stands; a cursor ahead of its control state would read past a revocation unseen. |
 | CTL-33 (with CTL-43) | What only members hold shown to a device of the creator, with the values reported; resolved by an explicit confirmation that counts the reported counters as seen; an application shows divergences for as long as they last (CTL-43) | A: deciding a target again superseded a vanished device's decision only when it was narrower; automatic is only what a rule merges without a question of authority. |
 | PRF-1, item 9 | Reading an update and a state vector without applying them; one the profile cannot read, or with a byte after it, rejects its frame (§4.4) | A frame is checked whole before anything of it is applied (FRM-6), and CRDT libraries fail differently on bytes they cannot read: one throws, another has applied part already. |
 | LOS-12, CTL-31; PRF-1, item 8 | State digests beside the vectors in heartbeats, requests and an answer's last piece; a receiver that holds a sender's vector compares what it deleted within it, and different digests are evidence and something to offer; a device of the creator learns of a collision from a report | wappensc/tdsp#71: a vector counts what was inserted or issued, so a lost deletion and two operations under one dot went unseen; the digest is a fixed 8 bytes. Compared at equal vectors only, a lost deletion would stay unseen at a receiver that has edited since. |
@@ -4083,19 +4099,21 @@ and EML-13 new:
 
 | Requirements | Change | Why |
 |---|---|---|
-| BRG-1, BRG-8, LBI-6 | Five reasons of §3.4: a send while the bridge is not provisioned, and every refusal only a person can lift, is `needs-person`, `409` over the local bridge interface; where the messenger reports such a refusal as it reports one that passes, the binding says how the bridge tells them apart, and until it can the refusal is `unavailable` | 409 already meant a state the person ends, not one waiting ends (TRN-11). Taken for `needs-person` at once, a passing refusal would hold every message for the longest back-off. |
+| BRG-1, BRG-8, LBI-6 | Five reasons of §3.4: a send while the bridge is not provisioned, and every refusal only a person can lift, is `needs-person`, `409` over the local bridge interface; where the messenger reports such a refusal as it reports one that passes, the binding says how the bridge tells them apart, and until it can the refusal is `unavailable`; an adapter passes `Retry-After` on as `retryAfterMs` (LBI-6, TRN-11) | 409 already meant a state the person ends, not one waiting ends (TRN-11). Taken for `needs-person` at once, a passing refusal would hold every message for the longest back-off. An engine behind the local bridge interface did not learn the wait the messenger stated. |
 | BRG-2 | Provisioning keeps credentials from components that render what came through the channel, as ARC-4 | As ARC-4. |
 | BRG-9; MTX-7 (new) | The choice between body and attachment may go by the size of the envelope as written; Matrix measures it so, at 32 000 bytes | Escapes in the envelope and Megolm's Base64 let a frame of 32 000 bytes exceed Matrix's 65 536 bytes per event, and a frame within `maxBytes` was refused as too large. |
 | BRG-11, BRG-12, SIG-3 | The same message again (same id, same content) is dropped; another message under a delivered id is recorded, not delivered; content is compared before anything is fetched, a frame in the body by its bytes, one in an attachment by the hash its envelope names, an encrypted file also by its key and iv; a bridge that keeps a delivery id across a restart keeps what it compares by with it (a hash of key and iv suffices); nothing is recorded for a message the bridge does not take (BRG-10, MTX-5); a shared vocabulary of reasons; a bridge that drops messages of non-members asks the messenger anew each time | The texts did not tell the two apart, so a second message under one id was delivered or dropped without a record; and a remembered "not a member" dropped the first frames of whoever just joined. An encrypted file's hash is that of its ciphertext, which under another key and iv is another frame. An id kept without what it was compared by cannot tell a message presented again from a replaced one; a record of an event the bridge does not take would let a homeserver fill the log. |
 | BRG-14 | A binding says where the messenger's own client fetches attachments, a fetch the bridge cannot bound | §15.5 promised a bound that, on such a messenger, nothing enforces. |
+| BRG-15 | The integrity log holds the violations a bridge recorded and the notices its binding names; each entry has a `kind`, `violation` or `notice`, and a notice names the `recipient` it concerns instead of a sender; so does the local bridge interface's integrity-log route | A recipient a send skipped (SIG-4) is nothing done to the channel and has no sender; an application has to tell it from a violation. |
 | BRG-17 | A bridge may drop a delivery once the one reader it serves kept it | A bridge that keeps its window on disk need not keep a frame's text a second time; a cursor from before still reads as truncated. |
 | BRG-18 (new) | A message a bridge cannot read never keeps it from reading the others; values nested too deep in a messenger's answer may be dropped | One deeply nested event in a Matrix `/sync` stopped a bridge for good: the answer never parsed, and its position never moved. |
+| LBI-1 | A bridge listens on a loopback address only, such as `127.0.0.1` or `::1`: any address of §12.6's definition, not only these two | The definition already took in `localhost` and all of `127.0.0.0/8`, and naming two addresses read as excluding the others. |
 | BND-1 | A binding states against whom each property holds, the provider's servers included; the Signal and email bindings say so, as inherited or as added | An encrypted Matrix room protected against the homeserver only in the wording; MTX-4 is where it does. |
 | BND-3 | The 64 hexadecimal digits are ASCII | A Unicode test for hexadecimal digits takes full-width forms too, a second spelling of the same hash. |
 | BND-4 (new) | The `MAY` of §13.1 to carry a frame as an attachment, as a requirement of its own | A `MAY` without an ID, which §1.3 left informative although it was meant to apply; the content is unchanged |
 | EML-13 (new) | The part of 1.x's EML-8 on what an application shows of the creator's key, as a requirement of its own | It was a part of a longer requirement, and requires what it did there |
-| SIG-4, SIG-5 (new) | When a group send is accepted, from `signal-cli`'s result per recipient, and every recipient it skipped as an identity to trust recorded in the integrity log; a bridge reads a connection before `signal-cli` pushes into it | `signal-cli` reports a group message sent once one member got it, and hands each waiting message to a device once. A member whose identity changed receives nothing while every send succeeds, and only the person can trust the new identity. |
-| SIG-7 (new) | A send `signal-cli` refuses because it cannot load the account is `unavailable` while the device shows linked, `needs-person` once it shows unlinked | `signal-cli` refuses so for a passing failure and for an unlinked device alike; only the second waits for the person. |
+| SIG-4, SIG-5 (new) | When a group send is accepted, from `signal-cli`'s result per recipient, and every recipient it skipped as an identity to trust recorded in the integrity log, as a notice (BRG-15); a bridge reads a connection before `signal-cli` pushes into it | `signal-cli` reports a group message sent once one member got it, and hands each waiting message to a device once. A member whose identity changed receives nothing while every send succeeds, and only the person can trust the new identity. |
+| SIG-7 (new) | A send `signal-cli` refuses because it cannot load the account is `unavailable` while the bridge's link status, which SIG-7 defines, shows the device linked, `needs-person` once it shows it unlinked | `signal-cli` refuses so for a passing failure and for an unlinked device alike; only the second waits for the person. |
 | SIG-6 (new) | A bridge that receives through a subscription reads before it subscribes, again on every connection; it keeps its instance across ending the subscription only if it read up to the answer and its `signal-cli` hands on the message in hand | A subscription lets a bridge stop receiving without closing the connection; `signal-cli` 0.14.9 drops the message it is handling when the last subscription ends. |
 | MTX-4, MTX-5 (new) | Room keys only to devices their owners signed, the bridge's own device signed, frames only from signed devices (older sessions excepted); MTX-5 (new): an unencrypted TDSP event in an encrypted room, an edit included, is ignored without a record, and that the room was seen encrypted is persisted with each binding to it | Shared with every device, as 1.x said, a key reached any device a homeserver added, and frames from such a device were delivered; Matrix clients now exclude unsigned devices (MSC4153), and a bridge that does not is not given keys by them. A homeserver can place an unencrypted event under any member's name; a bridge that forgot the room was encrypted would take the room's word again after a restart. |
 | MTX-6 (new) | The wait of a Matrix rate limit from the `Retry-After` header, the body's `retry_after_ms` only without one | Matrix 1.10 moved the wait into the header (MSC4041). |

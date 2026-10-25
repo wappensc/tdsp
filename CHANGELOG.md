@@ -276,24 +276,31 @@ Bridges and bindings:
 After a review of the whole text (2026-10-25), besides wording, references and Appendix G:
 
 - **Control state is carried only between the creator's devices** (ARC-5, CTL-39): a member's
-  application carries content and binding, and its engine takes control state from the channel.
+  application carries content and binding, and its engine takes control state from the channel
+  or, on the same device, what it persisted. **The storage it uses** (ARC-5, ARC-2) is one
+  through which no one but the person and that storage's provider reads or writes the document,
+  where before no one but the person was to read or write through it.
 - **The pace bound is each engine's own** (SND-15, LOS-11): 10 minutes recommended, not a number
   every engine must use, since a receiver waits for the longer of a sender's `due` and the pace it
   runs itself.
 - **Profile and layer ids** (PRF-7, LAY-4) should begin with a reverse domain name their definer
   controls, as an extension's does.
-- **The digest is a requirement** (LOS-24): the first 8 bytes of SHA-256 of the state or the control
-  snapshot, as §10.3 defined it informatively.
+- **The digest is a requirement** (LOS-24): the first 8 bytes of SHA-256 — the state digest over the
+  profile's encoding of what the sender deleted, the control digest over its control snapshot's
+  vector and targets, without `aboveHoles` —, as §10.3 defined it informatively.
 - **The seed is not retried** (SND-20, LIF-3): a failed send of it fails the document's creation.
 - **What a bridge compares** (BRG-11, BRG-12): a frame in the body by its bytes, one in an attachment
   by the hash its envelope names, an encrypted file also by its key and iv; across a restart a hash
   of key and iv suffices.
-- **Signal** (SIG-4, SIG-7, BRG-8): a recipient a send skipped as an identity to trust is recorded in
-  the integrity log, so the application can show it; a send `signal-cli` refuses because it cannot
-  load the account is `unavailable` while the device shows linked, `needs-person` once unlinked.
+- **Signal** (SIG-4, SIG-7, BRG-8, BRG-15): a recipient a send skipped as an identity to trust is
+  recorded in the integrity log as a notice, an entry of a `kind` of its own beside the violations
+  that names the `recipient` instead of a sender, so the application can show it; a send
+  `signal-cli` refuses because it cannot load the account is `unavailable` while the bridge's link
+  status, which SIG-7 defines, shows the device linked, `needs-person` once unlinked.
 - **Security statements** (BND-1): the Signal binding states what it inherits from Signal, also
-  against Signal's servers, as Signal's word; the email binding what PGP adds against the mail
-  providers, and that the headers stay readable to every one of them.
+  against Signal's servers, as Signal's word, and that a member's first identity key is trusted on
+  first use; the email binding what PGP adds against the mail providers, and that the headers and
+  the invitation's text and link stay readable to every one of them.
 
 ### Added
 

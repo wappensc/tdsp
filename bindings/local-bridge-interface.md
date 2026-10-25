@@ -83,7 +83,7 @@ unknown route answers 404.
 | `GET /channels/:documentId/deliveries` | → `receive` | — | `[{id, documentId, sender, payload}]` |
 | `GET /channels/:documentId/deliveries-since?after=` | Optional → `receiveSince` (TRN-18, TRN-21); `after` absent for all still held | — | `{deliveries: [{id, documentId, sender, payload}], truncated: boolean}`; 404 where the bridge does not offer it |
 | `POST /channels/:documentId/invite` | Send a human-readable invitation into the bound channel | `{actor, text}` — `actor` must be the bridge's own account and the document's creator, else 403 | `{deliveryId}` |
-| `GET /channels/:documentId/integrity-log` | The integrity violations recorded (BRG-15) | — | a list of `{id, sender, reason, …}`, `reason` one of BRG-12's or one its binding names (SIG-4) |
+| `GET /channels/:documentId/integrity-log` | The integrity violations recorded and the notices its binding names (BRG-15) | — | a list of `{kind, id, sender, reason, …}` for a violation, `reason` one of BRG-12's or one its binding names, and `{kind, id, recipient, reason, …}` for a notice, `reason` one its binding names (SIG-4); an entry without `kind`, from a bridge of TDSP 1.x, is a violation |
 
 Email has no pre-existing channel to bind to; starting and joining a thread
 replace binding:
