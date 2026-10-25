@@ -45,6 +45,7 @@ const unconfigured: {
     pollOnce: notConfiguredError,
     getDeliveries: () => [],
     getIntegrityLog: () => [],
+    hasSeenEncrypted: () => false,
   },
   crypto: undefined,
 };

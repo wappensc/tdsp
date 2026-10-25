@@ -58,17 +58,23 @@ class FakeMatrixRoomReader implements MatrixRoomReader {
   }
 }
 
-// `encrypted` is accepted (MatrixRoomWriter's real interface) but
-// unused here — this file's own tests only care about plaintext
-// request/response shaping; the real encrypt/decrypt path is covered
-// live by crypto.security.test.ts, gated on hasTestMatrixHomeserver(), same
+// `encrypted` is only recorded here, in `encryptedSends`: the real encrypt/decrypt path is
+// covered live by crypto.security.test.ts, gated on hasTestMatrixHomeserver(), same
 // fast-fake/real-integration split every other route already has.
 class FakeMatrixRoomWriter implements MatrixRoomWriter {
   sentEdits: { roomId: string; documentId: string; payload: string }[] = [];
+  /** For each edit sent, whether the route asked for it to be encrypted. */
+  encryptedSends: boolean[] = [];
   #nextId = 0;
 
-  async sendEdit(roomId: string, documentId: string, payload: string): Promise<string> {
+  async sendEdit(
+    roomId: string,
+    documentId: string,
+    payload: string,
+    encrypted: boolean,
+  ): Promise<string> {
     this.sentEdits.push({ roomId, documentId, payload });
+    this.encryptedSends.push(encrypted);
     this.#nextId += 1;
     return `$fake-edit-${this.#nextId}`;
   }
@@ -101,6 +107,12 @@ class FakeSyncState implements SyncState {
 
   getIntegrityLog(documentId: string): readonly IntegrityEntry[] {
     return this.integrityLog.get(documentId) ?? [];
+  }
+
+  seenEncrypted = new Set<string>();
+
+  hasSeenEncrypted(roomId: string): boolean {
+    return this.seenEncrypted.has(roomId);
   }
 }
 
@@ -281,6 +293,46 @@ describe("matrix-bridge HTTP API", () => {
     // Nothing about permissions or lifecycle is stored.
     expect(stored["doc-1"]).not.toHaveProperty("archived");
     expect(stored["doc-1"]).not.toHaveProperty("permissions");
+  });
+
+  it("POST /channels/:documentId/bind persists a room the bridge has seen encrypted as encrypted, whatever its state says now (MTX-5)", async () => {
+    rooms.joinedRoomIds.add("!plain:example.org");
+    sync.seenEncrypted.add("!plain:example.org");
+    const response = await fetch(`${baseUrl}/channels/doc-1/bind`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        channelId: "!plain:example.org",
+        creator: "alice",
+        profile: "yjs-paragraphs/1",
+      }),
+    });
+    expect(response.status).toBe(200);
+    const stored = JSON.parse(readFileSync(bindStorePath, "utf8")) as BindStoreData;
+    expect(stored["doc-1"]?.encrypted).toBe(true);
+  });
+
+  it("POST /channels/:documentId/send sends encrypted into a room seen encrypted since it was bound as plain (MTX-5)", async () => {
+    rooms.joinedRoomIds.add("!plain:example.org");
+    await fetch(`${baseUrl}/channels/doc-1/bind`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        channelId: "!plain:example.org",
+        creator: "alice",
+        profile: "yjs-paragraphs/1",
+      }),
+    });
+    const send = () =>
+      fetch(`${baseUrl}/channels/doc-1/send`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sender: "alice", payload: "hello" }),
+      });
+    expect((await send()).status).toBe(200);
+    sync.seenEncrypted.add("!plain:example.org");
+    expect((await send()).status).toBe(200);
+    expect(writer.encryptedSends).toEqual([false, true]);
   });
 
   it("POST /channels/:documentId/bind rejects a missing channelId with a clear 400", async () => {
@@ -642,7 +694,12 @@ describe("matrix-bridge with no account provisioned (BRG-1)", () => {
         joinedMembers: reached("joinedMembers"),
       },
       writer: { sendEdit: reached("sendEdit"), sendInviteMessage: reached("sendInviteMessage") },
-      sync: { pollOnce: reached("pollOnce"), getDeliveries: () => [], getIntegrityLog: () => [] },
+      sync: {
+        pollOnce: reached("pollOnce"),
+        getDeliveries: () => [],
+        getIntegrityLog: () => [],
+        hasSeenEncrypted: () => false,
+      },
       bindStorePath: join(bindStoreDir, "tdsp-channels.json"),
     });
     await new Promise<void>((resolve) => server.listen(0, resolve));

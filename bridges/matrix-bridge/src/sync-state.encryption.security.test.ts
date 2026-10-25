@@ -2,7 +2,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createLogger } from "@tdsp/bridge-log";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { saveBindStore } from "./bind-store.ts";
+import { loadBindStore, saveBindStore } from "./bind-store.ts";
 import type { CryptoMachine } from "./crypto-machine.ts";
 import { createSyncState, type SyncState } from "./sync-state.ts";
 
@@ -32,16 +32,23 @@ interface TimelineEvent {
 /** A homeserver whose `/sync` answers one round after another, all in `ROOM`. */
 class FakeHomeserver {
   syncRounds: TimelineEvent[][] = [];
+  /** What each round's `state` block holds, before its timeline. */
+  stateRounds: TimelineEvent[][] = [];
   #round = 0;
 
   handle = async (input: string | URL | Request): Promise<Response> => {
     const url = String(input);
     if (url.includes("/_matrix/client/v3/sync")) {
       const events = this.syncRounds[this.#round] ?? [];
+      const state = this.stateRounds[this.#round] ?? [];
       this.#round += 1;
+      const room = {
+        timeline: { events },
+        ...(state.length > 0 ? { state: { events: state } } : {}),
+      };
       return Response.json({
         next_batch: `s${this.#round}`,
-        rooms: { join: events.length > 0 ? { [ROOM]: { timeline: { events } } } : {} },
+        rooms: { join: events.length > 0 || state.length > 0 ? { [ROOM]: room } : {} },
       });
     }
     return new Response("unexpected", { status: 500 });
@@ -99,8 +106,10 @@ describe("an unencrypted frame where the room is encrypted (§13.3)", () => {
     vi.stubGlobal("fetch", homeserver.handle);
   });
 
-  function syncStateBoundAs(encrypted: boolean): SyncState {
-    const bindStorePath = join(tmpdir(), `matrix-encryption-test-${Math.random()}.json`);
+  function syncStateBoundAs(
+    encrypted: boolean,
+    bindStorePath = join(tmpdir(), `matrix-encryption-test-${Math.random()}.json`),
+  ): SyncState {
     saveBindStore(bindStorePath, {
       [DOC]: {
         roomId: ROOM,
@@ -178,5 +187,46 @@ describe("an unencrypted frame where the room is encrypted (§13.3)", () => {
     const state = syncStateBoundAs(false);
     await pollRounds(state, [plainFrame("$one", "b25l")], [plainFrame("$two", "dHdv")]);
     expect(frames(state)).toEqual(["b25l", "dHdv"]);
+  });
+
+  it("is never delivered where the first /sync names the room's encryption in its state, though bound as plain (MTX-5)", async () => {
+    const state = syncStateBoundAs(false);
+    homeserver.stateRounds = [[encryptionTurnedOn("$on")]];
+    await pollRounds(state, [plainFrame("$forged", "Zm9yZ2Vk")]);
+    expect(frames(state)).toEqual([]);
+  });
+
+  it("is never delivered after a restart once the room was seen encrypted, though no encryption event reaches the bridge again (MTX-5)", async () => {
+    const bindStorePath = join(tmpdir(), `matrix-encryption-test-${Math.random()}.json`);
+    const before = syncStateBoundAs(false, bindStorePath);
+    await pollRounds(before, [encryptedFrame("$e", "ZW5j")]);
+    expect(loadBindStore(bindStorePath)[DOC]?.encrypted).toBe(true);
+
+    // A fresh process over the same bind store; the room's state says nothing of encryption.
+    homeserver = new FakeHomeserver();
+    vi.stubGlobal("fetch", homeserver.handle);
+    const after = createSyncState(
+      { homeserverUrl: HOME, accessToken: "t" },
+      bindStorePath,
+      fakeCrypto(),
+      createLogger({ component: "test", sink: () => {} }),
+    );
+    await pollRounds(after, [plainFrame("$forged", "Zm9yZ2Vk")]);
+    expect(frames(after)).toEqual([]);
+  });
+
+  it("names a room seen encrypted before any binding to it, so that a binding made later is encrypted (MTX-5)", async () => {
+    const bindStorePath = join(tmpdir(), `matrix-encryption-test-${Math.random()}.json`);
+    saveBindStore(bindStorePath, {});
+    const state = createSyncState(
+      { homeserverUrl: HOME, accessToken: "t" },
+      bindStorePath,
+      fakeCrypto(),
+      createLogger({ component: "test", sink: () => {} }),
+    );
+    expect(state.hasSeenEncrypted(ROOM)).toBe(false);
+    await pollRounds(state, [encryptionTurnedOn("$on")]);
+    expect(state.hasSeenEncrypted(ROOM)).toBe(true);
+    expect(loadBindStore(bindStorePath)).toEqual({});
   });
 });

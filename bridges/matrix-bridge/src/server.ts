@@ -537,8 +537,12 @@ export function createServer(deps: ServerDependencies): Server {
           }
 
           const existing = getBindRecord(deps.bindStorePath, documentId);
-          // checked once, read-only, never set by this call.
-          const encrypted = existing?.encrypted ?? (await deps.rooms.isEncrypted(roomId));
+          // A room once seen encrypted stays so, whatever its state says now; one the bridge saw
+          // so before this binding is persisted as such with it (MTX-5).
+          const encrypted =
+            (existing?.roomId === roomId && existing.encrypted) ||
+            deps.sync.hasSeenEncrypted(roomId) ||
+            (await deps.rooms.isEncrypted(roomId));
           const record: BindRecord = {
             roomId,
             creatorMemberId: body.creator,
@@ -583,7 +587,7 @@ export function createServer(deps: ServerDependencies): Server {
             bound.roomId,
             documentId,
             body.payload,
-            bound.encrypted,
+            bound.encrypted || deps.sync.hasSeenEncrypted(bound.roomId),
           );
           sendJson(res, 200, { deliveryId });
         })
@@ -649,7 +653,7 @@ export function createServer(deps: ServerDependencies): Server {
           const eventId = await deps.writer.sendInviteMessage(
             bound.roomId,
             body.text,
-            bound.encrypted,
+            bound.encrypted || deps.sync.hasSeenEncrypted(bound.roomId),
           );
           sendJson(res, 200, { deliveryId: eventId });
         })

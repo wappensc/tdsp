@@ -219,6 +219,8 @@ export interface SyncResult {
   readonly nextBatch: string;
   /** Only rooms with at least one new Timeline event this round — matches Matrix's own `/sync` response shape (a room absent from `rooms.join` simply had nothing new). */
   readonly roomEvents: ReadonlyMap<string, readonly RawTimelineEvent[]>;
+  /** The state events each room's `state` block holds this round, before its timeline: on a first `/sync` the room's state, `m.room.encryption` among it (MTX-5). */
+  readonly roomStateEvents: ReadonlyMap<string, readonly RawTimelineEvent[]>;
   /** to-device events (Olm-encrypted room-key shares included) this round — fed to `OlmMachine.receiveSyncChanges` by `crypto-machine.ts`, never interpreted here. */
   readonly toDeviceEvents: readonly RawToDeviceEvent[];
   /** users whose device list changed this round, per Matrix's own `device_lists.changed`/`.left` — same destination as `toDeviceEvents`. */
@@ -262,6 +264,20 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 
+/** The events of a room's `timeline` or `state` block that are events at all (BRG-18). */
+function eventsOf(block: unknown): RawTimelineEvent[] {
+  return isRecord(block) && Array.isArray(block.events)
+    ? block.events.filter(
+        (event): event is RawTimelineEvent =>
+          isRecord(event) &&
+          typeof event.type === "string" &&
+          typeof event.event_id === "string" &&
+          typeof event.sender === "string" &&
+          (event.unsigned === undefined || isRecord(event.unsigned)),
+      )
+    : [];
+}
+
 /**
  * A `/sync` answer, read as far as it can be: whatever one room, event or field holds that is not
  * what Matrix defines is dropped and the rest is read (BRG-18). Whoever can reach the account
@@ -274,21 +290,19 @@ export function readSyncAnswer(body: unknown): SyncResult {
     throw new MatrixApiError(502, "sync answered without a next_batch position");
   }
   const roomEvents = new Map<string, readonly RawTimelineEvent[]>();
+  const roomStateEvents = new Map<string, readonly RawTimelineEvent[]>();
   const rooms = isRecord(body.rooms) && isRecord(body.rooms.join) ? body.rooms.join : {};
   for (const [roomId, room] of Object.entries(rooms)) {
-    const events =
-      isRecord(room) && isRecord(room.timeline) && Array.isArray(room.timeline.events)
-        ? room.timeline.events.filter(
-            (event): event is RawTimelineEvent =>
-              isRecord(event) &&
-              typeof event.type === "string" &&
-              typeof event.event_id === "string" &&
-              typeof event.sender === "string" &&
-              (event.unsigned === undefined || isRecord(event.unsigned)),
-          )
-        : [];
+    if (!isRecord(room)) {
+      continue;
+    }
+    const events = eventsOf(room.timeline);
     if (events.length > 0) {
       roomEvents.set(roomId, events);
+    }
+    const state = eventsOf(room.state);
+    if (state.length > 0) {
+      roomStateEvents.set(roomId, state);
     }
   }
   const toDevice =
@@ -298,6 +312,7 @@ export function readSyncAnswer(body: unknown): SyncResult {
   return {
     nextBatch: body.next_batch,
     roomEvents,
+    roomStateEvents,
     toDeviceEvents: toDevice.filter(
       (event): event is RawToDeviceEvent => isRecord(event) && typeof event.type === "string",
     ),
