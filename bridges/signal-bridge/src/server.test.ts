@@ -142,7 +142,25 @@ describe("signal-bridge HTTP API", () => {
   it("GET /health reports ok", async () => {
     const response = await fetch(`${baseUrl}/health`);
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ status: "ok" });
+    await expect(response.json()).resolves.toEqual({ status: "ok", instance: expect.any(String) });
+  });
+
+  it("names its window's instance on /health: the same while it runs, another after a start (TRN-19)", async () => {
+    const instanceAt = async (url: string): Promise<unknown> =>
+      ((await (await fetch(`${url}/health`)).json()) as { instance?: unknown }).instance;
+    const first = await instanceAt(baseUrl);
+    expect(typeof first).toBe("string");
+    expect(first).not.toBe("");
+    expect(await instanceAt(baseUrl)).toBe(first);
+    // A start keeps nothing of the window, which this bridge holds only in memory.
+    const restarted = createServer({ auth, groups, writer, sync, bindStorePath });
+    await new Promise<void>((resolve) => restarted.listen(0, resolve));
+    try {
+      const { port } = restarted.address() as AddressInfo;
+      expect(await instanceAt(`http://127.0.0.1:${port}`)).not.toBe(first);
+    } finally {
+      await new Promise<void>((resolve) => restarted.close(() => resolve()));
+    }
   });
 
   it("GET /auth/status reflects the auth dependency's current status", async () => {

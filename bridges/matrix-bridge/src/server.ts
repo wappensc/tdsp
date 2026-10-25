@@ -2,6 +2,7 @@
  * network-policy: loopback-listener — Zone B (docs/network-policy.md). Inbound only,
  * bound to 127.0.0.1, CORS reflected only for loopback origins.
  */
+import { randomUUID } from "node:crypto";
 import {
   createServer as createHttpServer,
   type IncomingMessage,
@@ -245,6 +246,12 @@ export interface ServerDependencies {
    * (docs/matrix-device-confirmation.md). Absent while no access token is configured.
    */
   readonly ownDevice?: { readonly deviceId: string; readonly ed25519: string };
+  /**
+   * The epoch of this bridge's window, which `GET /health` names (TRN-19). Left out, a new one on
+   * every start: the bridge keeps its window, and what its messenger handed it, only in memory, so
+   * a restart may lose a delivery.
+   */
+  readonly instance?: string;
 }
 
 /**
@@ -363,6 +370,7 @@ interface InviteRequestBody {
 }
 
 export function createServer(deps: ServerDependencies): Server {
+  const instance = deps.instance ?? randomUUID();
   // The account this bridge sends as, asked of the homeserver once (BRG-16): a send or an
   // invite that names anyone else is refused. Forgotten on failure, so a later request retries.
   let ownId: Promise<string> | undefined;
@@ -418,6 +426,7 @@ export function createServer(deps: ServerDependencies): Server {
         status: "ok",
         homeserverUrl: deps.homeserverUrl,
         configured: deps.accessToken !== undefined,
+        instance,
       });
       return;
     }

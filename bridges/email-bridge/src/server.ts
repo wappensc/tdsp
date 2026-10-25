@@ -2,6 +2,7 @@
  * network-policy: loopback-listener — Zone B (docs/network-policy.md). Inbound only,
  * bound to 127.0.0.1, CORS reflected only for loopback origins.
  */
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   createServer as createHttpServer,
@@ -71,6 +72,12 @@ export interface ServerDependencies {
   readonly sentCopy?: SentCopyMode;
   /** Defaults to the environment-configured logger. */
   readonly logger?: Logger;
+  /**
+   * The epoch of this bridge's window, which `GET /health` names (TRN-19). Left out, a new one on
+   * every start: the bridge keeps its window, and what its messenger handed it, only in memory, so
+   * a restart may lose a delivery.
+   */
+  readonly instance?: string;
 }
 
 function sendJson(
@@ -366,6 +373,7 @@ interface SendRequestBody {
 }
 
 export function createServer(deps: ServerDependencies): Server {
+  const instance = deps.instance ?? randomUUID();
   const logger = deps.logger ?? loggerFromEnv("email-bridge");
   return createHttpServer((req: IncomingMessage, res: ServerResponse) => {
     const origin = req.headers.origin;
@@ -385,7 +393,11 @@ export function createServer(deps: ServerDependencies): Server {
     const [path, query = ""] = url.split("?", 2);
 
     if (method === "GET" && path === "/health") {
-      sendJson(res, 200, { status: "ok", configured: provisionedAccount(deps) !== undefined });
+      sendJson(res, 200, {
+        status: "ok",
+        configured: provisionedAccount(deps) !== undefined,
+        instance,
+      });
       return;
     }
 
