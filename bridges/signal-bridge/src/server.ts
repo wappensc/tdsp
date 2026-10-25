@@ -2,6 +2,7 @@
  * network-policy: loopback-listener — Zone B (docs/network-policy.md). Inbound only,
  * bound to 127.0.0.1, CORS reflected only for loopback origins.
  */
+import { randomUUID } from "node:crypto";
 import {
   createServer as createHttpServer,
   type IncomingMessage,
@@ -215,6 +216,12 @@ export interface ServerDependencies {
   readonly writer: GroupWriter;
   readonly sync: SyncState;
   readonly bindStorePath: string;
+  /**
+   * The epoch of this bridge's window, which `GET /health` names (TRN-19). Left out, a new one on
+   * every start: the bridge keeps its window, and what its messenger handed it, only in memory, so
+   * a restart may lose a delivery.
+   */
+  readonly instance?: string;
 }
 
 /**
@@ -329,6 +336,7 @@ interface InviteRequestBody {
 }
 
 export function createServer(deps: ServerDependencies): Server {
+  const instance = deps.instance ?? randomUUID();
   return createHttpServer((req: IncomingMessage, res: ServerResponse) => {
     const origin = req.headers.origin;
     if (typeof origin === "string" && isLoopbackOrigin(origin)) {
@@ -347,7 +355,7 @@ export function createServer(deps: ServerDependencies): Server {
     const [path, query = ""] = url.split("?", 2);
 
     if (method === "GET" && path === "/health") {
-      sendJson(res, 200, { status: "ok" });
+      sendJson(res, 200, { status: "ok", instance });
       return;
     }
 

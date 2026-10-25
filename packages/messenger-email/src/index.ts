@@ -230,6 +230,27 @@ export class EmailMessengerPort implements MessengerPort {
   }
 
   /**
+   * `GET /health` — the epoch of the bridge's window (SPECIFICATION.md TRN-19), which changes when
+   * the bridge may have lost a delivery. A bridge that names none is refused, not answered with a
+   * fixed value that would hide its restarts (TRN-9).
+   */
+  async instance(): Promise<string> {
+    const response = await fetch(`${this.#bridgeUrl}/health`);
+    if (!response.ok) {
+      throw new Error(`instance failed: ${response.status} ${await response.text()}`);
+    }
+    const health: unknown = await response.json();
+    const instance =
+      typeof health === "object" && health !== null
+        ? (health as { instance?: unknown }).instance
+        : undefined;
+    if (typeof instance !== "string" || instance === "") {
+      throw new Error("instance: the bridge names no instance of its window (TRN-19)");
+    }
+    return instance;
+  }
+
+  /**
    * `GET /members?channelId=` — the members of channel `channelId` as the bridge's messenger
    * reports them now (SPECIFICATION.md TRN-17): a snapshot, the bridge's own account included.
    * A channel that account is not in is refused, as is an answer that is not a list of ids.

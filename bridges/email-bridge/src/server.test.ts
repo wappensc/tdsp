@@ -1,5 +1,6 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Delivery, parseTransportProfile } from "@tdsp/messenger-port";
@@ -171,7 +172,35 @@ describe("bridges/email-bridge server", () => {
   it("GET /health reports configured true when a sender/address is present", async () => {
     const response = await fetch(`${baseUrl}/health`);
     expect(response.status).toBe(200);
-    expect(await readJson(response)).toEqual({ status: "ok", configured: true });
+    expect(await readJson(response)).toEqual({
+      status: "ok",
+      configured: true,
+      instance: expect.any(String),
+    });
+  });
+
+  it("names its window's instance on /health: the same while it runs, another after a start (TRN-19)", async () => {
+    const instanceAt = async (url: string): Promise<unknown> =>
+      ((await (await fetch(`${url}/health`)).json()) as { instance?: unknown }).instance;
+    const first = await instanceAt(baseUrl);
+    expect(typeof first).toBe("string");
+    expect(first).not.toBe("");
+    expect(await instanceAt(baseUrl)).toBe(first);
+    // A start keeps nothing of the window, which this bridge holds only in memory.
+    const restarted = createServer({
+      address: sender.address,
+      sender,
+      sync,
+      gpg: undefined,
+      bindStorePath,
+    });
+    await new Promise<void>((resolve) => restarted.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = restarted.address() as AddressInfo;
+      expect(await instanceAt(`http://127.0.0.1:${port}`)).not.toBe(first);
+    } finally {
+      await new Promise<void>((resolve) => restarted.close(() => resolve()));
+    }
   });
 
   it("GET /health reports configured false when unconfigured", async () => {
@@ -181,7 +210,11 @@ describe("bridges/email-bridge server", () => {
     const address = server.address();
     const url = typeof address === "object" && address ? `http://127.0.0.1:${address.port}` : "";
     const response = await fetch(`${url}/health`);
-    expect(await readJson(response)).toEqual({ status: "ok", configured: false });
+    expect(await readJson(response)).toEqual({
+      status: "ok",
+      configured: false,
+      instance: expect.any(String),
+    });
   });
 
   it("GET /whoami returns the configured mailbox address", async () => {
@@ -340,6 +373,7 @@ describe("bridges/email-bridge server", () => {
       expect(await readJson(await fetch(`${url}/health`))).toEqual({
         status: "ok",
         configured: false,
+        instance: expect.any(String),
       });
       expect((await fetch(`${url}/transport-profile`)).status).toBe(503);
     });
