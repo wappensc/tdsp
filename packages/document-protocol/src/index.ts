@@ -828,12 +828,16 @@ export class DocumentEngine {
   // Per member, what its latest report holds that this device of the creator neither holds nor
   // supersedes (CTL-33), oldest reporter first; at most MAX_TARGETS targets in all.
   readonly #divergences = new Map<MemberId, Map<string, ReportedDivergence>>();
-  // Whether this device of the creator has a basis for its control state — it created the
-  // document, restored its state, merged another of its devices' snapshot, or applied an operation
-  // of the creator it did not issue itself, as a channel's history shows them. Reports and its own
-  // new operations are no basis: they say nothing about what the others hold. Without one it
-  // answers a joiner with a snapshot only when it decided about that joiner itself (CTL-27).
+  // Whether this device of the creator has a basis for its control state (CTL-28) — it created the
+  // document, restored its state that was one, or merged a snapshot another of its devices sent in
+  // answer to its own request. Reports, its own new operations, and the creator's operations and
+  // snapshots it overheard are none: the wire does not say whether the device that issued them had a
+  // basis. Without one it answers a request with a snapshot only when it decided about the
+  // requester itself (`#decidedHere`).
   #controlBasis = false;
+  // The members this device of the creator decided about itself, under its tag, in this instance or
+  // as its restored state shows (CTL-28): whom it may bootstrap without a basis.
+  readonly #decidedHere = new Set<MemberId>();
   #scheduler: SendScheduler;
   #detector: LossDetector;
   // The transport's largest message, if it says: a frame over it is sent in pieces (SND-17).
@@ -954,9 +958,21 @@ export class DocumentEngine {
         }
       }
       // What it restores is a basis only if it was one (CTL-28): its own new operations and what
-      // participants reported are none, before a restart or after it.
+      // participants reported are none, before a restart or after it. Whom it decided about itself
+      // is what its operations under its tag still show; one another device superseded since is
+      // given up, which only makes it answer with less (CTL-28).
       if (state.basis !== false) {
         this.#gainBasis();
+      }
+      for (const [target, held] of Object.entries(this.#control.snapshot().targets)) {
+        const member = memberOf(target as ControlTarget);
+        if (
+          target.startsWith("member:") &&
+          member !== undefined &&
+          held.heads.some((head) => head.device === state.device)
+        ) {
+          this.#decidedHere.add(member);
+        }
       }
     }
     if (options.creatorMemberId === memberId && this.#device === undefined) {
@@ -1423,9 +1439,10 @@ export class DocumentEngine {
   /**
    * Whether this client's control state is confirmed (CTL-28, CTL-29): always for anyone but the
    * creator, who learns it from the creator; for a device of the creator once it has a basis — it
-   * created the document, restored its state, merged another of its devices' snapshot or read the
-   * creator's operations. A device without one may still decide, but what it shows of the others'
-   * rights is unconfirmed, and an application should not decide anything for the person on it.
+   * created the document, restored its state that had one, or merged a snapshot another of its
+   * devices sent in answer to its own request. A device without one may still decide, but what it
+   * shows of the others' rights is unconfirmed, and an application should not decide anything for
+   * the person on it.
    */
   get controlConfirmed(): boolean {
     return this.#creatorMemberId !== this.memberId || this.#controlBasis;
@@ -1898,7 +1915,13 @@ export class DocumentEngine {
       let snapshotHeld = false;
       if (frame.kind === "resync-response") {
         if (frame.control !== null && snapshotCounts) {
-          snapshotHeld = this.#applyControlSnapshot(frame.control);
+          // A basis only from another device of the creator answering this device's own request:
+          // that device answers a device of the creator with a snapshot only once it has one itself
+          // (CTL-28); one it sent another requester says nothing of the kind.
+          snapshotHeld = this.#applyControlSnapshot(
+            frame.control,
+            isOwnResyncResponse && delivery.sender === this.#creatorMemberId,
+          );
         } else if (
           frame.control !== null &&
           isOwnResyncResponse &&
@@ -3158,11 +3181,13 @@ export class DocumentEngine {
           continue;
         }
         const requested = { stateVector: request.stateVector };
-        // What this device sends as control state: the creator's, once it has a basis for it; to
-        // another device of its own member, what it holds once bootstrapped (a union cannot undo
-        // anything, CTL-25); to a device of the creator, what it holds as a report (CTL-27).
+        // What this device sends as control state (RSY-8): the creator's, once it has a basis for it,
+        // and before only to a member it decided about itself — so never to another device of the
+        // creator, which is no member (CTL-4, CTL-28); to another device of its own member, what it
+        // holds once bootstrapped (a union cannot undo anything, CTL-25); to a device of the creator,
+        // what it holds as a report (CTL-27).
         const control: ControlSnapshot | null = isCreator
-          ? this.#controlBasis || this.#control.holds(`member:${request.requester}`)
+          ? this.#controlBasis || this.#decidedHere.has(request.requester)
             ? this.controlState
             : null
           : requesterIsOwnDevice
@@ -3481,6 +3506,10 @@ export class DocumentEngine {
     this.#counter = op.counter;
     this.#control.add(op);
     this.#unsent.set(key, text);
+    const member = target.startsWith("member:") ? memberOf(target) : undefined;
+    if (member !== undefined) {
+      this.#decidedHere.add(member);
+    }
     try {
       await this.#sendControlFrame(key, text);
     } finally {
@@ -3605,15 +3634,8 @@ export class DocumentEngine {
       (frame.counter > this.#counter ||
         !this.#issuedHere(frame) ||
         this.#collidesUnderOwnTag(anomaliesBefore));
-    // An operation of the creator this device did not issue — from another device, or read from the
-    // channel's history — is a basis for what this device holds (CTL-28).
-    if (
-      result === "added" &&
-      frame.device !== this.#device &&
-      this.#creatorMemberId === this.memberId
-    ) {
-      this.#gainBasis();
-    }
+    // No basis, though it came from another device of the creator or from the channel's history: that
+    // device may have had none, and the frame does not say (CTL-28).
     if (ownTagElsewhere) {
       this.#leaveOwnTag();
     }
@@ -3699,9 +3721,10 @@ export class DocumentEngine {
   /**
    * Merges a control snapshot, already checked in full by the decoder, by union (CTL-25): it never
    * undoes anything, so it need not be newer than what this client holds, and never reopens a
-   * closed document. For a device of the creator, another of its devices' snapshot is a basis.
+   * closed document. For a device of the creator, `basis` says whether it is a basis (CTL-28):
+   * another of its devices' answer to this device's own request.
    */
-  #applyControlSnapshot(snapshot: DecodedSnapshot): boolean {
+  #applyControlSnapshot(snapshot: DecodedSnapshot, basis: boolean): boolean {
     const anomaliesBefore = this.#control.anomalies.length;
     const { leftOut, refused } = this.#control.mergeOrRefuse(snapshot);
     if (leftOut > 0) {
@@ -3731,7 +3754,7 @@ export class DocumentEngine {
       );
     }
     this.#followPace();
-    if (this.#creatorMemberId === this.memberId && !refused) {
+    if (this.#creatorMemberId === this.memberId && basis && !refused) {
       this.#gainBasis();
     }
     this.#notifyControlStateChange();

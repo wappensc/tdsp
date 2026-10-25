@@ -979,14 +979,68 @@ describe("a basis for a new creator device's control state (CTL-28)", () => {
     expect(dave.permissionOf("dave")).toBe("read");
   });
 
-  it("is given by the creator's operations read from the channel's history", async () => {
+  it("is not given by the creator's operations read from the channel's history: their device may have had none", async () => {
     const messenger = new InMemoryMessengerPort(); // keeps history
     const old = await DocumentEngine.create(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await old.setMembership("carol", null); // carol was removed
     await old.setMembership("bob", "write");
     old.dispose();
     const fresh = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
-    expect(fresh.controlConfirmed).toBe(true);
+    expect(fresh.permissionOf("bob")).toBe("write"); // held, as operations of the creator are
+    expect(fresh.controlConfirmed).toBe(false);
+    // So a joiner it never decided about itself gets no snapshot from it (RSY-8).
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
+    await settle(fresh, dave);
+    expect(dave.hasCompletedBootstrap).toBe(false);
+  });
+
+  it("is not given by a snapshot of the creator that answers another requester", async () => {
+    const { messenger, fresh } = await lost();
+    const state = new ControlState();
+    state.add({ device: TAG, counter: 1, target: "member:erin", value: "write", seen: {} });
+    await messenger.send(DOCUMENT_ID, "alice", forgedResponse(snapshotOf(state)));
+    await settle(fresh);
+    expect(fresh.permissionOf("erin")).toBe("write"); // merged by union, as the creator's (CTL-25)
+    expect(fresh.controlConfirmed).toBe(false);
+  });
+
+  it("two devices without one never give each other one: a removed member is not bootstrapped by the second", async () => {
+    const { messenger, bob, fresh } = await lost();
+    const second = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await settle(fresh, second, bob);
+    // The first decides about dave and bootstraps him; the second hears the operation and the
+    // snapshot in the answer to dave.
+    await fresh.setMembership("dave", "read");
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", messenger, undefined, AS_ALICE);
+    await new Promise((resolve) => setTimeout(resolve, 1_100)); // past the throttle of its last answer (RSY-9)
+    await settle(fresh, second, dave);
+    expect(dave.hasCompletedBootstrap).toBe(true);
+    expect(second.permissionOf("dave")).toBe("read");
+    expect(second.controlConfirmed).toBe(false);
+    expect(fresh.controlConfirmed).toBe(false);
+    // Carol, whom the lost device removed, asks while only the second is online.
+    fresh.dispose();
+    const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", messenger, undefined, AS_ALICE);
+    await settle(second, carol);
+    expect(carol.hasCompletedBootstrap).toBe(false);
+    expect(carol.mayEdit).toBe(false);
+  });
+
+  it("without one, a member's other device it never decided about gets no snapshot from it either", async () => {
+    const { messenger, bob, fresh } = await lost();
+    // Another device of the creator decides about bob; the first hears it.
+    const second = await DocumentEngine.join(DOCUMENT_ID, "alice", messenger, undefined, AS_ALICE);
+    await settle(fresh, second, bob);
+    await second.setMembership("bob", "write");
+    await settle(fresh, second);
+    second.dispose();
+    bob.dispose();
     expect(fresh.permissionOf("bob")).toBe("write");
+    // Bob's laptop asks while only the first device is online: it decided nothing about bob.
+    const laptop = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, AS_ALICE);
+    await new Promise((resolve) => setTimeout(resolve, 1_100)); // past the throttle of its last answer (RSY-9)
+    await settle(fresh, laptop);
+    expect(laptop.hasCompletedBootstrap).toBe(false);
   });
 });
 
