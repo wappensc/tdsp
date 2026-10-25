@@ -465,9 +465,9 @@ export class SendScheduler {
    * - Then the send condition itself. A queued frame, `maxChars` reached, or a retry: as
    *   soon as the floor and back-off permit. Otherwise the quiet time after the last
    *   edit — but only once `minChars` are pending — or, whatever the typing,
-   *   `maxIntervalMs` after the oldest pending edit, or the moment a heartbeat this client owes
-   *   falls due, if that is earlier (SND-3, SND-23): a change typed on and on would otherwise
-   *   hold that heartbeat back past what the frame that owes it promised (SND-14).
+   *   `maxIntervalMs` after the oldest pending edit, or by the time a heartbeat this client owes
+   *   requires, if that is earlier (`#pendingDeadline`, SND-3, SND-23): a change typed on and on
+   *   would otherwise hold that heartbeat back past what the frame that owes it promised (SND-14).
    */
   #dueAt(): number {
     const floorAt =
@@ -489,7 +489,7 @@ export class SendScheduler {
     } else {
       const deadlineAt = Math.min(
         (this.#updates[0]?.at ?? 0) + this.#policy.maxIntervalMs,
-        this.#heartbeatTime() ?? Number.POSITIVE_INFINITY,
+        this.#pendingDeadline() ?? Number.POSITIVE_INFINITY,
       );
       readyAt =
         chars >= this.#policy.minChars
@@ -769,22 +769,50 @@ export class SendScheduler {
   }
 
   /**
-   * Whether a change of this client's own that waits holds the heartbeat due at `at` back (SND-23).
-   * One that keeps the heartbeat's promise itself — the open promises are an edit's, or a message's
-   * that promised nothing — does: once it goes out, the heartbeat counts afresh from it. Otherwise
-   * only a change made before `at` does, which goes out by then (SND-3); the heartbeat follows it as
-   * soon as the floor permits, and a change made since waits behind the heartbeat, so that a person
-   * who keeps typing cannot hold back the follow-up a control frame promised (SND-14, LOS-16).
+   * Whether a change of this client's own, once sent, keeps the promise the heartbeat owed keeps
+   * (LOS-16): when the promises still open are an edit's, or a message's that promised nothing.
+   * Then the heartbeat counts afresh from it. A control frame's promise only a heartbeat or another
+   * control frame keeps, and a heartbeat owed at once (SND-24) only a heartbeat.
    */
-  #heldByPending(at: number): boolean {
+  #pendingKeepsHeartbeat(): boolean {
     const owed = this.#owed;
+    return owed === null || (owed.control === null && owed.nowAt === null);
+  }
+
+  /**
+   * By when a change pending now goes out at the latest for the heartbeat this client owes (SND-3,
+   * SND-23), or `null` when it owes none: by the heartbeat's time where the change keeps its
+   * promise; otherwise one floor before it, so that the heartbeat follows the change as soon as
+   * the floor permits and still within what the frame that owes it promised (SND-14).
+   */
+  #pendingDeadline(): number | null {
+    const at = this.#heartbeatTime();
+    if (at === null) {
+      return null;
+    }
+    return this.#pendingKeepsHeartbeat() ? at : at - this.effectiveMinIntervalMs;
+  }
+
+  /**
+   * Whether a change of this client's own that waits holds the heartbeat back (SND-23). One that
+   * keeps the heartbeat's promise does: once it goes out, the heartbeat counts afresh from it.
+   * Otherwise only a change made before its deadline (`#pendingDeadline`), or before a heartbeat
+   * owed at once became owed, does: it goes out first, as soon as it may; a change made since waits
+   * behind the heartbeat, so that a person who keeps typing cannot hold back the follow-up a control
+   * frame promised (SND-14, LOS-16), nor the newer report a request asked for (SND-24).
+   */
+  #heldByPending(): boolean {
     if (this.#updates.length === 0) {
       return false;
     }
-    if (owed === null || (owed.control === null && owed.nowAt === null)) {
+    if (this.#pendingKeepsHeartbeat()) {
       return true;
     }
-    return this.#updates.some((item) => item.at < at);
+    const before = Math.max(
+      this.#pendingDeadline() ?? Number.POSITIVE_INFINITY,
+      this.#owed?.nowAt ?? Number.NEGATIVE_INFINITY,
+    );
+    return this.#updates.some((item) => item.at < before);
   }
 
   /**
@@ -798,7 +826,7 @@ export class SendScheduler {
     const at = this.#heartbeatTime();
     if (
       at === null ||
-      this.#heldByPending(at) ||
+      this.#heldByPending() ||
       this.#outbox.some((entry) => entry.own) ||
       this.#priority.some((entry) => entry.armsHeartbeat) ||
       this.#failures > 0

@@ -1576,17 +1576,17 @@ describe("SendScheduler heartbeat", () => {
       return { scheduler, heartbeats, edits, keepTyping };
     }
 
-    it("a control frame's heartbeat is not held back: the pending change goes at its time, the heartbeat a floor later", async () => {
+    it("a control frame's heartbeat is not held back: the pending change goes a floor before its time, the heartbeat on time", async () => {
       const h = typing({ minIntervalMs: 1_000, maxIntervalMs: 20_000 });
       // A control frame at T0 promises a follow-up within 20 s; only a heartbeat or another control
       // frame keeps it at receivers (LOS-16), never an edit.
       await h.scheduler.submit(async () => {}, { armsHeartbeat: true, promise: "control" });
       await vi.advanceTimersByTimeAsync(100);
       await h.keepTyping(60_000);
-      expect(h.edits).toContain(T0 + 20_000); // the change pending at the heartbeat's time, then
-      expect(h.heartbeats[0]).toBe(T0 + 21_000); // the heartbeat, as soon as the floor permits
+      expect(h.edits).toContain(T0 + 19_000); // the change pending a floor before its time, then
+      expect(h.heartbeats[0]).toBe(T0 + 20_000); // the heartbeat, within the frame's due
       // What was typed meanwhile goes after it, a floor later at the earliest.
-      expect(h.edits.filter((at) => at > T0 + 20_000 && at < T0 + 22_000)).toEqual([]);
+      expect(h.edits.filter((at) => at > T0 + 19_000 && at < T0 + 21_000)).toEqual([]);
     });
 
     it("an edit's own promise is kept by the next edit, at the heartbeat's time at the latest, with no heartbeat", async () => {
