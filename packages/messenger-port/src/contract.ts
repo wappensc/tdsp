@@ -188,4 +188,27 @@ export const messengerPortContractCases: readonly MessengerPortContractCase[] = 
       );
     },
   },
+  {
+    // Optional (TRN-19): where the transport offers an instance, it names the window as it stands,
+    // and a delivery read in between does not change it; that a restart does is each transport's
+    // own test, since this suite cannot restart a bridge.
+    name: "instance() names the window, and a send and a receive leave it as it was, where offered",
+    run: async ({ documentId, creatorPort, creatorId, memberPort, memberId }) => {
+      const instance = memberPort.instance?.bind(memberPort);
+      if (instance === undefined) {
+        return;
+      }
+      const before = await instance();
+      assert.ok(before.length > 0, "instance() answered an empty string");
+      await creatorPort.createDocument(documentId, creatorId);
+      const payload = `{"instance":${Date.now()}}`;
+      await creatorPort.send(documentId, creatorId, payload);
+      await eventually(
+        () => memberPort.receive(documentId, memberId),
+        (deliveries) => deliveries.some((d) => d.payload === payload),
+        `${memberId} never received the delivery`,
+      );
+      assert.equal(await instance(), before, "instance() changed while the bridge ran on");
+    },
+  },
 ];
