@@ -80,6 +80,17 @@ be grepped or alerted on.
 | `signal-cli-sigkill-escalation` | warn | signal | `signal-cli` did not exit within 5 s of SIGTERM and was killed (a pending device-link session is the known cause). |
 | `device-linked` | info | signal | A device link completed: `signal-cli` lists the account. No fields. |
 | `device-link-failed` | error | signal | Completing a device link failed, or no account appeared within five minutes; carries the error. |
+| `signal-cli-lost` | error | signal | The `signal-cli` daemon exited, its socket closed, or it pushed more before the bridge read it than the bridge keeps (SIG-5): the bridge can neither receive nor send, and ends with exit code 1, so that whoever runs it starts it again under a new instance (TRN-19). Field: `reason`. |
+| `signal-cli-early-notifications-dropped` | warn | signal | More notifications arrived before the bridge's handlers existed than it keeps (SIG-5, bounded in count and characters); followed by `signal-cli-lost`. Fields: `kept`, `chars`. |
+| `notification-unreadable` | warn | signal | A handler threw on a notification from `signal-cli`; the lines after it and the other handlers are read on (BRG-18). Fields: `method`, `error`. |
+| `event-unreadable` | warn | matrix | Reading one event of a `/sync` round threw; the round's other events are delivered (BRG-18). Fields: `roomId`, `eventId`, `error`. |
+| `attachment-unreadable` | warn | matrix | Reading an attachment that waited for another try threw; it is given up on (BRG-18). Field: `error`. |
+| `message-unreadable` | warn | email | Reading one mail threw; the thread's other mails go on, and the mail is read again on the next poll, three times at most (BRG-18). Fields: `documentId`, `messageId`, `attempts`, `error`. |
+| `to-device-event-too-deep` | warn | matrix | A to-device event nested deeper than SPECIFICATION.md §1.6 allows was left out of what the crypto machine reads. Field: `type`. |
+| `integrity-violation` | warn | matrix, signal | An entry was recorded in a document's integrity log (BRG-12, BRG-15). Fields: `documentId`, the message's `eventId` (Matrix) or `id` (Signal), `reason`. |
+| `edit-unattributed`, `delete-unattributed`, `redaction-unattributed`, `replacement-unattributed` | warn | matrix, signal | An edit, a remote delete, a redaction or another event under a delivered id that cannot be attributed to a document: of a message this bridge did not deliver, or from a room or group the document is not bound to (BRG-10, BRG-12). Nothing is recorded. Fields: the event or target id, `sender`. |
+| `encrypted-event-redacted-before-delivery` | warn | matrix | An encrypted event was already redacted when the bridge first saw it; nothing is left to route it by. Field: `eventId`. |
+| `unencrypted-frame-in-encrypted-room` | warn | matrix | A TDSP event arrived unencrypted in a room the bridge has seen encrypted, and was ignored (MTX-5). Fields: `roomId`, `eventId`, `sender`. |
 | `log-suppressed` | warn | all | The rate limit dropped `suppressed` records of `suppressedEvent`. |
 | `invalid-log-configuration` | warn | all | A `LOG_*` value was not recognised. |
 
