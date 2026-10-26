@@ -413,6 +413,16 @@ After a review of the whole text (2026-10-25), besides wording, references and A
   its account's identity: the send fails as `needs-person` (`409`) until the device is confirmed
   with `pnpm run matrix:confirm-device` (MTX-4). It no longer delivers a frame from a device its
   owner has not signed. It still shares room keys with every device (CONFORMANCE.md).
+- The bridges offer the cursor, `GET /channels/:documentId/deliveries-since?after=` (TRN-18,
+  TRN-21), and `SignalMessengerPort`, `MatrixMessengerPort` and `EmailMessengerPort` offer
+  `receiveSince()`; an engine on them now reads through the cursor, and a cursor its bridge no
+  longer holds reads as truncated. The Matrix bridge also reads a cursor from before a `/sync`
+  round answered `limited` as truncated. `@tdsp/messenger-port` exports `deliveriesAfter()` and
+  `WindowPosition` for a bridge's window.
+- The Signal bridge tells an unlinked device from a passing refusal (SIG-7): a send `signal-cli`
+  refuses as having no such account is `needs-person` (`409`) once `signal-cli` no longer names
+  the account, and `unavailable` (`502`) while it does; `/auth/status` shows `linked: false` then,
+  also after a restart.
 - `AttributionRange.authorId` is `string | null`, and `AttributionTracker.recordInsert` and
   `recordDelete` take `null` for an unattributed change; the engine no longer invents the
   MemberId `__tdsp:unattributed__` (ATR-2).
