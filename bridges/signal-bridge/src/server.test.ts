@@ -3,7 +3,11 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseTransportProfile, transportSendErrorFromHttp } from "@tdsp/messenger-port";
+import {
+  deliveriesAfter,
+  parseTransportProfile,
+  transportSendErrorFromHttp,
+} from "@tdsp/messenger-port";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FrameTooLargeError } from "./attachment.ts";
 import type { AuthStatus } from "./auth.ts";
@@ -44,6 +48,18 @@ class FakeAuth implements AuthStatusSource {
     this.status = { linked: true, accountId };
     this.phoneNumber = "+15550000001";
   }
+
+  /** Whether signal-cli still names the account; once not, a refreshed status is unlinked (SIG-7). */
+  listed = true;
+  refreshCalls = 0;
+
+  async refreshLink(): Promise<void> {
+    this.refreshCalls++;
+    if (!this.listed) {
+      this.status = { linked: false };
+      this.phoneNumber = undefined;
+    }
+  }
 }
 
 class FakeGroups implements GroupReader {
@@ -78,7 +94,13 @@ class FakeWriter implements GroupWriter {
   reached: string[] = [];
   #nextTimestamp = 1;
 
+  /** What the next sends throw instead of sending, if anything. */
+  failWith: unknown;
+
   async sendEdit(groupId: string, documentId: string, payload: string): Promise<SentMessage> {
+    if (this.failWith !== undefined) {
+      throw this.failWith;
+    }
     return this.#record(groupId, documentId, { kind: "edit", payload });
   }
 
@@ -110,6 +132,11 @@ class FakeSync implements SyncState {
 
   getDeliveries(documentId: string) {
     return this.deliveries.get(documentId) ?? [];
+  }
+
+  getDeliveriesSince(documentId: string, after: string | undefined) {
+    const window = this.deliveries.get(documentId) ?? [];
+    return deliveriesAfter(window, after, { appended: window.length });
   }
 
   getIntegrityLog(documentId: string) {
@@ -466,6 +493,68 @@ describe("signal-bridge HTTP API", () => {
     expect(sync.pollCalls).toBe(1);
   });
 
+  it("GET /channels/:id/deliveries-since answers what came after the cursor, and truncated for one the window does not hold (TRN-18)", async () => {
+    auth.provision();
+    sync.deliveries.set("doc-1", [
+      { id: "d1", documentId: "doc-1", sender: "bob", payload: "AQ==" },
+      { id: "d2", documentId: "doc-1", sender: "bob", payload: "Ag==" },
+    ]);
+    const after = await fetch(`${baseUrl}/channels/doc-1/deliveries-since?after=d1`);
+    expect(after.status).toBe(200);
+    expect(await (async (r: Response) => r.json())(after)).toEqual({
+      deliveries: [{ id: "d2", documentId: "doc-1", sender: "bob", payload: "Ag==" }],
+      truncated: false,
+    });
+    const unknown = await fetch(`${baseUrl}/channels/doc-1/deliveries-since?after=gone`);
+    expect(((await unknown.json()) as { truncated: boolean }).truncated).toBe(true);
+    const all = await fetch(`${baseUrl}/channels/doc-1/deliveries-since`);
+    expect((await all.json()) as { deliveries: unknown[]; truncated: boolean }).toMatchObject({
+      truncated: false,
+    });
+    expect(sync.pollCalls).toBe(3);
+  });
+
+  describe("a send signal-cli refuses because it has no such account (SIG-7)", () => {
+    const noSuchAccount = () =>
+      new SignalRpcError(
+        "signal-cli JSON-RPC error: Specified account does not exist (code -32602)",
+        -32602,
+      );
+    const send = () =>
+      fetch(`${baseUrl}/channels/doc-1/send`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sender: "alice", payload: "aGVsbG8=" }),
+      });
+
+    it("is unavailable while signal-cli still names the account: it could not load it for a moment", async () => {
+      await bindDocument("doc-1");
+      writer.failWith = noSuchAccount();
+      expect((await send()).status).toBe(502);
+      expect(auth.refreshCalls).toBe(1);
+      expect(auth.status.linked).toBe(true);
+    });
+
+    it("is needs-person once signal-cli names it no more, and /auth/status shows the device unlinked", async () => {
+      await bindDocument("doc-1");
+      writer.failWith = noSuchAccount();
+      auth.listed = false;
+      const refused = await send();
+      expect(refused.status).toBe(409);
+      expect(await refused.text()).toContain("link it again");
+      await expect((await fetch(`${baseUrl}/auth/status`)).json()).resolves.toMatchObject({
+        linked: false,
+      });
+    });
+
+    it("does not ask about the link for another refusal", async () => {
+      await bindDocument("doc-1");
+      writer.failWith = new SignalRpcError("signal-cli JSON-RPC error: boom (code -3)", -3);
+      expect((await send()).status).toBe(502);
+      expect(auth.refreshCalls).toBe(0);
+    });
+  });
+
   describe("while no account is linked (BRG-1)", () => {
     const post = (route: string, body: unknown) =>
       fetch(`${baseUrl}${route}`, {
@@ -499,6 +588,7 @@ describe("signal-bridge HTTP API", () => {
         }),
         invite: await post("/channels/doc-1/invite", { actor: "alice", text: "join me" }),
         deliveries: await fetch(`${baseUrl}/channels/doc-1/deliveries`),
+        deliveriesSince: await fetch(`${baseUrl}/channels/doc-1/deliveries-since?after=d1`),
         integrityLog: await fetch(`${baseUrl}/channels/doc-1/integrity-log`),
       };
       expect(
@@ -511,6 +601,7 @@ describe("signal-bridge HTTP API", () => {
         bind: 409,
         invite: 409,
         deliveries: 409,
+        deliveriesSince: 409,
         integrityLog: 409,
       });
       expect(writer.sent).toHaveLength(0);

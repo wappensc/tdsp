@@ -92,6 +92,11 @@ be grepped or alerted on.
 | `encrypted-event-redacted-before-delivery` | warn | matrix | An encrypted event was already redacted when the bridge first saw it; nothing is left to route it by. Field: `eventId`. |
 | `event-from-unsigned-device` | warn | matrix | An encrypted event came from a device its owner has not signed, by the crypto library's shield, and was not delivered (MTX-4). Fields: `roomId`, `eventId`, `sender`. |
 | `unencrypted-frame-in-encrypted-room` | warn | matrix | A TDSP event arrived unencrypted in a room the bridge has seen encrypted, and was ignored (MTX-5). Fields: `roomId`, `eventId`, `sender`. |
+| `timeline-limited` | warn | matrix | A `/sync` round answered a bound room's timeline `limited`: the homeserver left out events since the last round, so a cursor from before reads as truncated and the engine resyncs (TRN-18). Fields: `roomId`, `documentId`. |
+| `device-unlinked` | warn | signal | `signal-cli` no longer names the bridge's account, as after the device was removed on the phone: the device counts as unlinked, sends are `needs-person` until it is linked again (SIG-7). No fields. |
+| `link-status-unknown` | warn | signal | Asking `signal-cli` for its accounts at startup failed; the link status stays as the data directory shows it (SIG-7). Field: `error`. |
+| `room-seen-encrypted` | info | matrix | The bridge saw a room encrypted — an `m.room.encryption` state event or an `m.room.encrypted` event — and persisted that with the bindings to it that were still plain (MTX-5). Fields: `roomId`, `documents`. |
+| `recipient-untrusted` | warn | signal | A send skipped a recipient whose identity the account does not trust; recorded once in the document's integrity log as a notice (SIG-4, BRG-15). Fields: `documentId`, `id`, `recipient`. |
 | `log-suppressed` | warn | all | The rate limit dropped `suppressed` records of `suppressedEvent`. |
 | `invalid-log-configuration` | warn | all | A `LOG_*` value was not recognised. |
 

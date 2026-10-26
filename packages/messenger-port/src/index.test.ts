@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type Delivery,
+  deliveriesAfter,
   jsonTextTooDeep,
   jsonValueTooDeep,
   MAX_JSON_NESTING,
@@ -201,6 +202,47 @@ describe("retainNewest (bindings/bridges.md BRG-17)", () => {
     const list = [delivery("a", 1), delivery("b", 500)];
     retainNewest(list, { maxCount: 10, maxPayloadChars: 100 });
     expect(list.map((d) => d.id)).toEqual(["b"]);
+  });
+});
+
+describe("deliveriesAfter (TRN-18, TRN-21)", () => {
+  const delivery = (id: string) => ({ id, documentId: "doc-1", sender: "alice", payload: id });
+  // A window that took in five deliveries and dropped the oldest two (BRG-17).
+  const window = ["d3", "d4", "d5"].map(delivery);
+  const ids = (answer: { deliveries: readonly { id: string }[] }) =>
+    answer.deliveries.map((d) => d.id);
+
+  it("answers what came after the cursor, oldest first, in the window's own order", () => {
+    const answer = deliveriesAfter(window, "d3", { appended: 5 });
+    expect(ids(answer)).toEqual(["d4", "d5"]);
+    expect(answer.truncated).toBe(false);
+    expect(ids(deliveriesAfter(window, "d5", { appended: 5 }))).toEqual([]);
+  });
+
+  it("answers the whole window, not truncated, without a cursor", () => {
+    expect(deliveriesAfter(window, undefined, { appended: 5 })).toEqual({
+      deliveries: window,
+      truncated: false,
+    });
+  });
+
+  it("reads a cursor the window dropped, or never held, as truncated, and answers the whole window", () => {
+    expect(deliveriesAfter(window, "d1", { appended: 5 })).toEqual({
+      deliveries: window,
+      truncated: true,
+    });
+    expect(deliveriesAfter(window, "never-issued", { appended: 5 }).truncated).toBe(true);
+  });
+
+  it("reads a cursor at or before where the bridge passed over messages as truncated, and one after as not", () => {
+    // The bridge passed over part of its messenger's answer once it had taken in four deliveries.
+    expect(deliveriesAfter(window, "d3", { appended: 5, passedOverAt: 4 }).truncated).toBe(true);
+    expect(deliveriesAfter(window, "d4", { appended: 5, passedOverAt: 4 }).truncated).toBe(true);
+    expect(deliveriesAfter(window, "d5", { appended: 5, passedOverAt: 4 }).truncated).toBe(false);
+    expect(ids(deliveriesAfter(window, "d3", { appended: 5, passedOverAt: 4 }))).toEqual([
+      "d4",
+      "d5",
+    ]);
   });
 });
 

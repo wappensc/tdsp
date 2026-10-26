@@ -22,6 +22,9 @@ async function main(): Promise<void> {
   const daemon = await startSignalDaemon({ signalCliPath, dataDir, logger: log });
   const auth = new SignalAuth(daemon, dataDir, log);
   await auth.initialize();
+  // Linked only while signal-cli names the account (SIG-7): it keeps an account Signal's servers
+  // refused in its data directory, but no longer loads it.
+  await auth.refreshLink().catch((error: unknown) => log.warn("link-status-unknown", { error }));
   const server = createServer({
     auth,
     bindStorePath,

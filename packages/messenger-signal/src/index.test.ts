@@ -119,3 +119,70 @@ describe("the integrity log (BRG-15, SIG-4)", () => {
     );
   });
 });
+
+describe("receiveSince() (TRN-18, TRN-21)", () => {
+  /** A bridge that answers `deliveries-since` with `body`, and records what it was asked. */
+  async function bridgeAnswering(body: unknown, status = 200) {
+    const asked: string[] = [];
+    const server = createServer((req, res) => {
+      asked.push(req.url ?? "");
+      if (req.method === "GET" && (req.url ?? "").startsWith("/channels/doc-1/deliveries-since")) {
+        res.writeHead(status, { "content-type": "application/json" });
+        res.end(JSON.stringify(body));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    return {
+      url: `http://127.0.0.1:${port}`,
+      asked,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  it("asks for what came after the cursor and answers the deliveries and truncated", async () => {
+    const bridge = await bridgeAnswering({
+      deliveries: [{ id: "d2", sender: "bob", payload: "Ag==" }],
+      truncated: true,
+    });
+    try {
+      await expect(
+        new SignalMessengerPort(bridge.url).receiveSince("doc-1", "bob", "d1"),
+      ).resolves.toEqual({
+        deliveries: [{ id: "d2", documentId: "doc-1", sender: "bob", payload: "Ag==" }],
+        truncated: true,
+      });
+      await new SignalMessengerPort(bridge.url).receiveSince("doc-1", "bob", undefined);
+      expect(bridge.asked).toEqual([
+        "/channels/doc-1/deliveries-since?after=d1",
+        "/channels/doc-1/deliveries-since",
+      ]);
+    } finally {
+      await bridge.close();
+    }
+  });
+
+  it("refuses an answer of another shape, and a bridge that does not offer the cursor (TRN-9)", async () => {
+    for (const body of [{ deliveries: [] }, { truncated: false }, []]) {
+      const bridge = await bridgeAnswering(body);
+      try {
+        await expect(
+          new SignalMessengerPort(bridge.url).receiveSince("doc-1", "bob", "d1"),
+        ).rejects.toThrow(/not deliveries and truncated/);
+      } finally {
+        await bridge.close();
+      }
+    }
+    const old = await bridgeAnswering({}, 404);
+    try {
+      await expect(
+        new SignalMessengerPort(old.url).receiveSince("doc-1", "bob", "d1"),
+      ).rejects.toThrow(/404/);
+    } finally {
+      await old.close();
+    }
+  });
+});
