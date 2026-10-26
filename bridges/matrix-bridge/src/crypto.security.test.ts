@@ -12,6 +12,10 @@ import {
   TEST_ACCOUNTS_PATH,
 } from "../../../infra/matrix-testserver/config.ts";
 import { createRoom } from "../../../infra/matrix-testserver/create-room.ts";
+import {
+  signTestDevice,
+  type TestIdentity,
+} from "../../../infra/matrix-testserver/cross-signing.ts";
 import { hasTestMatrixHomeserver } from "../../../infra/matrix-testserver/health.ts";
 import { loginFresh } from "../../../infra/matrix-testserver/login.ts";
 import { registerAccount } from "../../../infra/matrix-testserver/register.ts";
@@ -68,8 +72,8 @@ describe.skipIf(!available)(
   "bridges/matrix-bridge crypto-machine, history caveat live against a local Synapse",
   () => {
     let accounts: {
-      alice: { userId: string; accessToken: string };
-      bob: { userId: string; accessToken: string };
+      alice: { userId: string; accessToken: string; identity: TestIdentity };
+      bob: { userId: string; accessToken: string; identity: TestIdentity };
       rooms: { plain: string; encrypted: string };
     };
     let aliceDir: string;
@@ -120,6 +124,9 @@ describe.skipIf(!available)(
         aliceBindStorePath,
       );
       aliceCryptoClose = () => aliceDeps.crypto.close();
+      // Signed by its owner, as a person confirms a new device: frames are taken only from such
+      // devices, and one unsigned may not send into an encrypted room (MTX-4).
+      await signTestDevice(aliceLogin, accounts.alice.identity, aliceLogin.deviceId);
       aliceServer = createServer({
         homeserverUrl: BASE_URL,
         accessToken: aliceLogin.accessToken,
@@ -358,6 +365,12 @@ describe.skipIf(!available)(
         // fresh device).
         const aliceCrypto1 = await createCryptoMachine(restartAliceConfig, aliceStoreDir);
         const bobCrypto = await createCryptoMachine(restartBobConfig, bobStoreDir);
+        await signTestDevice(
+          restartAliceLogin,
+          accounts.alice.identity,
+          restartAliceLogin.deviceId,
+        );
+        await signTestDevice(restartBobLogin, accounts.bob.identity, restartBobLogin.deviceId);
         try {
           const plaintext = `restart survives, ${Date.now()}`;
           await bobCrypto.ensureRoomKeyShared(restartRoomId, [
