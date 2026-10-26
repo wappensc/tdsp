@@ -3,7 +3,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Delivery } from "@tdsp/messenger-port";
+import { type Delivery, deliveriesAfter } from "@tdsp/messenger-port";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createServer,
@@ -91,6 +91,11 @@ class FakeSyncState implements SyncState {
 
   hasSeenEncrypted(roomId: string): boolean {
     return this.seenEncrypted.has(roomId);
+  }
+
+  getDeliveriesSince(documentId: string, after: string | undefined) {
+    const window = this.deliveries.get(documentId) ?? [];
+    return deliveriesAfter(window, after, { appended: window.length });
   }
 }
 

@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Delivery } from "@tdsp/messenger-port";
+import { type Delivery, deliveriesAfter } from "@tdsp/messenger-port";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getBindRecord, setBindRecord } from "./bind-store.ts";
 import { decodeInvite, extractArmoredMessage, pgpFormatOf } from "./envelope.ts";
@@ -48,6 +48,11 @@ class FakeSyncState implements SyncState {
 
   getDeliveries(documentId: string): readonly Delivery[] {
     return this.#deliveries.get(documentId) ?? [];
+  }
+
+  getDeliveriesSince(documentId: string, after: string | undefined) {
+    const window = this.#deliveries.get(documentId) ?? [];
+    return deliveriesAfter(window, after, { appended: window.length });
   }
 
   #rejections = new Map<string, Rejection[]>();

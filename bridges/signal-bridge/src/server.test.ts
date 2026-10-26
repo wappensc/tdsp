@@ -3,7 +3,11 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseTransportProfile, transportSendErrorFromHttp } from "@tdsp/messenger-port";
+import {
+  deliveriesAfter,
+  parseTransportProfile,
+  transportSendErrorFromHttp,
+} from "@tdsp/messenger-port";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FrameTooLargeError } from "./attachment.ts";
 import type { AuthStatus } from "./auth.ts";
@@ -110,6 +114,11 @@ class FakeSync implements SyncState {
 
   getDeliveries(documentId: string) {
     return this.deliveries.get(documentId) ?? [];
+  }
+
+  getDeliveriesSince(documentId: string, after: string | undefined) {
+    const window = this.deliveries.get(documentId) ?? [];
+    return deliveriesAfter(window, after, { appended: window.length });
   }
 
   getIntegrityLog(documentId: string) {
@@ -466,6 +475,27 @@ describe("signal-bridge HTTP API", () => {
     expect(sync.pollCalls).toBe(1);
   });
 
+  it("GET /channels/:id/deliveries-since answers what came after the cursor, and truncated for one the window does not hold (TRN-18)", async () => {
+    auth.provision();
+    sync.deliveries.set("doc-1", [
+      { id: "d1", documentId: "doc-1", sender: "bob", payload: "AQ==" },
+      { id: "d2", documentId: "doc-1", sender: "bob", payload: "Ag==" },
+    ]);
+    const after = await fetch(`${baseUrl}/channels/doc-1/deliveries-since?after=d1`);
+    expect(after.status).toBe(200);
+    expect(await (async (r: Response) => r.json())(after)).toEqual({
+      deliveries: [{ id: "d2", documentId: "doc-1", sender: "bob", payload: "Ag==" }],
+      truncated: false,
+    });
+    const unknown = await fetch(`${baseUrl}/channels/doc-1/deliveries-since?after=gone`);
+    expect(((await unknown.json()) as { truncated: boolean }).truncated).toBe(true);
+    const all = await fetch(`${baseUrl}/channels/doc-1/deliveries-since`);
+    expect((await all.json()) as { deliveries: unknown[]; truncated: boolean }).toMatchObject({
+      truncated: false,
+    });
+    expect(sync.pollCalls).toBe(3);
+  });
+
   describe("while no account is linked (BRG-1)", () => {
     const post = (route: string, body: unknown) =>
       fetch(`${baseUrl}${route}`, {
@@ -499,6 +529,7 @@ describe("signal-bridge HTTP API", () => {
         }),
         invite: await post("/channels/doc-1/invite", { actor: "alice", text: "join me" }),
         deliveries: await fetch(`${baseUrl}/channels/doc-1/deliveries`),
+        deliveriesSince: await fetch(`${baseUrl}/channels/doc-1/deliveries-since?after=d1`),
         integrityLog: await fetch(`${baseUrl}/channels/doc-1/integrity-log`),
       };
       expect(
@@ -511,6 +542,7 @@ describe("signal-bridge HTTP API", () => {
         bind: 409,
         invite: 409,
         deliveries: 409,
+        deliveriesSince: 409,
         integrityLog: 409,
       });
       expect(writer.sent).toHaveLength(0);

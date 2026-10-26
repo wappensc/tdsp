@@ -46,6 +46,7 @@ const unconfigured: {
     getDeliveries: () => [],
     getIntegrityLog: () => [],
     hasSeenEncrypted: () => false,
+    getDeliveriesSince: () => ({ deliveries: [], truncated: false }),
   },
   crypto: undefined,
 };

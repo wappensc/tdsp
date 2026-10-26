@@ -569,6 +569,31 @@ export function createServer(deps: ServerDependencies): Server {
       return;
     }
 
+    // The cursor (TRN-18, TRN-21; bindings/local-bridge-interface.md): what came after `after`, and
+    // whether something after it may have come and gone unseen.
+    if (method === "GET" && path?.startsWith("/channels/") && path.endsWith("/deliveries-since")) {
+      if (refusedUnprovisioned(res, deps.auth)) {
+        return;
+      }
+      const documentId = decodeURIComponent(
+        path.slice("/channels/".length, -"/deliveries-since".length),
+      );
+      const after = new URLSearchParams(query).get("after") || undefined;
+      deps.sync
+        .pollOnce()
+        .then(() => {
+          const answer = deps.sync.getDeliveriesSince(documentId, after);
+          sendJson(res, 200, {
+            deliveries: answer.deliveries.map(deliveryToJson),
+            truncated: answer.truncated,
+          });
+        })
+        .catch((error: unknown) => {
+          sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
+        });
+      return;
+    }
+
     // bindings/bridges.md BRG-15, like the email and Matrix bridges' own
     // /integrity-log route. Diagnostic, not part of MessengerPort.
     if (method === "GET" && path?.startsWith("/channels/") && path.endsWith("/integrity-log")) {

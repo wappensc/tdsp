@@ -4,6 +4,7 @@ import {
   type Delivery,
   type DeliveryRetention,
   type DocumentId,
+  deliveriesAfter,
   jsonValueTooDeep,
   retainNewest,
 } from "@tdsp/messenger-port";
@@ -236,6 +237,11 @@ interface LogicalEvent {
 export interface SyncState {
   pollOnce(): Promise<void>;
   getDeliveries(documentId: DocumentId): readonly Delivery[];
+  /** The deliveries after the cursor `after`, and whether deliveries after it may have come and gone unseen (TRN-18, TRN-21). */
+  getDeliveriesSince(
+    documentId: DocumentId,
+    after: string | undefined,
+  ): { readonly deliveries: readonly Delivery[]; readonly truncated: boolean };
   /** bindings/bridges.md BRG-12, BRG-15 — every edit, redaction and replacement this bridge caught and refused to apply for `documentId`, oldest first. */
   getIntegrityLog(documentId: DocumentId): readonly IntegrityEntry[];
   /** Whether this bridge has seen `roomId` encrypted while it runs (MTX-5), before a binding to it too. */
@@ -263,6 +269,14 @@ export function createSyncState(
    * deliveries `retention` keeps: a replaced event under an id dropped from here would be taken
    * as new. Nothing of it outlives a restart, so a bridge started afresh compares afresh (BRG-17).
    */
+  /** How many deliveries each document's window has taken in, its dropped ones included (TRN-18). */
+  const appended = new Map<DocumentId, number>();
+  /**
+   * For each document, how many deliveries its window had taken in when the bridge last passed
+   * over part of its room's timeline — a `/sync` round the homeserver answered `limited` — so that
+   * a cursor from before reads as truncated (TRN-18). Kept in memory, as the window is.
+   */
+  const passedOverAt = new Map<DocumentId, number>();
   const delivered = new Map<string, { readonly documentId: DocumentId; readonly digest: string }>();
   const violations = new Map<DocumentId, IntegrityEntry[]>();
   /**
@@ -411,6 +425,7 @@ export function createSyncState(
     list.push({ id: event.eventId, documentId, sender: event.sender, payload });
     retainNewest(list, retention); // bounded, oldest first (BRG-17)
     deliveries.set(documentId, list);
+    appended.set(documentId, (appended.get(documentId) ?? 0) + 1);
     delivered.set(event.eventId, { documentId, digest });
   }
 
@@ -630,6 +645,16 @@ export function createSyncState(
       return;
     }
     const bindStore = loadBindStore(bindStorePath);
+    // A limited timeline left out events between the last round and this one: whatever they
+    // carried for a document of that room will never be delivered (TRN-18).
+    for (const roomId of result.limitedRooms) {
+      for (const [documentId, record] of Object.entries(bindStore)) {
+        if (record.roomId === roomId) {
+          passedOverAt.set(documentId, appended.get(documentId) ?? 0);
+          logger.warn("timeline-limited", { roomId, documentId });
+        }
+      }
+    }
     await retryPendingAttachments(bindStore);
     for (const [roomId, events] of result.roomEvents) {
       for (const event of events) {
@@ -672,6 +697,12 @@ export function createSyncState(
     },
     getDeliveries(documentId: DocumentId): readonly Delivery[] {
       return deliveries.get(documentId) ?? [];
+    },
+    getDeliveriesSince(documentId, after) {
+      return deliveriesAfter(deliveries.get(documentId) ?? [], after, {
+        appended: appended.get(documentId) ?? 0,
+        passedOverAt: passedOverAt.get(documentId),
+      });
     },
     getIntegrityLog(documentId: DocumentId): readonly IntegrityEntry[] {
       return violations.get(documentId) ?? [];

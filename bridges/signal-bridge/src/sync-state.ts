@@ -7,6 +7,7 @@ import {
   type Delivery,
   type DeliveryRetention,
   type DocumentId,
+  deliveriesAfter,
   jsonTextTooDeep,
   retainNewest,
 } from "@tdsp/messenger-port";
@@ -201,6 +202,11 @@ export interface SyncStateOptions {
 export interface SyncState {
   pollOnce(): Promise<void>;
   getDeliveries(documentId: DocumentId): readonly Delivery[];
+  /** The deliveries after the cursor `after`, and whether deliveries after it may have come and gone unseen (TRN-18, TRN-21). */
+  getDeliveriesSince(
+    documentId: DocumentId,
+    after: string | undefined,
+  ): { readonly deliveries: readonly Delivery[]; readonly truncated: boolean };
   /** bindings/bridges.md BRG-12, BRG-15 — every edit/remote-delete this bridge caught and refused to apply for `documentId`, and every notice of a send, oldest first. */
   getIntegrityLog(documentId: DocumentId): readonly IntegrityEntry[];
   /**
@@ -225,6 +231,8 @@ export function createSyncState(
   const retryDelaysMs = options.retryDelaysMs ?? [500, 1500];
   const readTimeoutMs = options.readTimeoutMs ?? 60_000;
   const retention = options.retention ?? DEFAULT_DELIVERY_RETENTION;
+  /** How many deliveries each document's window has taken in, its dropped ones included (TRN-18). */
+  const appended = new Map<DocumentId, number>();
   const deliveries = new Map<DocumentId, Delivery[]>();
   /** `"sender:timestamp"` (the same shape as a `Delivery.id`) -> `documentId`, set as a message is delivered: an edit or remote-delete is recorded only against a message in here, in its document's integrity log (BRG-12). */
   const recordedIdDocument = new Map<string, DocumentId>();
@@ -286,6 +294,7 @@ export function createSyncState(
     list.push({ id, documentId: envelope.documentId, sender, payload });
     retainNewest(list, retention); // bounded, oldest first (BRG-17)
     deliveries.set(envelope.documentId, list);
+    appended.set(envelope.documentId, (appended.get(envelope.documentId) ?? 0) + 1);
     recordedIdDocument.set(id, envelope.documentId);
   }
 
@@ -557,6 +566,13 @@ export function createSyncState(
     },
     getDeliveries(documentId: DocumentId): readonly Delivery[] {
       return deliveries.get(documentId) ?? [];
+    },
+    getDeliveriesSince(documentId, after) {
+      // signal-cli pushes every message into the one connection the bridge reads, and the bridge
+      // ends rather than drop one (SIG-5): it passes over nothing, so only the window bounds a cursor.
+      return deliveriesAfter(deliveries.get(documentId) ?? [], after, {
+        appended: appended.get(documentId) ?? 0,
+      });
     },
     getIntegrityLog(documentId: DocumentId): readonly IntegrityEntry[] {
       return violations.get(documentId) ?? [];
