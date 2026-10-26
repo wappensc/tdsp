@@ -93,6 +93,42 @@ export function retainNewest(
 }
 
 /**
+ * Where a bridge's window of one document stands (TRN-18): how many deliveries it has ever taken
+ * in, and, where it passed over part of what its messenger held, how many it had taken in then.
+ * A cursor at or before that point reads as truncated: what came after it may never arrive.
+ */
+export interface WindowPosition {
+  readonly appended: number;
+  readonly passedOverAt?: number;
+}
+
+/**
+ * The deliveries of `window`, oldest first as the window holds them (TRN-21), after the delivery
+ * `after` (TRN-18). `truncated` when `after` is not in the window — it was dropped (BRG-17), or
+ * never issued, by this bridge or by one before a restart — and when the bridge passed over part of
+ * what its messenger held after it; then the whole window is answered. Without `after`, the whole
+ * window and `truncated` false, as `receive` answers.
+ */
+export function deliveriesAfter(
+  window: readonly Delivery[],
+  after: DeliveryId | undefined,
+  position: WindowPosition,
+): { readonly deliveries: readonly Delivery[]; readonly truncated: boolean } {
+  if (after === undefined) {
+    return { deliveries: window, truncated: false };
+  }
+  const at = window.findIndex((delivery) => delivery.id === after);
+  if (at < 0) {
+    return { deliveries: window, truncated: true };
+  }
+  const absolute = position.appended - window.length + at;
+  return {
+    deliveries: window.slice(at + 1),
+    truncated: position.passedOverAt !== undefined && absolute < position.passedOverAt,
+  };
+}
+
+/**
  * One messenger channel/group/room as it exists independently of any document — an id
  * (opaque, adapter-defined, passed back verbatim to whatever adapter-specific binding
  * mechanism accepts it) and a human-displayable name. Returned only by `listChannels`
