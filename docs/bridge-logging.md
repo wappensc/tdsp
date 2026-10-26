@@ -90,6 +90,7 @@ be grepped or alerted on.
 | `integrity-violation` | warn | matrix, signal | An entry was recorded in a document's integrity log (BRG-12, BRG-15). Fields: `documentId`, the message's `eventId` (Matrix) or `id` (Signal), `reason`. |
 | `edit-unattributed`, `delete-unattributed`, `redaction-unattributed`, `replacement-unattributed` | warn | matrix, signal | An edit, a remote delete, a redaction or another event under a delivered id that cannot be attributed to a document: of a message this bridge did not deliver, or from a room or group the document is not bound to (BRG-10, BRG-12). Nothing is recorded. Fields: the event or target id, `sender`. |
 | `encrypted-event-redacted-before-delivery` | warn | matrix | An encrypted event was already redacted when the bridge first saw it; nothing is left to route it by. Field: `eventId`. |
+| `event-from-unsigned-device` | warn | matrix | An encrypted event came from a device its owner has not signed, by the crypto library's shield, and was not delivered (MTX-4). Fields: `roomId`, `eventId`, `sender`. |
 | `unencrypted-frame-in-encrypted-room` | warn | matrix | A TDSP event arrived unencrypted in a room the bridge has seen encrypted, and was ignored (MTX-5). Fields: `roomId`, `eventId`, `sender`. |
 | `log-suppressed` | warn | all | The rate limit dropped `suppressed` records of `suppressedEvent`. |
 | `invalid-log-configuration` | warn | all | A `LOG_*` value was not recognised. |

@@ -1,9 +1,10 @@
 ---
 title: "Confirming the Matrix bridge's device"
-summary: "Why Element users see nothing from an unconfirmed Matrix bridge (MSC4153), how pnpm run matrix:confirm-device signs the bridge's device with the account's self-signing key from Secret Storage, what it checks and keeps, and why interactive verification is left for later."
+summary: "Why an unconfirmed Matrix bridge does not send into encrypted rooms and Element users see nothing from it (MTX-4, MSC4153), how pnpm run matrix:confirm-device signs the bridge's device with the account's self-signing key from Secret Storage, what it checks and keeps, and why interactive verification is left for later."
 read_when:
   - "Setting up a Matrix bridge for an account that people also use in Element or another Matrix app"
   - "Element shows a TDSP bridge's messages as undecryptable, or warns about its device"
+  - "A Matrix bridge refuses to send into an encrypted room as needs-person (409)"
   - "Changing bridges/matrix-bridge/src/device-confirmation.ts or confirm-device-cli.ts"
   - "Considering interactive (emoji) device verification for the Matrix bridge"
 ---
@@ -19,10 +20,17 @@ cross-signing identity, and send it no room keys. Element made this its default,
 for October 2026. People who read a document's room in Element then see nothing the bridge
 posts, an invitation included.
 
-Between bridges of this repository nothing changes: the crypto library the bridge uses
-applies no such rule by default, and its L2 tests exchange encrypted frames between
-unconfirmed devices. Confirming the device matters for the people in the room who use
-another Matrix app.
+Bridges of this repository require it too (MTX-4). An unconfirmed bridge does not send into
+an encrypted room: its send fails as `needs-person` (HTTP 409), naming this command, and
+succeeds as soon as the device is confirmed. And a bridge delivers no frame from a device its
+owner has not signed. Confirming the device is therefore part of setting up a bridge for an
+encrypted room, whatever app the other people use.
+
+What the bridge does not do is keep room keys from unconfirmed devices: the crypto library
+shares only with confirmed devices while it trusts the account's own identity, which in the
+version the bridge uses needs the account's private master key in the bridge's store, and the
+bridge keeps no such key ([below](#why-not-the-librarys-own-import)). A device a homeserver
+added to an account still gets the room keys; it can read, but not write.
 
 The names in this file — MSC4153, cross-signing, self-signing key, Secret Storage, recovery
 key — are Matrix's and Element's, not this repository's.
