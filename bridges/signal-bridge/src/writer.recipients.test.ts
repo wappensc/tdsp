@@ -18,6 +18,7 @@ const auth: AuthStatusSource = {
   async link() {
     return { linkingUri: "sgnl://x" };
   },
+  async refreshLink() {},
 };
 
 /** A `signal-cli` whose `send` answers with one result per recipient, of the given types. */

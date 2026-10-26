@@ -163,3 +163,52 @@ describe("SignalAuth.link", () => {
     expect(daemon.listAccountsCalls).toBe(calls);
   });
 });
+
+describe("SignalAuth.refreshLink (SIG-7)", () => {
+  const ACI = "aci-1";
+  const NUMBER = "+15550000001";
+
+  async function linkedAuth(daemon: FakeDaemon, events: string[] = []) {
+    writeAccountsJson(NUMBER, ACI);
+    const logger = {
+      warn: (event: string) => events.push(event),
+      info: () => {},
+      error: () => {},
+      debug: () => {},
+      child: () => logger,
+    } as unknown as Logger;
+    const auth = new SignalAuth(daemon, dataDir, logger);
+    await auth.initialize();
+    expect(auth.status.linked).toBe(true);
+    return auth;
+  }
+
+  it("keeps the device linked while signal-cli names its account", async () => {
+    const daemon = new FakeDaemon();
+    daemon.accounts = [{ number: NUMBER, aci: ACI }];
+    const auth = await linkedAuth(daemon);
+    await auth.refreshLink();
+    expect(auth.status).toEqual({ linked: true, accountId: ACI });
+    expect(auth.phoneNumber).toBe(NUMBER);
+  });
+
+  it("takes the device for unlinked once signal-cli names no account of it, as after Signal's servers refused it", async () => {
+    const daemon = new FakeDaemon();
+    daemon.accounts = [];
+    const events: string[] = [];
+    // accounts.json still names the account: signal-cli keeps it there, but no longer loads it.
+    const auth = await linkedAuth(daemon, events);
+    await auth.refreshLink();
+    expect(auth.status).toEqual({ linked: false });
+    expect(auth.phoneNumber).toBeUndefined();
+    expect(events).toContain("device-unlinked");
+  });
+
+  it("stays linked without word from signal-cli: an answer that is no list", async () => {
+    const daemon = new FakeDaemon();
+    daemon.accounts = "not a list" as never;
+    const auth = await linkedAuth(daemon);
+    await auth.refreshLink();
+    expect(auth.status.linked).toBe(true);
+  });
+});

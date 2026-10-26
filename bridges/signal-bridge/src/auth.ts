@@ -108,6 +108,26 @@ export class SignalAuth {
     }
   }
 
+  async refreshLink(): Promise<void> {
+    if (!this.#status.linked) {
+      return; // a link that completes is taken in by #adoptListedAccount
+    }
+    const accounts = await this.#daemon.callRpc<unknown>("listAccounts");
+    if (!Array.isArray(accounts)) {
+      return; // no word from signal-cli, so the status stays linked (SIG-7)
+    }
+    const accountId = this.#status.accountId;
+    const named = accounts.some((account) => {
+      const { aci, number } = (account ?? {}) as { aci?: unknown; number?: unknown };
+      return aci === accountId || (number !== undefined && number === this.#phoneNumber);
+    });
+    if (!named) {
+      this.#status = { linked: false };
+      this.#phoneNumber = undefined;
+      this.#logger.warn("device-unlinked", {});
+    }
+  }
+
   async link(): Promise<{ linkingUri: string }> {
     const { deviceLinkUri } = await this.#daemon.callRpc<{ deviceLinkUri: string }>("startLink");
 

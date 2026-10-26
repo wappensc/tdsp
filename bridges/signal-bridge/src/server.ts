@@ -33,6 +33,7 @@ import {
   type SignalRpc,
   sendGroupMessage,
 } from "./signal-api.ts";
+import { SignalRpcError } from "./signal-daemon.ts";
 import { createSyncState, type SyncState } from "./sync-state.ts";
 import { SIGNAL_PROFILE } from "./transport-profile.ts";
 
@@ -63,6 +64,12 @@ export interface AuthStatusSource {
   /** `signal-cli`'s own local multi-account selector (E.164 phone number) — never the `MemberId`/`status.accountId` (UUID); see `auth.ts`'s own doc comment for why the two must stay separate. */
   readonly phoneNumber: string | undefined;
   link(): Promise<{ linkingUri: string }>;
+  /**
+   * Asks `signal-cli` whether it still names this bridge's account, and takes the device for
+   * unlinked once it names none (SIG-7): `signal-cli` drops an account Signal's servers no longer
+   * accept, as after the device was removed on the phone.
+   */
+  refreshLink(): Promise<void>;
 }
 
 /**
@@ -317,6 +324,37 @@ function sendSendFailure(res: ServerResponse, error: unknown): void {
   );
 }
 
+/** `signal-cli`'s JSON-RPC answer when it has no account under the one named ("Specified account does not exist", 0.14.9). */
+const SIGNAL_NO_SUCH_ACCOUNT_CODE = -32602;
+
+/**
+ * Answers a send or an invitation that failed. One `signal-cli` refused because it has no such
+ * account is `unavailable` while the device is linked and `needs-person` once it is not (SIG-7):
+ * `signal-cli` answers so whether it could not load the account for a moment or Signal's servers
+ * no longer accept the device, and only its list of accounts tells the two apart.
+ */
+async function answerSendFailure(
+  res: ServerResponse,
+  error: unknown,
+  auth: AuthStatusSource,
+): Promise<void> {
+  if (error instanceof SignalRpcError && error.code === SIGNAL_NO_SUCH_ACCOUNT_CODE) {
+    try {
+      await auth.refreshLink();
+    } catch {
+      // No word from signal-cli: the status stays as it was (SIG-7).
+    }
+    if (!auth.status.linked) {
+      sendJson(res, 409, {
+        error:
+          "this bridge's device is no longer linked to its Signal account: link it again (POST /auth/link)",
+      });
+      return;
+    }
+  }
+  sendSendFailure(res, error);
+}
+
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -550,7 +588,7 @@ export function createServer(deps: ServerDependencies): Server {
           const deliveryId = sent.deliveryId;
           sendJson(res, 200, { deliveryId });
         })
-        .catch((error: unknown) => sendSendFailure(res, error));
+        .catch((error: unknown) => answerSendFailure(res, error, deps.auth));
       return;
     }
 
@@ -647,9 +685,7 @@ export function createServer(deps: ServerDependencies): Server {
           const deliveryId = sent.deliveryId;
           sendJson(res, 200, { deliveryId });
         })
-        .catch((error: unknown) => {
-          sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
-        });
+        .catch((error: unknown) => answerSendFailure(res, error, deps.auth));
       return;
     }
 
