@@ -1,3 +1,4 @@
+import { OwnDeviceUnsignedError } from "./crypto-machine.ts";
 import { MatrixApiError } from "./matrix-api.ts";
 
 /**
@@ -64,6 +65,9 @@ const NEEDS_PERSON: ReadonlySet<string> = new Set([
 
 /** Whether `error` is a homeserver's refusal that only a person can lift (BRG-8, TRN-11). */
 export function needsPerson(error: unknown): boolean {
+  if (error instanceof OwnDeviceUnsignedError) {
+    return true;
+  }
   if (!(error instanceof MatrixApiError)) {
     return false;
   }
@@ -73,11 +77,11 @@ export function needsPerson(error: unknown): boolean {
 }
 
 export function classifySendFailure(error: unknown): SendFailure {
-  if (!(error instanceof MatrixApiError)) {
-    return { status: 502 };
-  }
   if (needsPerson(error)) {
     return { status: 409 };
+  }
+  if (!(error instanceof MatrixApiError)) {
+    return { status: 502 };
   }
   if (error.status === 429) {
     const inBody = /"retry_after_ms"\s*:\s*(\d+)/.exec(error.message)?.[1];
