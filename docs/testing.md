@@ -82,8 +82,12 @@ pnpm run matrix:down && pnpm run email:down
 
 - **Matrix.** [infra/matrix-testserver](../infra/matrix-testserver) generates a Synapse
   configuration with federation off and relaxed rate limits, starts it, waits for it to
-  be healthy and registers the test accounts. Generated secrets and the account tokens
-  land in `infra/matrix-testserver/credentials/`, which is gitignored.
+  be healthy and registers the test accounts, each with a cross-signing identity of its
+  own. Generated secrets, the account tokens and the identities' private keys land in
+  `infra/matrix-testserver/credentials/`, which is gitignored. A test that needs a device its
+  owner signed (MTX-4) signs a fresh device with `signTestDevice`
+  (`infra/matrix-testserver/cross-signing.ts`); the person's way, with a recovery key, is
+  `device-confirmation.live.test.ts`'s ([matrix-device-confirmation.md](matrix-device-confirmation.md)).
   `pnpm run test:l2` resets and restarts Synapse first (`pretest:l2`), so a full L2 run
   always starts from a fresh server.
 - **Synapse's invite rate limiter.** Running one Matrix test file by hand many times in

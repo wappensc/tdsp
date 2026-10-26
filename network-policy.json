@@ -98,6 +98,12 @@
       "reason": "Test infrastructure: registers a throwaway per-run account against the local Synapse container's admin API on localhost:18008."
     },
     {
+      "file": "infra/matrix-testserver/cross-signing.ts",
+      "zone": "A",
+      "destination": "loopback",
+      "reason": "Test infrastructure: uploads a test account's cross-signing keys and signs its test devices on the local Synapse container on localhost:18008."
+    },
+    {
       "file": "infra/matrix-testserver/create-room.ts",
       "zone": "A",
       "destination": "loopback",
