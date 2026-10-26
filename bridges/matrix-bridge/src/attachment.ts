@@ -22,7 +22,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
  * after the hash checks out, so a tampered file is refused rather than decrypted into garbage.
  */
 
-/** Frames up to this size ride in the event body, as they always did. Matches the bound the bridge stated before attachments. */
+/** The most bytes of UTF-8 the envelope may take, as written with its frame, for the frame to ride in the event body (MTX-7). */
 export const BODY_FRAME_LIMIT = 32_000;
 
 /**

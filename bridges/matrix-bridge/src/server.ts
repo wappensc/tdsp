@@ -202,15 +202,13 @@ export function createMatrixRoomWriter(
 
   return {
     async sendEdit(roomId, documentId, payload, encrypted) {
-      // The limits count the bytes of the frame's UTF-8 text (SPECIFICATION.md §3.5).
+      // The bound of a message counts the bytes of the frame's UTF-8 text (SPECIFICATION.md §3.5);
+      // whether it fits in the event counts the envelope as it is written, escapes included
+      // (MTX-7): every quote and backslash of the frame doubles there.
       const bytes = new TextEncoder().encode(payload);
-      if (bytes.length <= BODY_FRAME_LIMIT) {
-        return send(
-          roomId,
-          "de.wappensc.together.tdsp.frame",
-          { tdsp: 1, documentId, frame: payload },
-          encrypted,
-        );
+      const inline = { tdsp: 1, documentId, frame: payload };
+      if (new TextEncoder().encode(JSON.stringify(inline)).length <= BODY_FRAME_LIMIT) {
+        return send(roomId, "de.wappensc.together.tdsp.frame", inline, encrypted);
       }
       if (bytes.length > ATTACHMENT_FRAME_LIMIT) {
         // What this bridge states as its largest message; a client that respects the profile

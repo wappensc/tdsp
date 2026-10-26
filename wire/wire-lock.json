@@ -45,7 +45,10 @@
       "entries": {
         "entries: the §4.5 edit, in the event": "1eb7ea9e666c693c2d8be52f21d4c6de31b64d90fc2b936cde00e45b703bb20f",
         "entries: a frame of exactly 32000 bytes, still in the event": "87667086c949068d4549f24d2cee174276efa0226f73380b4e5cb3a438872d2b",
-        "entries: a frame of 32001 bytes, as a media file": "86acf4475d3e3c82246faa3fd2ed8e681281cb58942102cabb03eefdb7964667"
+        "entries: a frame of 32001 bytes, as a media file": "86acf4475d3e3c82246faa3fd2ed8e681281cb58942102cabb03eefdb7964667",
+        "entries: an envelope of exactly 32000 bytes as written, in the event": "ce256d0cb9b626fe5d507a73fdde9b99ccde743f437371c79f64b5bcd5a9b1b0",
+        "entries: an envelope of 32001 bytes as written, as a media file": "333d72429ed04d8b4b513461995a90e562fa8310e714779d69ae9d251843823d",
+        "entries: a frame under 32000 bytes whose escapes take its envelope over them, as a media file": "73f22cff634cf1fa6b22f6bdaea4d36a856d00b3f6778b8e7180aa8e133ea12f"
       }
     },
     "wire/email-v1.json": {

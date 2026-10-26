@@ -343,6 +343,8 @@ After a review of the whole text (2026-10-25), besides wording, references and A
   names none (TRN-9). An engine on one of them now takes a restart of its bridge as a truncated
   history and asks with `force` (LOS-9); the adapters need a bridge of this version.
 - The conformance suite (§3.6) checks `instance()` where a transport offers it.
+- `wire/matrix-v1.json`: three entries at the inline limit as MTX-7 measures it, the envelope as
+  written, escapes included; the entry of a 32 000-byte frame in the event is read back only.
 - `wire/signal-v1.json`: the §4.5 edit as a 2.0 frame in the Signal envelope, Appendix D's
   example — an entry added within envelope version 1.
 - `wire/frames-draft-5.json`: a control operation on a right on a layer, and an edit with an
@@ -396,6 +398,9 @@ After a review of the whole text (2026-10-25), besides wording, references and A
   running on without receiving or sending; whoever runs it starts it again.
 - The email bridge ignores an envelope that names an `attachment` beside its `frame`, as BND-2
   and BND-4 require; it delivered the frame before.
+- The Matrix bridge carries a frame in the event only while the envelope it writes around it,
+  escapes included, is at most 32 000 bytes (MTX-7), where it measured the frame alone; a frame
+  near the limit, or one with many quotes and backslashes, now goes as a media file.
 - `AttributionRange.authorId` is `string | null`, and `AttributionTracker.recordInsert` and
   `recordDelete` take `null` for an unattributed change; the engine no longer invents the
   MemberId `__tdsp:unattributed__` (ATR-2).
