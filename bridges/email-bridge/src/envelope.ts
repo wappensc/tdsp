@@ -250,7 +250,9 @@ export function decodeEnvelope(text: string): EmailEnvelope | undefined {
   }
   switch (candidate.kind) {
     case "frame":
-      return typeof candidate.frame === "string"
+      // An envelope carries exactly one of `frame` and `attachment` (BND-4); this binding has no
+      // attachment, so one that names one beside its frame is no envelope (BND-2).
+      return typeof candidate.frame === "string" && candidate.attachment === undefined
         ? {
             tdsp: 1,
             kind: candidate.kind,

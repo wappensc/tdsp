@@ -394,6 +394,8 @@ After a review of the whole text (2026-10-25), besides wording, references and A
   Signal's servers while the bridge was down went to `signal-cli`'s standard output and was lost.
   When `signal-cli` exits or its socket closes, the bridge now ends with exit code 1 instead of
   running on without receiving or sending; whoever runs it starts it again.
+- The email bridge ignores an envelope that names an `attachment` beside its `frame`, as BND-2
+  and BND-4 require; it delivered the frame before.
 - `AttributionRange.authorId` is `string | null`, and `AttributionTracker.recordInsert` and
   `recordDelete` take `null` for an unattributed change; the engine no longer invents the
   MemberId `__tdsp:unattributed__` (ATR-2).

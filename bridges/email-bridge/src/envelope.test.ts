@@ -49,6 +49,21 @@ describe("encodeEnvelope/decodeEnvelope", () => {
     ).toBeUndefined();
   });
 
+  it("returns undefined for an envelope with both a frame and an attachment, or neither (BND-2, BND-4)", () => {
+    const frame = { tdsp: 1, kind: "frame", documentId: "doc-1", frame: "e30=" };
+    const attachment = { size: 2, sha256: "a".repeat(64) };
+    expect(decodeEnvelope(JSON.stringify(frame))).toBeDefined();
+    for (const value of [attachment, null, "x"]) {
+      expect(decodeEnvelope(JSON.stringify({ ...frame, attachment: value }))).toBeUndefined();
+    }
+    expect(
+      decodeEnvelope(JSON.stringify({ tdsp: 1, kind: "frame", documentId: "doc-1", attachment })),
+    ).toBeUndefined();
+    expect(
+      decodeEnvelope(JSON.stringify({ tdsp: 1, kind: "frame", documentId: "doc-1" })),
+    ).toBeUndefined();
+  });
+
   it("returns undefined for a membership-change with an invalid permission value", () => {
     expect(
       decodeEnvelope(

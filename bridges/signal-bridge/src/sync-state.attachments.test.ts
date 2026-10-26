@@ -346,6 +346,13 @@ describe("a receiver's handling of attachments", () => {
       expect(sync.getDeliveries("somebody-elses")).toEqual([]);
     });
 
+    it("carries neither a frame nor an attachment reference: it is no envelope (BND-2)", async () => {
+      rpc.emit(notification({ body: { tdsp: 1, kind: "frame", documentId: DOC } }));
+      await settle();
+      expect(rpc.calls).toEqual([]);
+      expect(sync.getDeliveries(DOC)).toEqual([]);
+    });
+
     it("carries both a frame and an attachment reference: it is ambiguous", async () => {
       rpc.emit(
         notification({

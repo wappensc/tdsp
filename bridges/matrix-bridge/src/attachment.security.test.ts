@@ -76,6 +76,13 @@ describe("a plain attachment", () => {
     expect(parseAttachmentRef(ref)).toEqual(ref);
     expect(parseAttachmentRef({ ...ref, sha256: ref.sha256.toUpperCase() })).toBeUndefined();
     expect(parseAttachmentRef({ ...ref, sha256: sha256Base64(frame) })).toBeUndefined();
+    // Digits other scripts and full-width forms write, which Unicode counts as hex (BND-3):
+    // U+FF10 and U+FF41 (full-width 0 and a), U+0660 (Arabic-Indic 0), U+FF21 (full-width A).
+    for (const digit of ["\uff10", "\uff41", "\u0660", "\uff21"]) {
+      expect(parseAttachmentRef({ ...ref, sha256: digit.repeat(64) }), digit).toBeUndefined();
+      const oneReplaced = `${digit}${ref.sha256.slice(1)}`;
+      expect(parseAttachmentRef({ ...ref, sha256: oneReplaced }), digit).toBeUndefined();
+    }
   });
 
   it("is refused when one byte was changed", () => {
