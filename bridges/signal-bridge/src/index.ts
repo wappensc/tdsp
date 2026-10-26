@@ -36,6 +36,14 @@ async function main(): Promise<void> {
     log.info("listening", { url: `http://localhost:${port}` });
   });
 
+  // Without its daemon the bridge can neither receive nor send, and may have lost what was
+  // pushed to it: it ends, so that whoever runs it starts it again, under a new instance (TRN-19).
+  daemon.onFailure((reason) => {
+    log.error("signal-cli-lost", { reason });
+    server.close();
+    void daemon.stop().finally(() => process.exit(1));
+  });
+
   let shuttingDown = false;
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
     if (shuttingDown) {
