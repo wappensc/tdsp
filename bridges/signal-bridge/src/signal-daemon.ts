@@ -50,6 +50,13 @@ export interface SignalDaemon {
   onNotification(handler: (method: string, params: unknown) => void): () => void;
   /** Closes the socket, sends SIGTERM, and waits for the process to actually exit. Idempotent. */
   stop(): Promise<void>;
+  /**
+   * Calls `handler` once if the daemon is lost while the bridge runs — `signal-cli` exited, its
+   * socket closed, or it pushed more before anything read it than the bridge keeps (SIG-5) —
+   * but not after `stop()`. The bridge then can neither receive nor send, and may have lost
+   * what was pushed to it.
+   */
+  onFailure(handler: (reason: string) => void): void;
 }
 
 export interface SignalDaemonOptions {
@@ -101,6 +108,15 @@ export class SignalRpcError extends Error {
  */
 export const MAX_RPC_LINE_CHARS = 16 * 1024 * 1024;
 
+/**
+ * What the client keeps of the notifications `signal-cli` pushes before anything reads them
+ * (SIG-5, BRG-13): with `--receive-mode on-connection` it hands everything waiting on Signal's
+ * servers to the connection the moment it opens, before the bridge's handlers exist. Bounded in
+ * count and in characters; four lines of the longest a line may be.
+ */
+export const MAX_EARLY_NOTIFICATIONS = 10_000;
+export const MAX_EARLY_NOTIFICATION_CHARS = 4 * MAX_RPC_LINE_CHARS;
+
 export class SocketRpcClient {
   #socket: Socket;
   #logger: Logger;
@@ -113,11 +129,24 @@ export class SocketRpcClient {
     { resolve: (value: unknown) => void; reject: (error: Error) => void }
   >();
   #notificationHandlers = new Set<(method: string, params: unknown) => void>();
+  // What arrived before any handler read it, oldest first (SIG-5).
+  #early: { readonly method: string; readonly params: unknown }[] = [];
+  #earlyChars = 0;
+  readonly #earlyBounds: { readonly count: number; readonly chars: number };
+  #failureHandlers = new Set<(reason: string) => void>();
+  #failed = false;
+  #closing = false;
 
-  constructor(socket: Socket, logger: Logger, maxLineChars = MAX_RPC_LINE_CHARS) {
+  constructor(
+    socket: Socket,
+    logger: Logger,
+    maxLineChars = MAX_RPC_LINE_CHARS,
+    earlyBounds = { count: MAX_EARLY_NOTIFICATIONS, chars: MAX_EARLY_NOTIFICATION_CHARS },
+  ) {
     this.#socket = socket;
     this.#logger = logger;
     this.#maxLineChars = maxLineChars;
+    this.#earlyBounds = earlyBounds;
     this.#socket.setEncoding("utf8");
     this.#socket.on("data", (chunk: string) => this.#handleChunk(chunk));
     this.#socket.on("close", () => {
@@ -126,7 +155,25 @@ export class SocketRpcClient {
         pending.reject(closedError);
       }
       this.#pending.clear();
+      if (!this.#closing) {
+        this.#fail("signal-cli's socket closed");
+      }
     });
+  }
+
+  /** Calls `handler` once if this connection is lost or lost what was pushed to it; see `SignalDaemon.onFailure`. */
+  onFailure(handler: (reason: string) => void): void {
+    this.#failureHandlers.add(handler);
+  }
+
+  #fail(reason: string): void {
+    if (this.#failed) {
+      return;
+    }
+    this.#failed = true;
+    for (const handler of this.#failureHandlers) {
+      handler(reason);
+    }
   }
 
   #handleChunk(chunk: string): void {
@@ -196,17 +243,14 @@ export class SocketRpcClient {
       // method; anything else is silently ignored rather than treated as
       // an error, the "unrecognized ⇒ dropped" rule for foreign traffic.
       if (typeof message.method === "string") {
+        if (this.#notificationHandlers.size === 0) {
+          this.#keepEarly(message.method, message.params, line.length);
+          return;
+        }
         for (const handler of this.#notificationHandlers) {
           // A notification one handler cannot read must not keep the lines after it, or the
           // other handlers, from being read, nor end the process (BRG-18).
-          try {
-            handler(message.method, message.params);
-          } catch (error) {
-            this.#logger.warn("notification-unreadable", {
-              method: message.method,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
+          this.#deliver(handler, message.method, message.params);
         }
       }
       return;
@@ -242,12 +286,55 @@ export class SocketRpcClient {
 
   onNotification(handler: (method: string, params: unknown) => void): () => void {
     this.#notificationHandlers.add(handler);
+    // What arrived before any handler existed goes to the handlers there are then, in order,
+    // before any line read later: a microtask runs before the next chunk from the socket (SIG-5).
+    if (this.#early.length > 0) {
+      const early = this.#early;
+      this.#early = [];
+      this.#earlyChars = 0;
+      queueMicrotask(() => {
+        for (const { method, params } of early) {
+          for (const each of this.#notificationHandlers) {
+            this.#deliver(each, method, params);
+          }
+        }
+      });
+    }
     return () => {
       this.#notificationHandlers.delete(handler);
     };
   }
 
+  #keepEarly(method: string, params: unknown, chars: number): void {
+    if (
+      this.#early.length >= this.#earlyBounds.count ||
+      this.#earlyChars + chars > this.#earlyBounds.chars
+    ) {
+      // Signal hands a message to a device once: what is not kept here is gone for it.
+      this.#logger.warn("signal-cli-early-notifications-dropped", {
+        kept: this.#early.length,
+        chars: this.#earlyChars,
+      });
+      this.#fail("signal-cli pushed more before the bridge read it than the bridge keeps");
+      return;
+    }
+    this.#early.push({ method, params });
+    this.#earlyChars += chars;
+  }
+
+  #deliver(handler: (method: string, params: unknown) => void, method: string, params: unknown) {
+    try {
+      handler(method, params);
+    } catch (error) {
+      this.#logger.warn("notification-unreadable", {
+        method,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   close(): void {
+    this.#closing = true;
     this.#socket.destroy();
   }
 }
@@ -298,7 +385,12 @@ export async function startSignalDaemon(options: SignalDaemonOptions): Promise<S
 
   // No `-a`/`--account`: multi-account mode —
   // required so `startLink`/`finishLink` are available at all.
-  const child = spawn(signalCliPath, ["--data-dir", dataDir, "daemon", `--socket=${socketPath}`], {
+  // `on-connection`: signal-cli receives only once the bridge's connection is there, and hands it
+  // what waited on Signal's servers then. Its default, `on-start`, receives from its own start,
+  // before the socket exists, and passes what it gets to its standard output, which this bridge
+  // does not read: what waited while the bridge was down would be gone (SIG-5).
+  const daemonArgs = ["daemon", `--socket=${socketPath}`, "--receive-mode=on-connection"];
+  const child = spawn(signalCliPath, ["--data-dir", dataDir, ...daemonArgs], {
     stdio: ["ignore", "ignore", "pipe"], // signal-cli logs exclusively to stderr; stdout is unused.
   });
 
@@ -361,7 +453,34 @@ export async function startSignalDaemon(options: SignalDaemonOptions): Promise<S
     await waitForExit(child, 5_000);
   }
 
-  return { socketPath, pid: child.pid, callRpc, onNotification, stop };
+  let stopping = false;
+  const failureHandlers = new Set<(reason: string) => void>();
+  const fail = (reason: string) => {
+    if (!stopping) {
+      for (const handler of failureHandlers) {
+        handler(reason);
+      }
+      failureHandlers.clear();
+    }
+  };
+  client.onFailure(fail);
+  child.once("exit", (code, signal) => fail(`signal-cli exited (code ${code}, signal ${signal})`));
+
+  function onFailure(handler: (reason: string) => void): void {
+    failureHandlers.add(handler);
+  }
+
+  return {
+    socketPath,
+    pid: child.pid,
+    callRpc,
+    onNotification,
+    stop: async () => {
+      stopping = true;
+      await stop();
+    },
+    onFailure,
+  };
 }
 
 function waitForExit(child: ReturnType<typeof spawn>, timeoutMs: number): Promise<boolean> {

@@ -389,6 +389,11 @@ After a review of the whole text (2026-10-25), besides wording, references and A
   later, and learns it from the state of its first `/sync` too (MTX-5): after a restart, or
   where the room's encryption was turned on after the binding, it no longer takes the room as
   plain, and no longer sends into it unencrypted.
+- The Signal bridge runs `signal-cli` with `--receive-mode on-connection` and keeps what it
+  pushes before the bridge reads it (SIG-5): under the default, `on-start`, what waited on
+  Signal's servers while the bridge was down went to `signal-cli`'s standard output and was lost.
+  When `signal-cli` exits or its socket closes, the bridge now ends with exit code 1 instead of
+  running on without receiving or sending; whoever runs it starts it again.
 - `AttributionRange.authorId` is `string | null`, and `AttributionTracker.recordInsert` and
   `recordDelete` take `null` for an unattributed change; the engine no longer invents the
   MemberId `__tdsp:unattributed__` (ATR-2).
