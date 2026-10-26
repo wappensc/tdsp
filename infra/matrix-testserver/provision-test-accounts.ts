@@ -4,6 +4,7 @@
 import { existsSync } from "node:fs";
 import { BASE_URL, TEST_ACCOUNT_PASSWORD, TEST_ACCOUNTS, TEST_ACCOUNTS_PATH } from "./config.ts";
 import { createRoom } from "./create-room.ts";
+import { createTestIdentity, type TestIdentity } from "./cross-signing.ts";
 import { writeIntoCredentialsDir } from "./docker-fs.ts";
 import { loginFresh } from "./login.ts";
 import { registerAccount } from "./register.ts";
@@ -43,6 +44,8 @@ interface AccountRecord {
   userId: string;
   accessToken: string;
   password: string;
+  /** The account's cross-signing identity, which signs each test device that needs it (MTX-4). */
+  identity: TestIdentity;
 }
 
 interface RoomsRecord {
@@ -58,7 +61,8 @@ async function login(username: string): Promise<AccountRecord> {
   // their *own*, separate fresh device per run instead of reusing this
   // one — see login.ts's own doc comment for why.
   const { userId, accessToken } = await loginFresh(username, TEST_ACCOUNT_PASSWORD);
-  return { userId, accessToken, password: TEST_ACCOUNT_PASSWORD };
+  const identity = await createTestIdentity({ userId, accessToken }, username);
+  return { userId, accessToken, password: TEST_ACCOUNT_PASSWORD, identity };
 }
 
 async function inviteAndJoin(
