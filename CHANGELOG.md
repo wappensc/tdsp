@@ -401,6 +401,14 @@ After a review of the whole text (2026-10-25), besides wording, references and A
 - The Matrix bridge carries a frame in the event only while the envelope it writes around it,
   escapes included, is at most 32 000 bytes (MTX-7), where it measured the frame alone; a frame
   near the limit, or one with many quotes and backslashes, now goes as a media file.
+- The integrity log's entries have a `kind` and an `id` (BRG-15): the bridges serve
+  `{kind: "violation", id, sender, reason}`, where the Matrix bridge served `eventId` and the
+  email bridge `messageId`; `IntegrityEntry` of `@tdsp/messenger-matrix` and
+  `@tdsp/messenger-email` follows, and each adapter exports `readIntegrityLog()`, which reads an
+  entry without `kind` as a violation. The Signal bridge records a recipient a send skipped as an
+  identity to trust as a notice `{kind: "notice", id, recipient, reason: "recipient-untrusted"}`
+  (SIG-4); `@tdsp/messenger-signal`'s `IntegrityEntry` is the union of both, with `NoticeReason`,
+  and its wording and summary tell a notice from a violation.
 - `AttributionRange.authorId` is `string | null`, and `AttributionTracker.recordInsert` and
   `recordDelete` take `null` for an unattributed change; the engine no longer invents the
   MemberId `__tdsp:unattributed__` (ATR-2).

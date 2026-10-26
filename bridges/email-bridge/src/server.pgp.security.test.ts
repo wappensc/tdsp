@@ -1263,12 +1263,22 @@ describe("bridges/email-bridge server: PGP and identity", () => {
   describe("GET /channels/:documentId/integrity-log", () => {
     it("polls, then returns what the sync state has rejected for that document", async () => {
       sync.seedRejections("doc-1", [
-        { messageId: "m1", sender: "mallory@example.org", reason: "pgp-identity-changed" },
+        {
+          kind: "violation",
+          id: "m1",
+          sender: "mallory@example.org",
+          reason: "pgp-identity-changed",
+        },
       ]);
       const response = await fetch(`${baseUrl}/channels/doc-1/integrity-log`);
       expect(response.status).toBe(200);
       expect(await readJson(response)).toEqual([
-        { messageId: "m1", sender: "mallory@example.org", reason: "pgp-identity-changed" },
+        {
+          kind: "violation",
+          id: "m1",
+          sender: "mallory@example.org",
+          reason: "pgp-identity-changed",
+        },
       ]);
       expect(sync.polled).toEqual(["doc-1"]);
     });

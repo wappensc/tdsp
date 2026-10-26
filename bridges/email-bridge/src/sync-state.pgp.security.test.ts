@@ -179,7 +179,7 @@ describe("createSyncState", () => {
     await sync.pollOnce("doc-1");
     expect(sync.getDeliveries("doc-1")).toHaveLength(0);
     expect(sync.getRejections("doc-1")).toEqual([
-      { messageId: "m1", sender: "alice@example.org", reason: "message-too-large" },
+      { kind: "violation", id: "m1", sender: "alice@example.org", reason: "message-too-large" },
     ]);
     expect(bobKeyring.opened).toHaveLength(0);
   });
@@ -191,7 +191,7 @@ describe("createSyncState", () => {
     await sync.pollOnce("doc-1");
     expect(sync.getDeliveries("doc-1")).toHaveLength(0);
     expect(sync.getRejections("doc-1")).toEqual([
-      { messageId: "m1", sender: "alice@example.org", reason: "pgp-unsigned" },
+      { kind: "violation", id: "m1", sender: "alice@example.org", reason: "pgp-unsigned" },
     ]);
     expect(bobKeyring.opened).toHaveLength(0); // never even handed to gpg
   });
@@ -307,7 +307,7 @@ describe("createSyncState", () => {
     expect(bobKeyring.opened).toHaveLength(1); // it decrypted; only the signature could not be checked
     expect(sync.getDeliveries("doc-1")).toHaveLength(0);
     expect(sync.getRejections("doc-1")).toEqual([
-      { messageId: "m1", sender: "alice@example.org", reason: "pgp-signature-invalid" },
+      { kind: "violation", id: "m1", sender: "alice@example.org", reason: "pgp-signature-invalid" },
     ]);
   });
 
@@ -334,7 +334,7 @@ describe("createSyncState", () => {
     await sync.pollOnce("doc-1");
     expect(sync.getDeliveries("doc-1")).toHaveLength(0);
     expect(sync.getRejections("doc-1")).toEqual([
-      { messageId: "m1", sender: "alice@example.org", reason: "pgp-identity-changed" },
+      { kind: "violation", id: "m1", sender: "alice@example.org", reason: "pgp-identity-changed" },
     ]);
   });
 
@@ -525,7 +525,7 @@ describe("createSyncState", () => {
       const sync = createSyncState(receiver, bindStorePath, bobKeyring);
       await sync.pollOnce("doc-1");
       expect(sync.getDeliveries("doc-1").map((d) => d.id)).toEqual(["m1"]);
-      expect(sync.getRejections("doc-1").map((r) => [r.messageId, r.reason])).toEqual([
+      expect(sync.getRejections("doc-1").map((r) => [r.id, r.reason])).toEqual([
         ["m2", "pgp-signature-invalid"],
       ]);
     });
@@ -688,7 +688,7 @@ describe("createSyncState", () => {
 
       expect(sync.getDeliveries("doc-1").map((delivery) => delivery.payload)).toEqual(["AQID"]);
       expect(sync.getRejections("doc-1")).toEqual([
-        { messageId: "m1", sender: "alice@example.org", reason: "message-replaced" },
+        { kind: "violation", id: "m1", sender: "alice@example.org", reason: "message-replaced" },
       ]);
     });
 

@@ -1,7 +1,12 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
-import { SignalMessengerPort } from "./index.ts";
+import {
+  describeSignalIntegrityEntry,
+  readIntegrityLog,
+  SignalMessengerPort,
+  summarizeSignalIntegrity,
+} from "./index.ts";
 
 /**
  * The Signal adapter against a fake bridge, L0. Everything else it does is tested against real
@@ -65,5 +70,52 @@ describe("instance() (TRN-19)", () => {
     } finally {
       await bridge.close();
     }
+  });
+});
+
+describe("the integrity log (BRG-15, SIG-4)", () => {
+  it("reads violations and notices as the bridge serves them, and an entry without kind as a violation", () => {
+    const violation = { kind: "violation", id: "bob:1", sender: "bob", reason: "message-edited" };
+    const notice = {
+      kind: "notice",
+      id: "me:2",
+      recipient: "bob-aci",
+      reason: "recipient-untrusted",
+    };
+    expect(
+      readIntegrityLog([
+        violation,
+        notice,
+        { id: "bob:3", sender: "bob", reason: "message-replaced" },
+        null,
+      ]),
+    ).toEqual([
+      violation,
+      notice,
+      { kind: "violation", id: "bob:3", sender: "bob", reason: "message-replaced" },
+    ]);
+    expect(() => readIntegrityLog({})).toThrow(/not a list/);
+  });
+
+  it("words a notice as a warning naming the recipient, and does not count it as a rejected message", () => {
+    const notice = {
+      kind: "notice",
+      id: "me:2",
+      recipient: "bob-aci",
+      reason: "recipient-untrusted",
+    } as const;
+    expect(describeSignalIntegrityEntry(notice)).toMatchObject({ severity: "warning" });
+    expect(describeSignalIntegrityEntry(notice).text).toContain("bob-aci");
+    expect(summarizeSignalIntegrity([notice])).toMatchObject({ severity: "warning" });
+    expect(summarizeSignalIntegrity([notice])?.text).not.toContain("rejected");
+    const violation = {
+      kind: "violation",
+      id: "bob:1",
+      sender: "bob",
+      reason: "message-edited",
+    } as const;
+    expect(summarizeSignalIntegrity([violation, notice])?.text).toContain(
+      "1 incoming message was rejected",
+    );
   });
 });

@@ -57,8 +57,32 @@ export type IntegrityReason =
   | "message-replaced"
   | "message-too-large";
 
+/**
+ * The entries of `GET /channels/:documentId/integrity-log` as the bridge serves them. An entry
+ * without `kind`, from a bridge of TDSP 1.x, is a violation (the local bridge interface), its
+ * Message-ID under the name 1.x gave it; what is not an object is no entry.
+ */
+export function readIntegrityLog(raw: unknown): readonly IntegrityEntry[] {
+  if (!Array.isArray(raw)) {
+    throw new Error("integrityLog: the bridge answered something that is not a list of entries");
+  }
+  return raw
+    .filter(
+      (entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null,
+    )
+    .map((entry) => ({
+      kind: "violation" as const,
+      id: String(entry.id ?? entry.messageId ?? ""),
+      sender: String(entry.sender ?? ""),
+      reason: entry.reason as IntegrityReason,
+    }));
+}
+
+/** An entry of a document's integrity log (BRG-15): a violation, naming the mail's Message-ID and sender. */
 export interface IntegrityEntry {
-  readonly messageId: string;
+  readonly kind: "violation";
+  /** The mail's Message-ID. */
+  readonly id: string;
   /** The `From:` address as received — for a document without PGP, exactly as trustworthy as an unauthenticated header. */
   readonly sender: string;
   readonly reason: IntegrityReason;

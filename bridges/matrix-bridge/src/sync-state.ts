@@ -43,8 +43,10 @@ const REDACTION_EVENT_TYPE = "m.room.redaction";
  */
 export type IntegrityReason = "message-edited" | "message-redacted" | "message-replaced";
 
+/** An entry of a document's integrity log (BRG-15): a violation, naming the event's id and sender. */
 export interface IntegrityEntry {
-  readonly eventId: string;
+  readonly kind: "violation";
+  readonly id: string;
   readonly sender: string;
   readonly reason: IntegrityReason;
 }
@@ -315,7 +317,7 @@ export function createSyncState(
     reason: IntegrityReason,
   ): void {
     const list = violations.get(documentId) ?? [];
-    list.push({ eventId, sender, reason });
+    list.push({ kind: "violation", id: eventId, sender, reason });
     violations.set(documentId, list);
     logger.warn("integrity-violation", { documentId, eventId, reason });
   }

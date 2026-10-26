@@ -53,7 +53,7 @@ describe("the sending side's choice between a body and an attachment", () => {
   it("puts a frame up to the body limit in the message, with no attachment", async () => {
     const rpc = new FakeRpc();
     const frame = bytesOf(BODY_FRAME_LIMIT);
-    const id = await createGroupWriter(rpc, auth).sendEdit("g1", "doc-1", frame);
+    const { deliveryId: id } = await createGroupWriter(rpc, auth).sendEdit("g1", "doc-1", frame);
     expect(id).toBe("alice-aci:1700000000001");
     expect(rpc.calls).toHaveLength(1);
     expect(rpc.calls[0]?.params).not.toHaveProperty("attachments");
@@ -68,7 +68,7 @@ describe("the sending side's choice between a body and an attachment", () => {
   it("sends a frame one byte over the limit as an attachment, and names it in the envelope", async () => {
     const rpc = new FakeRpc();
     const frame = bytesOf(BODY_FRAME_LIMIT + 1);
-    const id = await createGroupWriter(rpc, auth).sendEdit("g1", "doc-1", frame);
+    const { deliveryId: id } = await createGroupWriter(rpc, auth).sendEdit("g1", "doc-1", frame);
     expect(id).toBe("alice-aci:1700000000001");
     expect(rpc.calls).toHaveLength(1);
     const call = rpc.calls[0];

@@ -1,6 +1,9 @@
-import type { IntegrityReason as BrowserIntegrityReason } from "@tdsp/messenger-matrix";
+import type {
+  IntegrityEntry as BrowserIntegrityEntry,
+  IntegrityReason as BrowserIntegrityReason,
+} from "@tdsp/messenger-matrix";
 import { describe, expect, it } from "vitest";
-import type { IntegrityReason } from "./sync-state.ts";
+import type { IntegrityEntry, IntegrityReason } from "./sync-state.ts";
 
 /**
  * `IntegrityReason` (here) and its `packages/messenger-matrix` counterpart
@@ -14,6 +17,8 @@ import type { IntegrityReason } from "./sync-state.ts";
  */
 type Equal<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 const sameVocabulary: Equal<IntegrityReason, BrowserIntegrityReason> = true;
+/** An entry has the shape the local bridge interface gives it (BRG-15), on both sides. */
+const sameEntry: Equal<IntegrityEntry, BrowserIntegrityEntry> = true;
 
 /**
  * The reasons bindings/bridges.md BRG-12's table gives for what a Matrix homeserver can present:
@@ -27,6 +32,10 @@ const brg12Vocabulary: Equal<IntegrityReason, Brg12MatrixReason> = true;
 describe("matrix-bridge integrity-log vocabulary", () => {
   it("is the same list in the bridge and in the browser-side package", () => {
     expect(sameVocabulary).toBe(true);
+  });
+
+  it("is an entry of the same shape in the bridge and in the browser-side package (BRG-15)", () => {
+    expect(sameEntry).toBe(true);
   });
 
   it("is BRG-12's reasons for what Matrix can present, message-replaced among them", () => {

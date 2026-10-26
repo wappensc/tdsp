@@ -7,6 +7,7 @@ import {
   emailMessengerProvider,
   generateThreadRootMessageId,
   InviteRejectedError,
+  readIntegrityLog,
 } from "./index.ts";
 
 /**
@@ -153,7 +154,12 @@ function startFakeBridge(): Promise<{ server: Server; url: string; requests: unk
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
           JSON.stringify([
-            { messageId: "m1", sender: "mallory@example.org", reason: "pgp-identity-changed" },
+            {
+              kind: "violation",
+              id: "m1",
+              sender: "mallory@example.org",
+              reason: "pgp-identity-changed",
+            },
           ]),
         );
         return;
@@ -229,6 +235,24 @@ describe("emailMessengerProvider", () => {
   it("createPort() returns a real EmailMessengerPort", async () => {
     const port = await emailMessengerProvider.createPort();
     expect(port).toBeInstanceOf(EmailMessengerPort);
+  });
+});
+
+describe("readIntegrityLog (BRG-15)", () => {
+  it("reads a violation as the bridge serves it", () => {
+    const entry = { kind: "violation", id: "<m@x>", sender: "bob@x", reason: "pgp-unsigned" };
+    expect(readIntegrityLog([entry])).toEqual([entry]);
+  });
+
+  it("reads an entry without kind, from a bridge of TDSP 1.x, as a violation under its Message-ID", () => {
+    expect(
+      readIntegrityLog([{ messageId: "<m@x>", sender: "bob@x", reason: "message-replaced" }]),
+    ).toEqual([{ kind: "violation", id: "<m@x>", sender: "bob@x", reason: "message-replaced" }]);
+  });
+
+  it("drops what is no entry, and refuses an answer that is no list", () => {
+    expect(readIntegrityLog([null, 5, "x"])).toEqual([]);
+    expect(() => readIntegrityLog({})).toThrow(/not a list/);
   });
 });
 
@@ -508,7 +532,12 @@ describe("EmailMessengerPort", () => {
 
   it("integrityLog() returns what the bridge rejected, with reasons", async () => {
     await expect(port.integrityLog("doc-1")).resolves.toEqual([
-      { messageId: "m1", sender: "mallory@example.org", reason: "pgp-identity-changed" },
+      {
+        kind: "violation",
+        id: "m1",
+        sender: "mallory@example.org",
+        reason: "pgp-identity-changed",
+      },
     ]);
   });
 

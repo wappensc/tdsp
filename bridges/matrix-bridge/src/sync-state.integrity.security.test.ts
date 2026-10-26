@@ -148,7 +148,7 @@ describe("a receiver's handling of a messenger-native edit or withdrawal", () =>
       },
     ]);
     expect(state.getIntegrityLog(DOC)).toEqual([
-      { eventId: "$edit", sender: ALICE, reason: "message-edited" },
+      { kind: "violation", id: "$edit", sender: ALICE, reason: "message-edited" },
     ]);
   });
 
@@ -156,7 +156,7 @@ describe("a receiver's handling of a messenger-native edit or withdrawal", () =>
     await poll([originalEditEvent("$orig")], [redactionOf("$redaction", "$orig")]);
     expect(state.getDeliveries(DOC)).toHaveLength(1); // the earlier, already-applied delivery stands
     expect(state.getIntegrityLog(DOC)).toEqual([
-      { eventId: "$orig", sender: ALICE, reason: "message-redacted" },
+      { kind: "violation", id: "$orig", sender: ALICE, reason: "message-redacted" },
     ]);
   });
 
@@ -179,7 +179,7 @@ describe("a receiver's handling of a messenger-native edit or withdrawal", () =>
       { id: "$orig", documentId: DOC, sender: ALICE, payload: "b3JpZ2luYWw=" },
     ]);
     expect(state.getIntegrityLog(DOC)).toEqual([
-      { eventId: "$orig", sender: ALICE, reason: "message-replaced" },
+      { kind: "violation", id: "$orig", sender: ALICE, reason: "message-replaced" },
     ]);
   });
 

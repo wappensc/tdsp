@@ -515,7 +515,7 @@ describe("a receiver's handling of attachments", () => {
       await settle();
       expect(sync.getDeliveries(DOC).map((d) => d.payload)).toEqual([textOf(frame)]);
       expect(sync.getIntegrityLog(DOC)).toEqual([
-        { id: "bob:1700000000000", sender: "bob", reason: "message-replaced" },
+        { kind: "violation", id: "bob:1700000000000", sender: "bob", reason: "message-replaced" },
       ]);
     });
 

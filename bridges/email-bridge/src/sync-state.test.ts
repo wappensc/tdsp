@@ -154,7 +154,7 @@ describe("createSyncState", () => {
     await sync.pollOnce("doc-1");
     expect(sync.getDeliveries("doc-1")).toHaveLength(0);
     expect(sync.getRejections("doc-1")).toEqual([
-      { messageId: "m1", sender: "bob@example.org", reason: "recipient-list-mismatch" },
+      { kind: "violation", id: "m1", sender: "bob@example.org", reason: "recipient-list-mismatch" },
     ]);
   });
 

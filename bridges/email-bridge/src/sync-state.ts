@@ -45,8 +45,11 @@ export type RejectionReason =
   /** Larger than the bridge reads (BRG-13, `MAX_INCOMING_MAIL_BYTES`): never parsed, decrypted or applied. */
   | "message-too-large";
 
+/** An entry of a document's integrity log (BRG-15): a violation, naming the mail's Message-ID and sender. */
 export interface Rejection {
-  readonly messageId: string;
+  readonly kind: "violation";
+  /** The mail's Message-ID. */
+  readonly id: string;
   /** The `From:` address as received — for a PGP-off document that is exactly as trustworthy as an unauthenticated header, i.e. not at all. */
   readonly sender: string;
   readonly reason: RejectionReason;
@@ -158,7 +161,12 @@ export function createSyncState(
 
   function reject(documentId: string, message: IncomingMail, reason: RejectionReason): void {
     const list = rejections.get(documentId) ?? [];
-    list.push({ messageId: message.messageId, sender: normalizeAddress(message.from), reason });
+    list.push({
+      kind: "violation",
+      id: message.messageId,
+      sender: normalizeAddress(message.from),
+      reason,
+    });
     rejections.set(documentId, list);
     // The in-memory list above is what the user sees; the log is what
     // survives a restart and what an operator greps. Once per mail —

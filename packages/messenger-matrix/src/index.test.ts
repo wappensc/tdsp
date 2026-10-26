@@ -3,7 +3,11 @@ import type { AddressInfo } from "node:net";
 import { TransportSendError } from "@tdsp/messenger-port";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MatrixMessengerPort, matrixMessengerProvider } from "./index.ts";
-import { describeMatrixIntegrityEntry, type IntegrityReason } from "./integrity.ts";
+import {
+  describeMatrixIntegrityEntry,
+  type IntegrityReason,
+  readIntegrityLog,
+} from "./integrity.ts";
 
 /**
  * A minimal, local stand-in for `bridges/matrix-bridge`'s own HTTP API —
@@ -158,7 +162,8 @@ describe("describeMatrixIntegrityEntry", () => {
     "words %s as an alert naming its sender",
     (reason) => {
       const described = describeMatrixIntegrityEntry({
-        eventId: "$e",
+        kind: "violation",
+        id: "$e",
         sender: "@alice:hs",
         reason,
       });
@@ -166,6 +171,24 @@ describe("describeMatrixIntegrityEntry", () => {
       expect(described.text).toContain("@alice:hs");
     },
   );
+});
+
+describe("readIntegrityLog (BRG-15)", () => {
+  it("reads a violation as the bridge serves it", () => {
+    const entry = { kind: "violation", id: "$e", sender: "@alice:hs", reason: "message-edited" };
+    expect(readIntegrityLog([entry])).toEqual([entry]);
+  });
+
+  it("reads an entry without kind, from a bridge of TDSP 1.x, as a violation under its event id", () => {
+    expect(
+      readIntegrityLog([{ eventId: "$e", sender: "@alice:hs", reason: "message-redacted" }]),
+    ).toEqual([{ kind: "violation", id: "$e", sender: "@alice:hs", reason: "message-redacted" }]);
+  });
+
+  it("drops what is no entry, and refuses an answer that is no list", () => {
+    expect(readIntegrityLog([null, 5, "x"])).toEqual([]);
+    expect(() => readIntegrityLog({})).toThrow(/not a list/);
+  });
 });
 
 describe("MatrixMessengerPort", () => {
