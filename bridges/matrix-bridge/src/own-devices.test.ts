@@ -11,6 +11,10 @@ import {
   TEST_ACCOUNT_PASSWORD,
   TEST_ACCOUNTS_PATH,
 } from "../../../infra/matrix-testserver/config.ts";
+import {
+  signTestDevice,
+  type TestIdentity,
+} from "../../../infra/matrix-testserver/cross-signing.ts";
 import { hasTestMatrixHomeserver } from "../../../infra/matrix-testserver/health.ts";
 import { loginFresh } from "../../../infra/matrix-testserver/login.ts";
 import type { CryptoMachine } from "./crypto-machine.ts";
@@ -34,7 +38,7 @@ describe.skipIf(!available)(
 
     beforeAll(async () => {
       const accounts = JSON.parse(readFileSync(TEST_ACCOUNTS_PATH, "utf8")) as {
-        alice: { userId: string };
+        alice: { userId: string; identity: TestIdentity };
         rooms: { encrypted: string };
       };
       alice = accounts.alice.userId;
@@ -54,6 +58,9 @@ describe.skipIf(!available)(
           { homeserverUrl: BASE_URL, accessToken: login.accessToken },
           bindStorePath,
         );
+        // Each device signed by its account's identity, as a person confirms a new device: keys go
+        // only to such devices, and frames are taken only from them (MTX-4).
+        await signTestDevice(login, accounts.alice.identity, login.deviceId);
         const server = createServer({
           homeserverUrl: BASE_URL,
           accessToken: login.accessToken,

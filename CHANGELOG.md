@@ -409,6 +409,10 @@ After a review of the whole text (2026-10-25), besides wording, references and A
   identity to trust as a notice `{kind: "notice", id, recipient, reason: "recipient-untrusted"}`
   (SIG-4); `@tdsp/messenger-signal`'s `IntegrityEntry` is the union of both, with `NoticeReason`,
   and its wording and summary tell a notice from a violation.
+- The Matrix bridge does not send into an encrypted room while its own device is not signed by
+  its account's identity: the send fails as `needs-person` (`409`) until the device is confirmed
+  with `pnpm run matrix:confirm-device` (MTX-4). It no longer delivers a frame from a device its
+  owner has not signed. It still shares room keys with every device (CONFORMANCE.md).
 - `AttributionRange.authorId` is `string | null`, and `AttributionTracker.recordInsert` and
   `recordDelete` take `null` for an unattributed change; the engine no longer invents the
   MemberId `__tdsp:unattributed__` (ATR-2).

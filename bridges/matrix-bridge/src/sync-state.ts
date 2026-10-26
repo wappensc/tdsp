@@ -345,6 +345,14 @@ export function createSyncState(
     }
     const decrypted = await crypto.decryptRoomEvent(event, roomId);
     if (!decrypted.ok) {
+      if (decrypted.unsignedSender === true) {
+        // Not delivered and not recorded: the homeserver could have added that device (MTX-4).
+        logger.warn("event-from-unsigned-device", {
+          roomId,
+          eventId: event.event_id,
+          sender: event.sender,
+        });
+      }
       return null;
     }
     return {

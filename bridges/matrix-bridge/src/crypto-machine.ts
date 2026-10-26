@@ -20,6 +20,28 @@ import {
 } from "./matrix-api.ts";
 
 /**
+ * `ShieldColor.None` of `@matrix-org/matrix-sdk-crypto-nodejs`, whose `.d.ts` declares it as an
+ * ambient `const enum`, which this project's `isolatedModules` cannot read (see
+ * `processOutgoingRequests`).
+ */
+const SHIELD_COLOR_NONE = 2;
+
+/**
+ * This bridge's own device is not signed by its account's identity, so it may not send into an
+ * encrypted room (MTX-4): Matrix clients share no room keys with it, and members would refuse
+ * what it sends. Only a person lifts it, by confirming the device with the account's recovery
+ * key (`pnpm run matrix:confirm-device`); a send fails as `needs-person`.
+ */
+export class OwnDeviceUnsignedError extends Error {
+  constructor(deviceId: string) {
+    super(
+      `this bridge's device ${deviceId} is not signed by its account's identity: confirm it with the recovery key (pnpm run matrix:confirm-device)`,
+    );
+    this.name = "OwnDeviceUnsignedError";
+  }
+}
+
+/**
  * Wraps `@matrix-org/matrix-sdk-crypto-nodejs`'s `OlmMachine` — the
  * native (N-API, not WASM) sibling package to the one `matrix-js-sdk`
  * depends on internally, chosen over it specifically because it alone
@@ -61,7 +83,8 @@ export interface CryptoMachine {
     rawEvent: unknown,
     roomId: string,
   ): Promise<
-    { ok: true; content: unknown; type: string; sender: string } | { ok: false; reason: string }
+    | { ok: true; content: unknown; type: string; sender: string }
+    | { ok: false; reason: string; readonly unsignedSender?: true }
   >;
   /** Feeds one `/sync` round's to-device events and device-list changes into the machine — must be called every poll, even when both are empty, so the machine's own missing-one-time-key bookkeeping (`oneTimeKeyCounts`) stays current. */
   receiveSync(
@@ -150,6 +173,32 @@ export async function createCryptoMachine(
   // tracking; every later change comes in a `/sync`'s `device_lists`.
   let firstSyncDone = false;
   const queriedAfterFirstSync = new Set<string>();
+  // Senders whose devices were queried again because a frame of theirs showed a shield (MTX-4).
+  const queriedForTrust = new Set<string>();
+
+  /** Queries `users`' devices now, outside the machine's own tracking, and tracks them from then on. */
+  async function queryDevicesOf(users: readonly string[]): Promise<void> {
+    const ids = users.map((id) => new UserId(id));
+    await machine.updateTrackedUsers(ids);
+    const query = machine.queryKeysForUsers(ids);
+    const response = await queryKeys(config, query.body);
+    await machine.markRequestAsSent(query.id, query.type, response);
+  }
+
+  /** Whether this device is signed by its account's identity, as the homeserver lists it now. */
+  async function ownDeviceSigned(): Promise<boolean> {
+    const signed = async () =>
+      (
+        await machine.getDevice(new UserId(userId), new DeviceId(deviceId))
+      )?.isCrossSignedByOwner() === true;
+    if (await signed()) {
+      return true;
+    }
+    // A confirmation reaches the machine with a later /sync's device lists; asked for now, a
+    // device a person has just confirmed sends at once.
+    await queryDevicesOf([userId]);
+    return signed();
+  }
 
   return {
     userId,
@@ -173,12 +222,23 @@ export async function createCryptoMachine(
         }
       }
 
+      // The own device is what members' clients share keys with and take frames from only once
+      // its owner signed it (MTX-4); its signature comes with the account's devices, queried above.
+      if (!(await ownDeviceSigned())) {
+        throw new OwnDeviceUnsignedError(deviceId);
+      }
+
       const missingSessions = await machine.getMissingSessions(memberIds);
       if (missingSessions) {
         const response = await claimKeys(config, missingSessions.body);
         await machine.markRequestAsSent(missingSessions.id, missingSessions.type, response);
       }
 
+      // To every device of every member, not only those their owners signed as MTX-4 asks: the
+      // library shares by identity (`CollectStrategy.IdentityBasedStrategy`) only while it trusts
+      // the account's own identity, which in this version it does only holding the account's
+      // private master key, and this bridge does not keep it (docs/matrix-device-confirmation.md).
+      // A known gap (CONFORMANCE.md): a device a homeserver added gets the room key.
       const shareRequests = await machine.shareRoomKey(
         new RoomId(roomId),
         memberIds,
@@ -202,10 +262,35 @@ export async function createCryptoMachine(
 
     async decryptRoomEvent(rawEvent, roomId) {
       try {
-        const decrypted = await machine.decryptRoomEvent(
-          JSON.stringify(rawEvent),
-          new RoomId(roomId),
-        );
+        const decrypt = () =>
+          machine.decryptRoomEvent(JSON.stringify(rawEvent), new RoomId(roomId));
+        let decrypted = await decrypt();
+        // A frame is taken only from a device its owner signed (MTX-4): a homeserver can add a
+        // device to any account and would otherwise write as any member. The library's lenient
+        // shield shows no shield for exactly those devices, as tried against Synapse; a session
+        // from before the bridge collected trust information is refused too.
+        let shield = decrypted.shieldState(false);
+        const sender = decrypted.sender?.toString();
+        if (
+          (shield === null || shield.color !== SHIELD_COLOR_NONE) &&
+          sender !== undefined &&
+          !queriedForTrust.has(sender)
+        ) {
+          // A bridge that has not sent to the room yet has never asked for the sender's devices,
+          // and a sender it never asked about shows the shield of an unsigned device: asked once,
+          // the shield is the device's own.
+          queriedForTrust.add(sender);
+          await queryDevicesOf([sender]);
+          decrypted = await decrypt();
+          shield = decrypted.shieldState(false);
+        }
+        if (shield === null || shield.color !== SHIELD_COLOR_NONE) {
+          return {
+            ok: false,
+            reason: shield?.message ?? "the sending device's authenticity is unknown",
+            unsignedSender: true,
+          };
+        }
         const parsed = JSON.parse(decrypted.event) as { content: unknown; type: string };
         return {
           ok: true,

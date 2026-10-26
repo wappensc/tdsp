@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { OwnDeviceUnsignedError } from "./crypto-machine";
 import { MatrixApiError, sendEvent, uploadMedia } from "./matrix-api";
 import { classifySendFailure, needsPerson } from "./send-failure";
 
@@ -135,5 +136,12 @@ describe("a refused send carries the homeserver's Retry-After header", () => {
       (failure: unknown) => failure,
     );
     expect(classifySendFailure(error)).toEqual({ status: 429 });
+  });
+});
+
+describe("a bridge whose own device is not signed by its account (MTX-4)", () => {
+  it("fails a send as needs-person: only a person confirms the device", () => {
+    expect(classifySendFailure(new OwnDeviceUnsignedError("DEVICE"))).toEqual({ status: 409 });
+    expect(needsPerson(new OwnDeviceUnsignedError("DEVICE"))).toBe(true);
   });
 });

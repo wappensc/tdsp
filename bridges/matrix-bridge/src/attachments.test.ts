@@ -11,6 +11,10 @@ import {
   TEST_ACCOUNT_PASSWORD,
   TEST_ACCOUNTS_PATH,
 } from "../../../infra/matrix-testserver/config.ts";
+import {
+  signTestDevice,
+  type TestIdentity,
+} from "../../../infra/matrix-testserver/cross-signing.ts";
 import { hasTestMatrixHomeserver } from "../../../infra/matrix-testserver/health.ts";
 import { loginFresh } from "../../../infra/matrix-testserver/login.ts";
 import { ATTACHMENT_FRAME_LIMIT, BODY_FRAME_LIMIT, sha256Hex } from "./attachment.ts";
@@ -52,12 +56,12 @@ describe.skipIf(!available)(
   { timeout: 30_000 },
   () => {
     let accounts: {
-      alice: { userId: string };
-      bob: { userId: string };
+      alice: { userId: string; identity: TestIdentity };
+      bob: { userId: string; identity: TestIdentity };
       rooms: { plain: string; encrypted: string };
     };
-    let aliceLogin: { userId: string; accessToken: string };
-    let bobLogin: { userId: string; accessToken: string };
+    let aliceLogin: { userId: string; accessToken: string; deviceId: string };
+    let bobLogin: { userId: string; accessToken: string; deviceId: string };
     let aliceDir: string;
     let bobDir: string;
     let aliceServer: Server;
@@ -89,6 +93,10 @@ describe.skipIf(!available)(
       ]);
       aliceCrypto = aliceDeps.crypto;
       bobCrypto = bobDeps.crypto;
+      // Devices their owners signed, as a person confirms a new device: frames are taken only from
+      // such devices, and one unsigned may not send into an encrypted room (MTX-4).
+      await signTestDevice(aliceLogin, accounts.alice.identity, aliceLogin.deviceId);
+      await signTestDevice(bobLogin, accounts.bob.identity, bobLogin.deviceId);
       aliceServer = createServer({
         homeserverUrl: BASE_URL,
         accessToken: aliceLogin.accessToken,
