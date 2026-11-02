@@ -325,7 +325,7 @@ function isDocumentOperation(method: string | undefined, path: string): boolean 
       path === "/whoami" ||
       path === "/channels" ||
       path === "/members" ||
-      /^\/channels\/.+\/(?:deliveries|integrity-log)$/.test(path)
+      /^\/channels\/.+\/(?:deliveries|deliveries-since|integrity-log)$/.test(path)
     );
   }
   return method === "POST" && /^\/channels\/[^/]+\/(?:bind|send|invite)$/.test(path);
@@ -598,6 +598,26 @@ export function createServer(deps: ServerDependencies): Server {
       deps.sync
         .pollOnce()
         .then(() => sendJson(res, 200, deps.sync.getDeliveries(documentId).map(deliveryToJson)))
+        .catch((error: unknown) => sendRouteFailure(res, error));
+      return;
+    }
+
+    // The cursor (TRN-18, TRN-21; bindings/local-bridge-interface.md): what came after `after`, and
+    // whether something after it may have come and gone unseen.
+    if (method === "GET" && path?.startsWith("/channels/") && path.endsWith("/deliveries-since")) {
+      const documentId = decodeURIComponent(
+        path.slice("/channels/".length, -"/deliveries-since".length),
+      );
+      const after = new URLSearchParams(query).get("after") || undefined;
+      deps.sync
+        .pollOnce()
+        .then(() => {
+          const answer = deps.sync.getDeliveriesSince(documentId, after);
+          sendJson(res, 200, {
+            deliveries: answer.deliveries.map(deliveryToJson),
+            truncated: answer.truncated,
+          });
+        })
         .catch((error: unknown) => sendRouteFailure(res, error));
       return;
     }

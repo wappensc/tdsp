@@ -21,6 +21,7 @@ const auth: AuthStatusSource = {
   async link() {
     return { linkingUri: "sgnl://x" };
   },
+  async refreshLink() {},
 };
 
 class FakeRpc implements SignalRpc {

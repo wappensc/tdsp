@@ -42,10 +42,10 @@ import { SignalRpcError } from "./signal-daemon.ts";
  * `signal-cli` 0.14.9 and of its libsignal-service-java 2.15.3_unofficial_154, not provoked
  * against real Signal.
  *
- * A device unlinked from the phone is not told apart: `signal-cli` then answers every call naming
- * the account with `"Specified account does not exist"` (code -32602), but it answers the same
- * when it could not load an account that is still linked, such as while Signal is unreachable.
- * That, and storage that is full, stay a 502.
+ * A device unlinked from the phone is told apart in `server.ts`, not here (SIG-7): `signal-cli`
+ * then answers every call naming the account with `"Specified account does not exist"` (code
+ * -32602), as it does when it could not load an account that is still linked, and only its list
+ * of accounts says which. Here, as storage that is full, it stays a 502.
  */
 export interface SendFailure {
   readonly status: number;

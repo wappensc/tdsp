@@ -276,6 +276,46 @@ export class SignalMessengerPort implements MessengerPort {
       payload: delivery.payload,
     }));
   }
+
+  /**
+   * `GET /channels/:documentId/deliveries-since?after=` — the deliveries after the cursor `after`,
+   * oldest first, and whether some after it may have come and gone unseen (SPECIFICATION.md
+   * TRN-18, TRN-21). An answer of another shape is refused, as is a bridge that does not offer the
+   * route (TRN-9).
+   */
+  async receiveSince(
+    documentId: DocumentId,
+    _member: MemberId,
+    after: DeliveryId | undefined,
+  ): Promise<{ readonly deliveries: readonly Delivery[]; readonly truncated: boolean }> {
+    const query = after === undefined ? "" : `?after=${encodeURIComponent(after)}`;
+    const response = await fetch(
+      `${this.#bridgeUrl}/channels/${encodeURIComponent(documentId)}/deliveries-since${query}`,
+    );
+    if (!response.ok) {
+      throw new Error(
+        `receiveSince(${documentId}) failed: ${response.status} ${await response.text()}`,
+      );
+    }
+    const body = (await response.json()) as {
+      deliveries?: { id: string; sender: string; payload: string }[];
+      truncated?: unknown;
+    };
+    if (!Array.isArray(body.deliveries) || typeof body.truncated !== "boolean") {
+      throw new Error(
+        "receiveSince: the bridge answered something that is not deliveries and truncated",
+      );
+    }
+    return {
+      deliveries: body.deliveries.map((delivery) => ({
+        id: delivery.id,
+        documentId,
+        sender: delivery.sender,
+        payload: delivery.payload,
+      })),
+      truncated: body.truncated,
+    };
+  }
 }
 
 function resolveBridgeUrl(): string {

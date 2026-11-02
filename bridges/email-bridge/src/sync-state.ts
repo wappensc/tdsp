@@ -4,6 +4,7 @@ import {
   DEFAULT_DELIVERY_RETENTION,
   type Delivery,
   type DeliveryRetention,
+  deliveriesAfter,
   retainNewest,
 } from "@tdsp/messenger-port";
 import { type BindRecord, getBindRecord } from "./bind-store.ts";
@@ -94,6 +95,11 @@ const MAX_READ_ATTEMPTS = 3;
 export interface SyncState {
   pollOnce(documentId: string): Promise<void>;
   getDeliveries(documentId: string): readonly Delivery[];
+  /** The deliveries after the cursor `after`, and whether deliveries after it may have come and gone unseen (TRN-18, TRN-21). */
+  getDeliveriesSince(
+    documentId: string,
+    after: string | undefined,
+  ): { readonly deliveries: readonly Delivery[]; readonly truncated: boolean };
   getRejections(documentId: string): readonly Rejection[];
 }
 
@@ -105,6 +111,8 @@ export function createSyncState(
   /** How much of each document's deliveries `getDeliveries` keeps (BRG-17). */
   retention: DeliveryRetention = DEFAULT_DELIVERY_RETENTION,
 ): SyncState {
+  /** How many deliveries each document's window has taken in, its dropped ones included (TRN-18). */
+  const appended = new Map<string, number>();
   const deliveries = new Map<string, Delivery[]>();
   const rejections = new Map<string, Rejection[]>();
   /**
@@ -350,6 +358,7 @@ export function createSyncState(
     // and a replacement of it is still recorded (BRG-12).
     retainNewest(list, retention);
     deliveries.set(documentId, list);
+    appended.set(documentId, (appended.get(documentId) ?? 0) + 1);
   }
 
   async function poll(documentId: string): Promise<void> {
@@ -394,6 +403,13 @@ export function createSyncState(
     },
     getDeliveries(documentId) {
       return deliveries.get(documentId) ?? [];
+    },
+    getDeliveriesSince(documentId, after) {
+      // Every poll reads the whole thread, so the bridge passes over nothing; only the window
+      // bounds a cursor, in the order mails entered it, whichever mailbox they came from (TRN-21).
+      return deliveriesAfter(deliveries.get(documentId) ?? [], after, {
+        appended: appended.get(documentId) ?? 0,
+      });
     },
     getRejections(documentId) {
       return rejections.get(documentId) ?? [];

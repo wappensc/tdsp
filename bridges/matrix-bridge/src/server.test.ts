@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type Delivery,
+  deliveriesAfter,
   parseTransportProfile,
   transportSendErrorFromHttp,
 } from "@tdsp/messenger-port";
@@ -113,6 +114,11 @@ class FakeSyncState implements SyncState {
 
   hasSeenEncrypted(roomId: string): boolean {
     return this.seenEncrypted.has(roomId);
+  }
+
+  getDeliveriesSince(documentId: string, after: string | undefined) {
+    const window = this.deliveries.get(documentId) ?? [];
+    return deliveriesAfter(window, after, { appended: window.length });
   }
 }
 
@@ -549,6 +555,26 @@ describe("matrix-bridge HTTP API", () => {
     expect(body[0]?.payload).toBe("hi"); // the frame's text, not Base64
   });
 
+  it("GET /channels/:id/deliveries-since answers what came after the cursor, and truncated for one the window does not hold (TRN-18)", async () => {
+    sync.deliveries.set("doc-1", [
+      { id: "d1", documentId: "doc-1", sender: "bob", payload: "AQ==" },
+      { id: "d2", documentId: "doc-1", sender: "bob", payload: "Ag==" },
+    ]);
+    const after = await fetch(`${baseUrl}/channels/doc-1/deliveries-since?after=d1`);
+    expect(after.status).toBe(200);
+    expect(await (async (r: Response) => r.json())(after)).toEqual({
+      deliveries: [{ id: "d2", documentId: "doc-1", sender: "bob", payload: "Ag==" }],
+      truncated: false,
+    });
+    const unknown = await fetch(`${baseUrl}/channels/doc-1/deliveries-since?after=gone`);
+    expect(((await unknown.json()) as { truncated: boolean }).truncated).toBe(true);
+    const all = await fetch(`${baseUrl}/channels/doc-1/deliveries-since`);
+    expect((await all.json()) as { deliveries: unknown[]; truncated: boolean }).toMatchObject({
+      truncated: false,
+    });
+    expect(sync.pollCount).toBe(3);
+  });
+
   it("POST /channels/:documentId/resync-request and GET .../resync-requests no longer exist", async () => {
     rooms.joinedRoomIds.add("!plain:example.org");
     await fetch(`${baseUrl}/channels/doc-1/bind`, {
@@ -699,6 +725,7 @@ describe("matrix-bridge with no account provisioned (BRG-1)", () => {
         getDeliveries: () => [],
         getIntegrityLog: () => [],
         hasSeenEncrypted: () => false,
+        getDeliveriesSince: () => ({ deliveries: [], truncated: false }),
       },
       bindStorePath: join(bindStoreDir, "tdsp-channels.json"),
     });
@@ -740,6 +767,7 @@ describe("matrix-bridge with no account provisioned (BRG-1)", () => {
       fetch(`${baseUrl}/channels`),
       fetch(`${baseUrl}/members?channelId=${encodeURIComponent("!r:example.org")}`),
       fetch(`${baseUrl}/channels/doc-1/deliveries`),
+      fetch(`${baseUrl}/channels/doc-1/deliveries-since?after=d1`),
       fetch(`${baseUrl}/channels/doc-1/integrity-log`),
       post("/channels/doc-1/bind", {
         channelId: "!r:example.org",

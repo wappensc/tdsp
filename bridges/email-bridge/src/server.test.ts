@@ -3,7 +3,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Delivery, parseTransportProfile } from "@tdsp/messenger-port";
+import { type Delivery, deliveriesAfter, parseTransportProfile } from "@tdsp/messenger-port";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getBindRecord, setBindRecord } from "./bind-store.ts";
 import { FakeGpgInvoker } from "./fake-gpg.ts";
@@ -85,6 +85,11 @@ class FakeSyncState implements SyncState {
 
   getDeliveries(documentId: string): readonly Delivery[] {
     return this.#deliveries.get(documentId) ?? [];
+  }
+
+  getDeliveriesSince(documentId: string, after: string | undefined) {
+    const window = this.#deliveries.get(documentId) ?? [];
+    return deliveriesAfter(window, after, { appended: window.length });
   }
 
   #rejections = new Map<string, Rejection[]>();
@@ -353,6 +358,7 @@ describe("bridges/email-bridge server", () => {
       async (_, deps) => {
         const url = await restartAs(deps);
         expect((await fetch(`${url}/channels/doc-1/deliveries`)).status).toBe(409);
+        expect((await fetch(`${url}/channels/doc-1/deliveries-since?after=d1`)).status).toBe(409);
         expect((await fetch(`${url}/channels/doc-1/integrity-log`)).status).toBe(409);
       },
     );
@@ -917,6 +923,26 @@ describe("bridges/email-bridge server", () => {
     expect(await readJson(response)).toEqual([
       { id: "d1", documentId: "doc-1", sender: "bob@example.org", payload: "AQID" },
     ]);
+  });
+
+  it("GET /channels/:id/deliveries-since answers what came after the cursor, and truncated for one the window does not hold (TRN-18)", async () => {
+    sync.seedDeliveries("doc-1", [
+      { id: "d1", documentId: "doc-1", sender: "bob", payload: "AQ==" },
+      { id: "d2", documentId: "doc-1", sender: "bob", payload: "Ag==" },
+    ]);
+    const after = await fetch(`${baseUrl}/channels/doc-1/deliveries-since?after=d1`);
+    expect(after.status).toBe(200);
+    expect(await readJson(after)).toEqual({
+      deliveries: [{ id: "d2", documentId: "doc-1", sender: "bob", payload: "Ag==" }],
+      truncated: false,
+    });
+    const unknown = await fetch(`${baseUrl}/channels/doc-1/deliveries-since?after=gone`);
+    expect(((await unknown.json()) as { truncated: boolean }).truncated).toBe(true);
+    const all = await fetch(`${baseUrl}/channels/doc-1/deliveries-since`);
+    expect((await all.json()) as { deliveries: unknown[]; truncated: boolean }).toMatchObject({
+      truncated: false,
+    });
+    expect(sync.polled).toEqual(["doc-1", "doc-1", "doc-1"]);
   });
 
   it("carries an edit whatever the document's permissions say and has no membership, archive, delete, or resync-request routes: membership/archive/delete are control frames in the payload, and a resync request rides the same send/deliveries routes as everything else", async () => {

@@ -221,6 +221,8 @@ export interface SyncResult {
   readonly roomEvents: ReadonlyMap<string, readonly RawTimelineEvent[]>;
   /** The state events each room's `state` block holds this round, before its timeline: on a first `/sync` the room's state, `m.room.encryption` among it (MTX-5). */
   readonly roomStateEvents: ReadonlyMap<string, readonly RawTimelineEvent[]>;
+  /** The rooms whose timeline this round is `limited`: the homeserver left out events between the previous round and this one's. */
+  readonly limitedRooms: ReadonlySet<string>;
   /** to-device events (Olm-encrypted room-key shares included) this round — fed to `OlmMachine.receiveSyncChanges` by `crypto-machine.ts`, never interpreted here. */
   readonly toDeviceEvents: readonly RawToDeviceEvent[];
   /** users whose device list changed this round, per Matrix's own `device_lists.changed`/`.left` — same destination as `toDeviceEvents`. */
@@ -291,10 +293,14 @@ export function readSyncAnswer(body: unknown): SyncResult {
   }
   const roomEvents = new Map<string, readonly RawTimelineEvent[]>();
   const roomStateEvents = new Map<string, readonly RawTimelineEvent[]>();
+  const limitedRooms = new Set<string>();
   const rooms = isRecord(body.rooms) && isRecord(body.rooms.join) ? body.rooms.join : {};
   for (const [roomId, room] of Object.entries(rooms)) {
     if (!isRecord(room)) {
       continue;
+    }
+    if (isRecord(room.timeline) && room.timeline.limited === true) {
+      limitedRooms.add(roomId);
     }
     const events = eventsOf(room.timeline);
     if (events.length > 0) {
@@ -313,6 +319,7 @@ export function readSyncAnswer(body: unknown): SyncResult {
     nextBatch: body.next_batch,
     roomEvents,
     roomStateEvents,
+    limitedRooms,
     toDeviceEvents: toDevice.filter(
       (event): event is RawToDeviceEvent => isRecord(event) && typeof event.type === "string",
     ),

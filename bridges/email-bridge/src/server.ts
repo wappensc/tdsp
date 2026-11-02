@@ -1030,6 +1030,37 @@ export function createServer(deps: ServerDependencies): Server {
       return;
     }
 
+    // The cursor (TRN-18, TRN-21; bindings/local-bridge-interface.md): what came after `after`, and
+    // whether something after it may have come and gone unseen.
+    if (method === "GET" && path?.startsWith("/channels/") && path.endsWith("/deliveries-since")) {
+      const documentId = decodeURIComponent(
+        path.slice("/channels/".length, -"/deliveries-since".length),
+      );
+      if (provisionedAccount(deps) === undefined) {
+        refuseUnprovisioned(res);
+        return;
+      }
+      const sync = deps.sync;
+      if (sync === undefined) {
+        sendJson(res, 503, { error: "email-bridge is not configured yet" });
+        return;
+      }
+      const after = new URLSearchParams(query).get("after") || undefined;
+      sync
+        .pollOnce(documentId)
+        .then(() => {
+          const answer = sync.getDeliveriesSince(documentId, after);
+          sendJson(res, 200, {
+            deliveries: answer.deliveries.map(deliveryToJson),
+            truncated: answer.truncated,
+          });
+        })
+        .catch((error: unknown) => {
+          sendJson(res, 502, { error: error instanceof Error ? error.message : String(error) });
+        });
+      return;
+    }
+
     // No resync-request route: a resync request is an ordinary send()/receive()
     // frame, like a resync response.
 
