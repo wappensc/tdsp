@@ -73,7 +73,7 @@ engines.** The published vectors are the wire's and the behaviour vectors that �
 independently written counterpart has run them: a small checker in Swift,
 [conformance/swift-checker/](conformance/swift-checker/), by its authors' account written only from
 the documents and the standards they name — parser, register merge, digests, clock — passed every vector but the
-flows, which need an engine, when it last ran: on `df1e532`, the merge of #128 (draft-10), 335
+flows, which need an engine, when it last ran: on `9a4df0e`, the head of #132 (EML-14), 335
 vectors in eight files, and its own 14 tests passed. It lists where the text left it to choose. No CI job runs it; a pull
 request that changes the specification, a binding or the vectors runs it and moves this commit
 ([CONTRIBUTING.md](CONTRIBUTING.md), "The Swift checker"). It is no engine, so
