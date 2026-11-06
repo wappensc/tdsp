@@ -7,6 +7,8 @@ import { EmailMessengerPort } from "@tdsp/messenger-email";
 // infra/email-testserver isn't a pnpm workspace package — see
 // mail-transport.test.ts's own comment on this same relative import.
 import { ALICE, BOB, HOST, IMAP_PORT, SMTP_PORT } from "../../../infra/email-testserver/config.ts";
+import type { ProvisionedGpgHomes } from "../../../infra/email-testserver/gpg-homes.ts";
+import { createGpgInvoker, type GpgInvoker } from "./gpg-invoke.ts";
 import { createImapReceiver, createNodemailerSender } from "./mail-transport.ts";
 import { createServer } from "./server.ts";
 import { createSyncState } from "./sync-state.ts";
@@ -19,6 +21,8 @@ export interface LivePair {
   memberPort: EmailMessengerPort;
   memberId: string;
   channelId: string;
+  /** Each bridge's bind store, for a test that reads what its bridge recorded. */
+  bindStorePaths: { creator: string; member: string };
 }
 
 /**
@@ -33,8 +37,12 @@ export interface LivePair {
  * thread. Alice's `startThread()` creates it and sends the one real invite email; Bob's
  * `joinThread()` registers his own bridge's bind-store entry for that same thread, exactly
  * as a participant who opens the invitation link does.
+ *
+ * With `pgp` — `gpg` homes holding Alice's and Bob's keys, each with the other's public key —
+ * the thread is started as a PGP document (EML-3, EML-4): each bridge signs, encrypts and
+ * verifies with real `gpg` from its person's home.
  */
-export function livePairs(prefix: string) {
+export function livePairs(prefix: string, options: { pgp?: ProvisionedGpgHomes } = {}) {
   const servers: Server[] = [];
   const dirs: string[] = [];
   let counter = 0;
@@ -79,18 +87,27 @@ export function livePairs(prefix: string) {
       pass: BOB.password,
     });
 
+    const gpgFor = (address: string): GpgInvoker | undefined =>
+      options.pgp === undefined
+        ? undefined
+        : createGpgInvoker({ gnupgHome: options.pgp.homes.get(address) });
+    const aliceGpg = gpgFor(ALICE.address);
+    const bobGpg = gpgFor(BOB.address);
     const aliceServer = createServer({
       address: ALICE.address,
       sender: aliceSender,
-      sync: createSyncState(aliceReceiver, aliceBindStorePath, undefined),
-      gpg: undefined,
+      sync: createSyncState(aliceReceiver, aliceBindStorePath, aliceGpg),
+      // A PGP join reads the invitation from the mailbox (EML-4).
+      ...(aliceGpg === undefined ? {} : { receiver: aliceReceiver }),
+      gpg: aliceGpg,
       bindStorePath: aliceBindStorePath,
     });
     const bobServer = createServer({
       address: BOB.address,
       sender: bobSender,
-      sync: createSyncState(bobReceiver, bobBindStorePath, undefined),
-      gpg: undefined,
+      sync: createSyncState(bobReceiver, bobBindStorePath, bobGpg),
+      ...(bobGpg === undefined ? {} : { receiver: bobReceiver }),
+      gpg: bobGpg,
       bindStorePath: bobBindStorePath,
     });
     servers.push(aliceServer, bobServer);
@@ -109,6 +126,8 @@ export function livePairs(prefix: string) {
       [ALICE.address, BOB.address],
       ALICE.address,
       "yjs-paragraphs/1",
+      undefined,
+      options.pgp !== undefined,
     );
     await memberPort.joinThread(
       documentId,
@@ -116,6 +135,7 @@ export function livePairs(prefix: string) {
       [ALICE.address, BOB.address],
       ALICE.address,
       "yjs-paragraphs/1",
+      options.pgp !== undefined,
     );
     return {
       documentId,
@@ -124,6 +144,7 @@ export function livePairs(prefix: string) {
       memberPort,
       memberId: BOB.address,
       channelId: threadRootMessageId,
+      bindStorePaths: { creator: aliceBindStorePath, member: bobBindStorePath },
     };
   }
 
