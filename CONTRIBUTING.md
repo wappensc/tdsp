@@ -122,6 +122,22 @@ changes, the tests that cite it change too.
 [CONFORMANCE.md](CONFORMANCE.md) says what is verified. A change that verifies something
 new — or finds that a claim there no longer holds — updates it.
 
+**The Swift checker.** [conformance/swift-checker/](conformance/swift-checker/) reads the
+published vectors as a second reading of the text; no CI job runs it. A pull request that
+changes SPECIFICATION.md, `bindings/` or the published vectors (`wire/` and the
+`test-vectors/` directories) runs it on its head and states in its description whether it ran,
+and with what result:
+
+```sh
+swift run --package-path conformance/swift-checker tdsp-checker   # exits 1 if any vector fails
+```
+
+Where it passes, the pull request moves the commit that CONFORMANCE.md's paragraph on the
+checker names to its own head, with its number. Where it fails and the checker is not brought
+along in the same pull request, that paragraph says which vectors it no longer passes, rather
+than that it passes every vector. Before a release tag, it runs once more on the release
+commit, and the result is stated before the tag ([docs/versioning.md](docs/versioning.md)).
+
 [CHANGELOG.md](CHANGELOG.md) says what changed from release to release. A pull request that
 changes the specification or the wire, the exports or options of a package, what a bridge
 offers, or behaviour an application can notice adds a line under "Unreleased", with its

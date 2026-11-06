@@ -72,8 +72,11 @@ engine no longer reads them.
 engines.** The published vectors are the wire's and the behaviour vectors that §3.6 names. One
 independently written counterpart has run them: a small checker in Swift,
 [conformance/swift-checker/](conformance/swift-checker/), by its authors' account written only from
-the documents and the standards they name — parser, register merge, digests, clock — passes every vector but the
-flows, which need an engine, and lists where the text left it to choose. It is no engine, so
+the documents and the standards they name — parser, register merge, digests, clock — passed every vector but the
+flows, which need an engine, when it last ran: on `df1e532`, the merge of #128 (draft-10), 335
+vectors in eight files. It lists where the text left it to choose. No CI job runs it; a pull
+request that changes the specification, a binding or the vectors runs it and moves this commit
+([CONTRIBUTING.md](CONTRIBUTING.md), "The Swift checker"). It is no engine, so
 the vectors show that this implementation and a second reading of the text agree on the wire,
 not that two implementations interoperate. A statement about interoperability says "checked against the
 published vectors", never "interoperable with a second engine".
