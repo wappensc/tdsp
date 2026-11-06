@@ -98,6 +98,10 @@ pnpm run matrix:down && pnpm run email:down
   in-memory SMTP/IMAP server that accepts any login. The PGP tests additionally need
   `gpg` on `PATH` (GnuPG 2.2 or later; tested with 2.2.40, 2.4.4 and 2.5.22) and create
   throwaway keyrings under a temporary directory — your own keyring is never touched.
+- **The engine over the bridges.** `engine.test.ts` in the Matrix and the email bridge runs
+  the 2.0 engine itself over two of that bridge's servers and the local Synapse or
+  Greenmail: a joiner bootstrapped, concurrent edits converged, a decision carried. The
+  other L2 tests check the bridges and adapters without the engine.
 - **Signal.** There is no local Signal server. The L2 test for the Signal bridge starts
   a real `signal-cli` daemon (from `PATH`) and checks its own mechanics — the Unix
   socket, JSON-RPC, shutdown — without an account. It skips when `signal-cli` is not

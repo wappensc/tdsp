@@ -33,9 +33,12 @@ The tests are grouped into three levels by what they need
 - **L4** — real accounts at production services: two linked Signal accounts, two
   mailboxes at a real email provider. Opt-in, never part of CI.
 
-Every test of the engine is L0: the engine against the in-memory transport, which offers
+Every test of the engine but two is L0: the engine against the in-memory transport, which offers
 the cursor and the instance (TRN-18, TRN-19) and injects delay, duplication, reordering,
-loss, a moved-on window and a restarted bridge. Two kinds of test carry most of the weight:
+loss, a moved-on window and a restarted bridge. The two others run it at L2 over two of this
+repository's bridges each — Matrix with a local Synapse, email with a local Greenmail
+(`engine.test.ts` in each bridge) — and show that a joiner is bootstrapped, concurrent edits
+converge and a decision of the creator reaches the member over a real messenger. Two kinds of test carry most of the weight:
 
 - **Property tests** with a seeded generator, so that a failure replays from its seed:
   registers over random histories of three devices of the creator whose wall clocks
@@ -338,7 +341,10 @@ protocol.
 
 ## Evidence not yet gathered
 
-- **The 2.0 engine over this repository's bridges at L2** — required for v2.0.0, not run.
+- **The 2.0 engine over this repository's bridges beyond a plain channel.** At L2 it runs over
+  the Matrix bridges in an unencrypted room and over the email bridges without PGP; not in an
+  encrypted room, not with PGP, and not over the Signal bridge, which has no local server and so
+  only L4 (below).
 - **A second implementation**: two separately implemented engines exchanging new documents,
   bootstrap, changes, deletions, rights and large answers, in both directions, are not shown,
   and TDSP 2.0's stable set does not wait for them; what stands in for them are the flow

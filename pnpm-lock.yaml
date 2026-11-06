@@ -51,9 +51,15 @@ importers:
         specifier: ^7.0.9
         version: 7.0.13
     devDependencies:
+      '@tdsp/document-protocol':
+        specifier: workspace:*
+        version: link:../../packages/document-protocol
       '@tdsp/messenger-email':
         specifier: workspace:*
         version: link:../../packages/messenger-email
+      '@tdsp/reconciliation':
+        specifier: workspace:*
+        version: link:../../packages/reconciliation
       '@types/mailparser':
         specifier: ^3.4.6
         version: 3.4.6
@@ -76,9 +82,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/messenger-port
     devDependencies:
+      '@tdsp/document-protocol':
+        specifier: workspace:*
+        version: link:../../packages/document-protocol
       '@tdsp/messenger-matrix':
         specifier: workspace:*
         version: link:../../packages/messenger-matrix
+      '@tdsp/reconciliation':
+        specifier: workspace:*
+        version: link:../../packages/reconciliation
 
   bridges/signal-bridge:
     dependencies:
