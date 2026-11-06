@@ -11,6 +11,10 @@ import {
   TEST_ACCOUNT_PASSWORD,
   TEST_ACCOUNTS_PATH,
 } from "../../../infra/matrix-testserver/config.ts";
+import {
+  signTestDevice,
+  type TestIdentity,
+} from "../../../infra/matrix-testserver/cross-signing.ts";
 import { loginFresh } from "../../../infra/matrix-testserver/login.ts";
 import type { CryptoMachine } from "./crypto-machine.ts";
 import { createLiveServerDependencies, createServer } from "./server.ts";
@@ -32,6 +36,10 @@ export interface LivePair {
  * would run. Shared by the tests that need two such bridges, so their setup cannot drift
  * apart. Call `close()` once, after the last pair.
  *
+ * In the encrypted room each bridge's device is signed by its account's identity once it has
+ * uploaded its keys, as a person confirms a new device: unsigned, a bridge would neither send
+ * there nor deliver the other's frames (bindings/matrix.md MTX-4).
+ *
  * A fresh login per pair sidesteps the one-time-key collision `login.ts`'s own doc
  * comment documents (a persisted token's device history not matching a fresh local
  * crypto store).
@@ -39,8 +47,8 @@ export interface LivePair {
 export function livePairs(prefix: string) {
   let accounts:
     | {
-        alice: { userId: string; accessToken: string };
-        bob: { userId: string; accessToken: string };
+        alice: { userId: string; accessToken: string; identity: TestIdentity };
+        bob: { userId: string; accessToken: string; identity: TestIdentity };
         rooms: { plain: string; encrypted: string };
       }
     | undefined;
@@ -77,6 +85,12 @@ export function livePairs(prefix: string) {
       ),
     ]);
     cryptoMachines.push(aliceDeps.crypto, bobDeps.crypto);
+    if (room === "encrypted") {
+      await Promise.all([
+        signTestDevice(aliceLogin, accounts.alice.identity, aliceLogin.deviceId),
+        signTestDevice(bobLogin, accounts.bob.identity, bobLogin.deviceId),
+      ]);
+    }
 
     const aliceServer = createServer({
       homeserverUrl: BASE_URL,

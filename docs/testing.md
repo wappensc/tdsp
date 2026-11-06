@@ -101,8 +101,9 @@ pnpm run matrix:down && pnpm run email:down
 - **The engine over the bridges.** `engine.test.ts` in the Matrix and the email bridge runs
   the 2.0 engine itself over two of that bridge's servers and the local Synapse or
   Greenmail: a joiner bootstrapped, concurrent edits converged, a decision carried. For
-  email it does so twice, without PGP and with it; the PGP case needs `gpg` like the other
-  PGP tests. The other L2 tests check the bridges and adapters without the engine.
+  Matrix it does so twice, in a plain and in an encrypted room, where each bridge's device is
+  signed with `signTestDevice` first (MTX-4). For email it does so twice, without PGP and with
+  it; the PGP case needs `gpg` like the other PGP tests. The other L2 tests check the bridges and adapters without the engine.
 - **Signal.** There is no local Signal server. The L2 test for the Signal bridge starts
   a real `signal-cli` daemon (from `PATH`) and checks its own mechanics — the Unix
   socket, JSON-RPC, shutdown — without an account. It skips when `signal-cli` is not
