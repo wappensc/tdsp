@@ -110,35 +110,10 @@ Keep metadata accurate when the document changes.
   convergence.
 - See SPECIFICATION.md (§2 architecture, §15 security considerations) for the rest.
 
-## Where things live in the code
+## Code map and commands
 
-- One message carries two wrappers (SPECIFICATION.md §2.2): the envelope, which only a
-  bridge reads to route by `documentId`, and inside it the frame, which only the engine
-  reads. Adapters and bridges pass a frame on unparsed (ARC-3).
-- `DocumentEngine` (`packages/document-protocol/src/index.ts`) holds control state (§7) and
-  bootstrap and resync (§8), and composes one module per other part: `control-state.ts`,
-  `registers.ts` and `clock.ts` (§7), `framing.ts` and `strict-json.ts` (§4), `profile.ts`
-  (§5; the profile itself, `split.ts` and `update-bounds.ts` included, is
-  `packages/reconciliation`), `resync-gate.ts`, `answer-turn.ts` and `own-requests.ts`
-  (§8), `send-scheduler.ts` and `sync-policy.ts` (§9), `steady-clock.ts` (SND-25),
-  `digest.ts` (LOS-12), `loss-detector.ts` (§10), `invitation.ts` (§11.3).
-- The three bridges share one layout: `index.ts` (environment, bind to 127.0.0.1),
-  `server.ts` (the local bridge interface, §12.6), `bind-store.ts` (`documentId` ↔
-  channel, §12.2; both in `bindings/`), `sync-state.ts` (receiving), `send-failure.ts` (§3.4) and
-  `transport-profile.ts` (§3.5). Each adapter (`packages/messenger-*`) is an HTTP client
-  of its bridge.
-- Every transport runs the conformance suite from `@tdsp/messenger-port/contract` in its
-  `contract.test.ts` (§3.6).
-- There is no build step: package `exports` point at `src/index.ts`, and bridges run under
-  `node --experimental-strip-types`, so their relative imports carry `.ts` extensions.
-- A test's level is an explicit list in `vitest.config.ts`: a new test that needs Synapse,
-  Greenmail or a real account must be added to the L2 or L4 list there, or it runs in L0
-  and skips itself. In CI, `tools/test-run-check.ts` fails a job when the security, wire,
-  or Matrix and email groups skipped instead of ran.
-- `wire/wire-lock.json` hashes the specification's wire sections (§4, §5, §7, §11,
-  Appendices A and B), the binding documents in `bindings/` but the local bridge interface,
-  and the wire files, with the draft marker while there is one (VER-3), so a change of wording
-  in any of them, even an editorial one, fails `tools/wire-lock.wire.test.ts`.
+Where each part of the specification lives in the code is [docs/code-map.md](docs/code-map.md);
+every package script, and how to run a single test file, is [docs/commands.md](docs/commands.md).
 
 ## Repository conventions
 
@@ -159,41 +134,3 @@ A change is done when `pnpm run ci` passes, documentation metadata remains accur
 tests against the local servers. Security-relevant changes also require a test that would
 fail if transport isolation, authorization, convergence, or a claimed real-messenger
 guarantee regressed.
-
-## Commands
-
-Run from the repo root:
-
-- `pnpm install` — install and link the workspace.
-- `pnpm run ci` — lint, dependency rules, network policy, requirement IDs, licenses, type
-  check and tests.
-  GitHub's CI runs the same checks as separate steps, calling each tool directly.
-- `pnpm run lint` / `pnpm run lint:fix` — Biome check / check and fix.
-- `pnpm run depcruise` — the dependency rules in `.dependency-cruiser.cjs`: the engine,
-  the profile and the transport contract never depend on a concrete adapter, and no
-  package imports a transport library (except in its own `*.test.ts`/`*.bench.ts`).
-- `pnpm run netcheck` — every network primitive needs an annotation at the code site and a
-  `network-policy.json` entry. `pnpm run verify:network` — netcheck, depcruise and the
-  network guard's tests in one go.
-- `pnpm run licenses:check` — every distributed dependency recorded in
-  `third-party-licenses.json`, and every license (development tools and external programs
-  too) allowed or approved in `license-policy.json`. `pnpm run licenses:generate` —
-  regenerate THIRD-PARTY-NOTICES.md's tables after a dependency changes.
-- `pnpm run typecheck` — `tsc --noEmit` across the workspace.
-- `pnpm run test` / `pnpm run test:watch` — Vitest; `test:l0`, `test:l2`, `test:l4` run
-  one level ([docs/testing.md](docs/testing.md)).
-- `pnpm run matrix:up` / `email:up` (and `:down`, `matrix:reset`) — the local Synapse and
-  Greenmail for the L2 tests; `pnpm run test:l2` resets and restarts Synapse first.
-- `pnpm run test:l4-signal`, `test:l4-signal-own-devices`, `test:l4-email`,
-  `test:l4-email-bridges` — against real accounts, only with their configuration; `pnpm run signal:link <bridge url>` links a
-  Signal bridge by QR code.
-- `pnpm run matrix:confirm-device [bridge url]` — signs a running Matrix bridge's device
-  with the account's recovery key ([docs/matrix-device-confirmation.md](docs/matrix-device-confirmation.md)).
-- `pnpm run wire:lock` — compare the wire with `wire/wire-lock.json`; accepting a change is
-  the CI role's (CONTRIBUTING.md).
-- `pnpm run repo:settings` — the full check of the GitHub settings, as the admin or CI
-  role ([docs/repository-settings.md](docs/repository-settings.md)).
-- `pnpm run bench` — Vitest's bench mode; logs numbers, not gated in CI.
-
-To run a single test file, use Vitest's own filtering rather than a separate script,
-e.g. `pnpm exec vitest run packages/reconciliation/src/index.test.ts`.
