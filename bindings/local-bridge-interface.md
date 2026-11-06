@@ -95,12 +95,14 @@ unknown route answers 404.
 | `GET /channels/:documentId/integrity-log` | The integrity violations recorded and the notices its binding names (BRG-15) | — | a list of `{kind, id, sender, reason, …}` for a violation, `reason` one of BRG-12's or one its binding names, and `{kind, id, recipient, reason, …}` for a notice, `reason` one its binding names (SIG-4); an entry without `kind`, from a bridge of TDSP 1.x, is a violation |
 
 Email has no pre-existing channel to bind to; starting and joining a thread
-replace binding:
+replace binding, and removing a participant is the one change of the channel's
+members it offers ([§12.5](bridges.md#125-what-a-bridge-does-not-do)):
 
 | Route | Purpose | Request | Response |
 |---|---|---|---|
 | `POST /threads/:documentId` | Start the thread: send the invitation, bind the document | `{recipients[], creator, profile, inviteText?, pgpEnabled?, threadRootMessageId?, policy?}` — `policy` is TDSP 1.x's; an application of TDSP 2.0 sends none | `{threadRootMessageId}` |
 | `POST /threads/:documentId/join` | Join a thread from its invitation | `{recipients[], creator, profile, pgpEnabled?, threadRootMessageId}` | the binding (for PGP, including the invitation's profile, and a 1.x invitation's policy, which an application of TDSP 2.0 ignores) |
+| `POST /threads/:documentId/remove` | Remove a participant from the thread: send the removal notice (EML-14) | `{actor, participant}` — `actor` must be the bridge's own account and the document's creator, `participant` in the set the bridge holds and not the creator, else 403 | `{messageId}` — the notice's, which is no delivery |
 
 Provisioning routes are binding-specific: Signal's `GET /auth/status` and
 `POST /auth/link`; email's `GET /mail/status`, `GET /pgp/status` and

@@ -108,8 +108,9 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
   them — for a documentId its sender learned while a member of the document's
   channel, say — would let someone outside that channel write into the document,
   and a deletion from there would fill its integrity log with records nobody in
-  the channel caused. The email binding's channel is a fixed participant set,
-  checked for every message (EML-2).
+  the channel caused. The email binding's channel is a participant set fixed
+  when the thread starts and shrunk only by the creator (EML-1, EML-14), checked
+  for every message (EML-2).
 - **BRG-11** · *bridge* — A bridge MUST make every delivery received for a document
   available, cumulatively and unfiltered (TRN-7): not filtered by kind, content or
   sender. It MAY drop silently a message its messenger presents again — the same
@@ -301,7 +302,10 @@ version ([§15.1](../SPECIFICATION.md#151-what-a-messenger-must-provide)).
 `"frame"`: every frame kind rides in this one envelope kind, because the bridge
 must not distinguish them (ARC-3). `frame` is the frame's JSON text as a JSON
 string — escaped, never parsed, never Base64-encoded — so it arrives exactly as it
-was sent (TRN-3).
+was sent (TRN-3). A binding may define a message of its own on the channel that
+carries no frame and is no envelope, with a `kind` of its own — the email
+binding's removal notice, `"remove"` (EML-14): its bridge reads it as the binding
+says and delivers nothing of it.
 
 - **BND-4** · *bridge* — A binding MAY replace `frame` by an `attachment` reference
   to a file holding the frame's UTF-8 text; an envelope carries exactly one of the
@@ -316,7 +320,8 @@ was sent (TRN-3).
   that is not a valid envelope (BRG-10):
   - nested deeper than [§1.6](../SPECIFICATION.md#16-notation) allows;
   - `tdsp` missing or not a number;
-  - `kind` not `"frame"`, where the binding has a `kind`;
+  - `kind` not `"frame"`, where the binding has a `kind`, but for a message the
+    binding defines with a `kind` of its own (EML-14);
   - `documentId` or `frame` not a string;
   - both or neither of `frame` and `attachment` (BND-4);
   - another version for a document the bridge has not bound.

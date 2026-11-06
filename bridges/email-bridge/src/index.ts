@@ -77,7 +77,7 @@ if (address && smtpHost && smtpAuthUser && smtpPass && imapHost && imapAuthUser 
     authUser: imapAuthUser,
     pass: imapPass,
   });
-  sync = createSyncState(receiver, bindStorePath, gpg, log);
+  sync = createSyncState(receiver, bindStorePath, gpg, log, undefined, address);
   // TLS is required for every host but this machine (tls-policy.ts), so this is
   // never "plaintext" for a real mailbox — logged so it can be seen, not assumed.
   log.info("mail-tls", { smtp: sender.tls, imap: receiver.tls });

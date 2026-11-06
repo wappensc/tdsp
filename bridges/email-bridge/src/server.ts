@@ -13,12 +13,20 @@ import {
 import { type Logger, loggerFromEnv } from "@tdsp/bridge-log";
 import { isLoopbackOrigin } from "@tdsp/loopback";
 import type { Delivery } from "@tdsp/messenger-port";
-import { type BindRecord, getBindRecord, loadBindStore, setBindRecord } from "./bind-store.ts";
+import {
+  type BindRecord,
+  getBindRecord,
+  heldParticipants,
+  isRemoved,
+  loadBindStore,
+  recordRemoval,
+  setBindRecord,
+} from "./bind-store.ts";
 import {
   canonicalMemberId,
   composeInviteBody,
-  type EmailEnvelope,
   encodeEnvelope,
+  encodeRemovalNotice,
   isPolicyText,
   isProfileText,
   isValidMessageId,
@@ -33,6 +41,7 @@ import {
   composeMail,
   type MailReceiver,
   type MailSender,
+  type OutgoingMail,
   type SentCopyMode,
 } from "./mail-transport.ts";
 import { classifySendFailure } from "./send-failure.ts";
@@ -179,14 +188,13 @@ type PgpSendPlan =
     };
 
 /**
- * The body of an outbound protocol message: the envelope's JSON as-is for a
- * PGP-off document; for a PGP-enabled one, that same JSON signed with this
- * bridge's own key and encrypted to every other member, through the
- * document's own keyring (bindings/email.md EML-3, EML-4). The single place
- * signing and encryption happen, so no send route can forget to.
+ * The body of an outbound protocol message — a frame's envelope, or a removal notice
+ * (EML-14): its JSON as-is for a PGP-off document; for a PGP-enabled one, that same JSON
+ * signed with this bridge's own key and encrypted to every member the plan names, through the
+ * document's own keyring (bindings/email.md EML-3, EML-4). The single place signing and
+ * encryption happen, so no send route can forget to.
  */
-async function buildEnvelopeText(envelope: EmailEnvelope, plan: PgpSendReady): Promise<string> {
-  const json = encodeEnvelope(envelope);
+async function buildMessageText(json: string, plan: PgpSendReady): Promise<string> {
   if (plan.pgp === undefined) {
     return json;
   }
@@ -204,11 +212,16 @@ async function buildEnvelopeText(envelope: EmailEnvelope, plan: PgpSendReady): P
  * with and the document keyring still holds every other member's pinned key
  * (it can only lack one if the file was damaged or removed). A PGP-off
  * document is never checked, whatever `gpg` happens to be installed.
+ *
+ * `participants` is who the message is encrypted to, this address included: the set the
+ * bridge holds (EML-14). A removal notice is planned before the removal is recorded, so it is
+ * encrypted to the set before it, the removed participant included.
  */
 async function preparePgpSend(
   deps: ServerDependencies,
   documentId: string,
   bound: BindRecord,
+  participants: readonly string[],
 ): Promise<PgpSendPlan> {
   if (!bound.pgpEnabled) {
     return {};
@@ -251,10 +264,10 @@ async function preparePgpSend(
   const recipientFingerprints: string[] = [];
   // Encrypted to this address's own key too: another device of it opens the copy in the sent
   // folder (bindings/email.md EML-12).
-  for (const address of bound.recipients) {
+  for (const address of participants) {
     const pinned = bound.pinnedFingerprints[normalizeAddress(address)];
     // Sequential, not Promise.all: keeps this loop from spawning
-    // `bound.recipients.length` gpg processes at once per send.
+    // `participants.length` gpg processes at once per send.
     const held = pinned === undefined ? [] : await keyring.listKeys(address);
     if (
       pinned === undefined ||
@@ -275,6 +288,22 @@ async function preparePgpSend(
     };
   }
   return { pgp: { keyring, signer: bound.ownFingerprint, recipientFingerprints } };
+}
+
+/**
+ * The removals this bridge already holds for the very thread a join names, to keep in the record
+ * the join writes: joining the thread again, as an application does to resume a document, must
+ * not add back anyone the creator removed (EML-1, EML-14).
+ */
+function removalsKept(
+  existing: BindRecord | undefined,
+  threadRootMessageId: string,
+): Pick<BindRecord, "removed"> {
+  return existing?.threadRootMessageId === threadRootMessageId &&
+    existing.removed !== undefined &&
+    existing.removed.length > 0
+    ? { removed: existing.removed }
+    : {};
 }
 
 function sameAddressSet(a: readonly string[], b: readonly string[]): boolean {
@@ -372,6 +401,37 @@ interface SendRequestBody {
   payload?: unknown;
 }
 
+interface RemoveRequestBody {
+  actor?: unknown;
+  participant?: unknown;
+}
+
+/**
+ * Files the copy of a mail just sent in the sent folder, which this address's other devices read
+ * (EML-12). The mail is out either way: a failed copy is logged, never reported as a failed
+ * send, which would send it again.
+ */
+async function fileSentCopy(
+  deps: ServerDependencies,
+  logger: Logger,
+  account: { readonly address: string },
+  mail: OutgoingMail,
+  messageId: string,
+): Promise<void> {
+  if ((deps.sentCopy ?? "append") !== "append" || !deps.receiver?.storeSentCopy) {
+    return;
+  }
+  try {
+    await deps.receiver.storeSentCopy(await composeMail(account.address, mail, messageId));
+  } catch (error) {
+    logger.warn("sent-copy-failed", {
+      documentId: mail.documentId,
+      messageId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export function createServer(deps: ServerDependencies): Server {
   const instance = deps.instance ?? randomUUID();
   const logger = deps.logger ?? loggerFromEnv("email-bridge");
@@ -416,7 +476,8 @@ export function createServer(deps: ServerDependencies): Server {
     }
 
     // A thread is this binding's channel, named by its root Message-ID; its members are the
-    // participant set fixed when it started (EML-1), as this bridge holds it (TRN-17).
+    // participant set it started with less those the creator removed (EML-1, EML-14), as this
+    // bridge holds it (TRN-17). A thread this mailbox was removed from is one it is not in.
     if (method === "GET" && path === "/members") {
       const channelId = new URLSearchParams(query).get("channelId");
       if (channelId === null || channelId === "") {
@@ -426,11 +487,11 @@ export function createServer(deps: ServerDependencies): Server {
       const thread = Object.values(loadBindStore(deps.bindStorePath)).find(
         (record) => record.threadRootMessageId === channelId,
       );
-      if (thread === undefined) {
+      if (thread === undefined || (deps.address !== undefined && isRemoved(thread, deps.address))) {
         sendJson(res, 404, { error: `this mailbox holds no thread ${channelId}` });
         return;
       }
-      sendJson(res, 200, thread.recipients.map(normalizeAddress));
+      sendJson(res, 200, heldParticipants(thread).map(normalizeAddress));
       return;
     }
 
@@ -508,7 +569,7 @@ export function createServer(deps: ServerDependencies): Server {
         });
         return;
       }
-      preparePgpSend(deps, documentId, bound)
+      preparePgpSend(deps, documentId, bound, heldParticipants(bound))
         .then((plan) => {
           sendJson(res, 200, {
             enabled: true,
@@ -806,9 +867,14 @@ export function createServer(deps: ServerDependencies): Server {
           // The creator's signed initial policy, for a PGP document's join to report
           // back; a plain document has none inside a signature.
           let joinedPolicy: string | undefined;
+          const kept = removalsKept(
+            getBindRecord(deps.bindStorePath, documentId),
+            body.threadRootMessageId,
+          );
           if (!pgpEnabled) {
             setBindRecord(deps.bindStorePath, documentId, {
               recipients: body.recipients,
+              ...kept,
               creatorMemberId: body.creator,
               profile: body.profile,
               threadRootMessageId: body.threadRootMessageId,
@@ -884,6 +950,7 @@ export function createServer(deps: ServerDependencies): Server {
             const accepted = result.accepted;
             const record: BindRecord = {
               recipients: accepted.recipients,
+              ...kept,
               creatorMemberId: accepted.creator,
               profile: accepted.profile,
               threadRootMessageId: body.threadRootMessageId,
@@ -931,6 +998,81 @@ export function createServer(deps: ServerDependencies): Server {
       return;
     }
 
+    // The creator removes a participant from the thread (EML-14): a notice into the thread,
+    // addressed and, with PGP, encrypted to the set before the removal, so the removed
+    // participant learns of it too; then the set this bridge holds shrinks, for good.
+    const removeMatch = method === "POST" ? /^\/threads\/([^/]+)\/remove$/.exec(path ?? "") : null;
+    if (removeMatch) {
+      const documentId = decodeURIComponent(removeMatch[1] as string);
+      const account = provisionedAccount(deps);
+      if (account === undefined) {
+        refuseUnprovisioned(res);
+        return;
+      }
+      readJsonBody(req)
+        .then(async (rawBody) => {
+          const body = rawBody as RemoveRequestBody;
+          if (typeof body.actor !== "string" || body.actor.length === 0) {
+            sendJson(res, 400, { error: "actor must be a non-empty string" });
+            return;
+          }
+          if (typeof body.participant !== "string" || body.participant.length === 0) {
+            sendJson(res, 400, { error: "participant must be a non-empty string" });
+            return;
+          }
+          const bound = getBindRecord(deps.bindStorePath, documentId);
+          if (!bound) {
+            sendJson(res, 404, { error: `${documentId} has no thread started yet` });
+            return;
+          }
+          const self = normalizeAddress(account.address);
+          const creator = normalizeAddress(bound.creatorMemberId);
+          // Only the creator removes, and only through her own bridge (EML-14, BRG-16).
+          if (canonicalMemberId(body.actor) !== self || self !== creator) {
+            sendJson(res, 403, {
+              error: `only the creator of ${documentId}, through her own bridge, removes a participant`,
+            });
+            return;
+          }
+          const participant = canonicalMemberId(body.participant);
+          const held = heldParticipants(bound);
+          if (
+            participant === undefined ||
+            participant === creator ||
+            !held.some((address) => normalizeAddress(address) === participant)
+          ) {
+            sendJson(res, 403, {
+              error: `${body.participant} is not a participant of ${documentId} other than its creator`,
+            });
+            return;
+          }
+          // The set before the removal: the notice reaches the removed participant too.
+          const plan = await preparePgpSend(deps, documentId, bound, held);
+          if (plan.blocked) {
+            sendJson(res, plan.blocked.status, { error: plan.blocked.error });
+            return;
+          }
+          const mail = {
+            to: held.filter((r) => normalizeAddress(r) !== self),
+            subject: subjectForDocument(documentId),
+            text: await buildMessageText(
+              encodeRemovalNotice({ tdsp: 1, kind: "remove", documentId, participant }),
+              plan,
+            ),
+            documentId,
+            inReplyTo: bound.threadRootMessageId,
+            references: [bound.threadRootMessageId],
+          };
+          const { messageId } = await account.sender.send(mail);
+          // This address's other devices learn of the removal from the copy (EML-12).
+          await fileSentCopy(deps, logger, account, mail, messageId);
+          recordRemoval(deps.bindStorePath, documentId, participant);
+          sendJson(res, 200, { messageId });
+        })
+        .catch((error: unknown) => sendSendFailure(res, error));
+      return;
+    }
+
     const sendMatch = method === "POST" ? /^\/channels\/([^/]+)\/send$/.exec(path ?? "") : null;
     if (sendMatch) {
       const documentId = decodeURIComponent(sendMatch[1] as string);
@@ -965,22 +1107,32 @@ export function createServer(deps: ServerDependencies): Server {
             sendJson(res, 404, { error: `${documentId} has no thread started yet` });
             return;
           }
-          const plan = await preparePgpSend(deps, documentId, bound);
+          // Removed from the thread by its creator: a send waiting cannot change, so it is
+          // refused as one (EML-14), 403, which an adapter maps to `rejected` (LBI-6).
+          if (isRemoved(bound, account.address)) {
+            sendJson(res, 403, {
+              error: `${account.address} was removed from the thread of ${documentId}`,
+            });
+            return;
+          }
+          // Addressed and, with PGP, encrypted to the set this bridge holds (EML-14).
+          const held = heldParticipants(bound);
+          const plan = await preparePgpSend(deps, documentId, bound, held);
           if (plan.blocked) {
             sendJson(res, plan.blocked.status, { error: plan.blocked.error });
             return;
           }
           const self = normalizeAddress(account.address);
           const mail = {
-            to: bound.recipients.filter((r) => normalizeAddress(r) !== self),
+            to: held.filter((r) => normalizeAddress(r) !== self),
             subject: subjectForDocument(documentId),
-            text: await buildEnvelopeText(
-              {
+            text: await buildMessageText(
+              encodeEnvelope({
                 tdsp: 1,
                 kind: "frame",
                 documentId,
                 frame: body.payload,
-              },
+              }),
               plan,
             ),
             documentId,
@@ -988,21 +1140,7 @@ export function createServer(deps: ServerDependencies): Server {
             references: [bound.threadRootMessageId],
           };
           const { messageId } = await account.sender.send(mail);
-          // The copy this address's other devices read (EML-12). The mail is out either way:
-          // a failed copy is logged, never reported as a failed send, which would resend it.
-          if ((deps.sentCopy ?? "append") === "append" && deps.receiver?.storeSentCopy) {
-            try {
-              await deps.receiver.storeSentCopy(
-                await composeMail(account.address, mail, messageId),
-              );
-            } catch (error) {
-              logger.warn("sent-copy-failed", {
-                documentId,
-                messageId,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            }
-          }
+          await fileSentCopy(deps, logger, account, mail, messageId);
           sendJson(res, 200, { deliveryId: messageId });
         })
         .catch((error: unknown) => sendSendFailure(res, error));

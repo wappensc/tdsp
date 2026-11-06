@@ -155,6 +155,58 @@ export function decodeInvite(text: string): InvitePayload | undefined {
   };
 }
 
+/**
+ * The creator's removal notice (bindings/email.md EML-14, the row *Removal*): a mail in the
+ * thread like a frame mail, plain or signed and encrypted like one, whose body names the one
+ * participant the creator removes. It is *not* an {@link EmailEnvelope}: `decodeEnvelope` does
+ * not know the kind, so a notice never becomes a delivery, and the bridge hands nothing of it to
+ * the engine.
+ */
+export interface RemovalNotice {
+  readonly tdsp: 1;
+  readonly kind: "remove";
+  readonly documentId: string;
+  /** The removed participant's canonical MemberId (EML-10). */
+  readonly participant: string;
+}
+
+export function encodeRemovalNotice(notice: RemovalNotice): string {
+  return JSON.stringify(notice);
+}
+
+/**
+ * Strict parse of a removal notice's text (EML-14) — `undefined` for anything that is not
+ * exactly that shape, `participant` a bare address in its canonical form included, so a notice
+ * names one MemberId and nothing a comparison could read two ways. Unknown extra fields are
+ * dropped, as for a frame envelope.
+ */
+export function decodeRemovalNotice(text: string): RemovalNotice | undefined {
+  // Deeper than any TDSP message may nest: not one, and never handed to the parser (§1.6, JSN-1).
+  if (jsonTextTooDeep(text)) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return undefined;
+  }
+  const c = parsed as Record<string, unknown>;
+  if (
+    c.tdsp !== 1 ||
+    c.kind !== "remove" ||
+    typeof c.documentId !== "string" ||
+    typeof c.participant !== "string" ||
+    canonicalMemberId(c.participant) !== c.participant
+  ) {
+    return undefined;
+  }
+  return { tdsp: 1, kind: "remove", documentId: c.documentId, participant: c.participant };
+}
+
 /** One bare address: no whitespace, angle brackets, commas or quotes, exactly one `@`. */
 function isPlainAddress(value: string): boolean {
   return value.length <= 254 && /^[^\s<>,;"@]+@[^\s<>,;"@]+$/.test(value);
@@ -373,6 +425,42 @@ export function recipientHeadersMatchClosedSet(
   }
   for (const address of actual) {
     if (!expected.has(address)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * The recipient check a receiving bridge makes of every mail in a thread (bindings/email.md
+ * EML-2), against the participant set it holds now (EML-14): the sender is in `held`, everyone
+ * in `held` is the sender or among `To` and `Cc`, and every other recipient is in `removed`. A
+ * participant who has not read a removal yet still addresses the set before it, so a recipient
+ * already removed is taken; a removed participant is no longer taken as a sender. Like
+ * {@link recipientHeadersMatchClosedSet}, independent of and prior to any PGP check, since a
+ * signature covers the body, never these headers.
+ */
+export function recipientHeadersCoverHeldSet(
+  sender: string,
+  to: readonly string[],
+  cc: readonly string[],
+  held: readonly string[],
+  removed: readonly string[],
+): boolean {
+  const from = normalizeAddress(sender);
+  const heldSet = new Set(held.map(normalizeAddress));
+  const removedSet = new Set(removed.map(normalizeAddress));
+  const addressed = new Set([...to, ...cc].map(normalizeAddress));
+  if (!heldSet.has(from)) {
+    return false;
+  }
+  for (const participant of heldSet) {
+    if (participant !== from && !addressed.has(participant)) {
+      return false;
+    }
+  }
+  for (const recipient of addressed) {
+    if (!heldSet.has(recipient) && !removedSet.has(recipient)) {
       return false;
     }
   }

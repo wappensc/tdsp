@@ -79,10 +79,9 @@ export class EmailMessengerPort implements MessengerPort {
   /**
    * Mirrors `MatrixMessengerPort`'s own `#boundDocuments` field —
    * {@link startThread} already records this server-side, so
-   * `createDocument` needs no further bridge call. Also doubles as this
-   * port instance's own record of `documentId`'s permanently closed
-   * recipient list (the closed participant set, bindings/email.md §13.4), though
-   * the bridge, not this class, is what actually enforces it.
+   * `createDocument` needs no further bridge call. `recipients` is the
+   * participant set as the thread started (bindings/email.md EML-1); which of
+   * them the creator removed since (EML-14) is the bridge's to hold and enforce.
    */
   readonly #createdThreads = new Map<
     DocumentId,
@@ -100,10 +99,10 @@ export class EmailMessengerPort implements MessengerPort {
    * one: the bridge sends the thread's own invite email (readable text with
    * the invitation link; for a PGP-enabled document, followed by the creator's
    * signed and encrypted block of participants and keys, EML-4) as part of
-   * this call, records `recipients` as `documentId`'s
-   * permanently closed distribution list (`setMembership`
-   * can change permission among this exact set afterward, but can never
-   * add or remove anyone from it), and returns the new thread's root
+   * this call, records `recipients` as `documentId`'s participant set
+   * (`setMembership` can change permission among this set afterward, but can
+   * never add anyone to it; only the creator removes one, with
+   * {@link removeParticipant}), and returns the new thread's root
    * `Message-ID`. Must be called, successfully, before
    * `DocumentEngine.create()` for a given `documentId`.
    *
@@ -229,6 +228,51 @@ export class EmailMessengerPort implements MessengerPort {
     this.#createdThreads.set(documentId, { recipients, creator });
     const body = (await response.json().catch(() => undefined)) as { policy?: unknown } | undefined;
     return typeof body?.policy === "string" ? { policy: body.policy } : {};
+  }
+
+  /**
+   * Adapter-specific, like {@link startThread} — `POST /threads/:documentId/remove`: the
+   * creator removes `participant` from the document's thread (bindings/email.md EML-14). The
+   * bridge sends a removal notice into the thread, addressed — and for a PGP document signed
+   * and encrypted — to the participant set before the removal, so the removed participant
+   * learns of it too, and from then on addresses every mail to the smaller set. Every bridge
+   * that reads the notice does the same; the set never grows back. It is the channel's half of
+   * ending someone's part: a revocation alone may be undone by a concurrent grant
+   * (SPECIFICATION.md §6.6, §15.4), so an application revokes the participant's permission and
+   * removes them here (LIF-9).
+   *
+   * Refused (403) unless `actor` is the bridge's own account and the document's creator, and
+   * `participant` is in the set the bridge holds and not the creator. Without PGP a notice is
+   * as forgeable as any mail (EML-9). Resolves to the notice's `Message-ID`, which is no
+   * delivery.
+   */
+  async removeParticipant(
+    documentId: DocumentId,
+    actor: MemberId,
+    participant: MemberId,
+  ): Promise<{ messageId: string }> {
+    const response = await fetch(
+      `${this.#bridgeUrl}/threads/${encodeURIComponent(documentId)}/remove`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ actor, participant }),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `removeParticipant(${documentId}) failed: ${response.status} ${await response.text()}`,
+      );
+    }
+    const body: unknown = await response.json();
+    const messageId =
+      typeof body === "object" && body !== null
+        ? (body as { messageId?: unknown }).messageId
+        : undefined;
+    if (typeof messageId !== "string" || messageId === "") {
+      throw new Error("removeParticipant: the bridge answered no Message-ID for the notice");
+    }
+    return { messageId };
   }
 
   /**
