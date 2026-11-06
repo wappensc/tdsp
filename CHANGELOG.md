@@ -890,6 +890,14 @@ Healing at the next occasion (draft-10), besides wording, references and Appendi
   names none (TRN-9). An engine on one of them now takes a restart of its bridge as a truncated
   history and asks with `force` (LOS-9); the adapters need a bridge of this version.
 - The conformance suite (§3.6) checks `instance()` where a transport offers it.
+- The email bridge's `POST /threads/:documentId/remove` (`{actor, participant}` → `{messageId}`)
+  and `EmailMessengerPort.removeParticipant(documentId, actor, participant)`: the creator removes
+  a participant from an email thread (EML-14). The participant set only shrinks: every bridge
+  that reads the creator's removal notice holds the smaller set from then on, across restarts,
+  addresses, encrypts and answers `GET /members` with it, takes mail still addressed to the set
+  before it, and refuses mail from the removed participant; a bridge whose own address was
+  removed refuses to send (403) and delivers nothing more of the thread. A notice not from the
+  creator is not taken and is logged (`removal-ignored`), not recorded in the integrity log.
 - Behaviour vectors beside the wire's (§3.6), not in the wire lock:
   `test-vectors/clock-draft-10.json` (CTL-45 as pure functions), `digests-draft-10.json` (the
   control digest through its RFC 8785 text, the state digest from the delete-set bytes, LOS-24),
