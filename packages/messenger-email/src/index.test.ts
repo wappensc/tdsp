@@ -41,6 +41,21 @@ function startFakeBridge(): Promise<{ server: Server; url: string; requests: unk
         res.end(JSON.stringify({ error: "recipients must be non-empty" }));
         return;
       }
+      if (req.method === "POST" && path === "/threads/doc-1/remove") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ messageId: "<notice-1@example.org>" }));
+        return;
+      }
+      if (req.method === "POST" && path === "/threads/doc-refused/remove") {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "only the creator removes a participant" }));
+        return;
+      }
+      if (req.method === "POST" && path === "/threads/doc-no-id/remove") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({}));
+        return;
+      }
       if (req.method === "POST" && path === "/threads/doc-1/join") {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ documentId: "doc-1", ...(body as object) }));
@@ -351,6 +366,25 @@ describe("EmailMessengerPort", () => {
     await expect(
       port.startThread("doc-fail", [], "alice@example.org", "yjs-paragraphs/1"),
     ).rejects.toThrow(/doc-fail.*422/);
+  });
+
+  it("removeParticipant() posts the actor and the participant to the remove route and answers the notice's Message-ID (EML-14)", async () => {
+    const result = await port.removeParticipant("doc-1", "alice@example.org", "carol@example.org");
+    expect(result).toEqual({ messageId: "<notice-1@example.org>" });
+    expect(bridge.requests).toContainEqual({
+      method: "POST",
+      url: "/threads/doc-1/remove",
+      body: { actor: "alice@example.org", participant: "carol@example.org" },
+    });
+  });
+
+  it("removeParticipant() throws on a refusal, and on an answer that names no notice", async () => {
+    await expect(
+      port.removeParticipant("doc-refused", "bob@example.org", "carol@example.org"),
+    ).rejects.toThrow(/doc-refused.*403/);
+    await expect(
+      port.removeParticipant("doc-no-id", "alice@example.org", "carol@example.org"),
+    ).rejects.toThrow(/no Message-ID/);
   });
 
   it("joinThread() posts the thread's known details to the bridge's join route", async () => {
