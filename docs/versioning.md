@@ -1,6 +1,6 @@
 ---
 title: "Versioning and releases"
-summary: "What a release tag vX.Y.Z of the reference implementation names and promises, how it relates to the specification's own version, which number a change moves, how CHANGELOG.md becomes a release's notes, who makes a tag and how it is protected, and how another project depends on a release through Git."
+summary: "What a release tag vX.Y.Z of the reference implementation names and promises, how it relates to the specification's own version, which number a change moves, how CHANGELOG.md becomes a release's notes, what runs before a tag, who makes it and how it is protected, and how another project depends on a release through Git."
 read_when:
   - "Tagging a release, or deciding whether a change needs a new major, minor or patch version"
   - "Changing an export of a package, or the shape of persisted engine state"
@@ -60,6 +60,9 @@ bridges in this repository.
 - Before the tag, a pull request moves [CHANGELOG.md](../CHANGELOG.md)'s "Unreleased"
   section under the new version, together with the version in every `package.json`; the
   release notes are written from that section.
+- Before the tag, the Swift checker runs on the commit to be tagged
+  ([CONTRIBUTING.md](../CONTRIBUTING.md), "The Swift checker"), and its result is stated
+  before the tag is pushed.
 - The CI role creates it (`wappensc-ci`, or `wappensc-admin`): no one else may push a tag
   matching `v*`. It publishes the release right after pushing the tag.
 - A tag is never moved or deleted once pushed: a wrong release is superseded by the next

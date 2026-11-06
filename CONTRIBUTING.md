@@ -122,6 +122,34 @@ changes, the tests that cite it change too.
 [CONFORMANCE.md](CONFORMANCE.md) says what is verified. A change that verifies something
 new — or finds that a claim there no longer holds — updates it.
 
+**The Swift checker.** [conformance/swift-checker/](conformance/swift-checker/) reads the
+published vectors as a second reading of the text; no CI job runs it. A pull request that
+changes SPECIFICATION.md, `bindings/` or the published vectors (`wire/` and the
+`test-vectors/` directories) runs it on its head and states in its description whether it ran,
+and with what result — the line per file, "N passed, 0 failed", so that a file that shrank
+shows:
+
+```sh
+swift run --package-path conformance/swift-checker tdsp-checker   # exits 1 if any vector fails
+swift test --package-path conformance/swift-checker               # its own tests, below
+```
+
+`swift test` adds a least number of vectors per file and known answers for its primitives. It
+needs XCTest, which comes with Xcode, not with the Command Line Tools alone: where
+`xcode-select` points to those, prefix it with
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`. Run both in the checkout under
+review, and never copy `.build` between checkouts: the checker finds the vectors from where it
+was compiled. A new draft marker fails every file until `Sources/TDSPChecker/Edition.swift`
+names it.
+
+Where it passes, the pull request moves the commit that CONFORMANCE.md's paragraph on the
+checker names to its own head, with its number. Where it fails, the pull request brings the
+checker along where that is small — as its README says, from the documents only, without
+reading the reference implementation's code — or else that paragraph says which vectors it no
+longer passes, rather than that it passes every vector. Before a release tag, it runs once more
+on the release commit, and the result is stated before the tag
+([docs/versioning.md](docs/versioning.md)).
+
 [CHANGELOG.md](CHANGELOG.md) says what changed from release to release. A pull request that
 changes the specification or the wire, the exports or options of a package, what a bridge
 offers, or behaviour an application can notice adds a line under "Unreleased", with its
