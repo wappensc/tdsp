@@ -606,7 +606,7 @@ describe("a creator's answer is checked whole before any of it applies (FRM-6, C
   it.each<[string, Record<string, unknown>, unknown]>([
     ["a 1.x field", { ...VALID_SNAPSHOT, sequence: 4 }, null],
     [
-      "a field this draft does not define, `confirmed`",
+      "a field this version does not define, `confirmed`",
       { ...VALID_SNAPSHOT, confirmed: true },
       null,
     ],

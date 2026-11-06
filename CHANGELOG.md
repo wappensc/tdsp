@@ -12,17 +12,35 @@ options of the packages, to what the bridges offer, and to behaviour an applicat
 notice. Not listed: refactorings, tests and CI changes that change none of that. Numbers in
 parentheses are pull requests or issues of [wappensc/tdsp](https://github.com/wappensc/tdsp).
 
-## Unreleased
+## v2.0.0 — 2026-11-06 · implements TDSP 2.0
 
-TDSP 2.0, a draft of the next major version (#71), for review before its release. Frames
-carry `"tdsp": 2` and invitations `tdsp=2` — until 2.0 is released, the draft marker
-`de.wappensc.together.tdsp.probe.draft-10` instead (VER-3) — and every 1.x engine refuses
-them, as VER-1 intends. The envelope and the profile `yjs-paragraphs/1` keep version 1, and
-the wire of 1.x stays frozen beside the draft's. Appendix G of the specification lists every
-requirement withdrawn, changed or added, each with the reason, and what 2.0 leaves out of
-#50 and #71.
+TDSP 2.0, the next major version (#71). Frames carry `"tdsp": 2` and invitations `tdsp=2`,
+and every 1.x engine refuses them, as VER-1 intends. The envelope and the profile
+`yjs-paragraphs/1` keep version 1, and the wire of 1.x stays frozen beside 2.0's. Appendix G
+of the specification lists every requirement withdrawn, changed or added, each with the
+reason, and what 2.0 leaves out of #50 and #71. Stable: the core, the profile, the bridges and
+the envelope, and the Signal, Matrix and email bindings; the layout of a mail and the local
+bridge interface stay drafts (§14). The gaps of this implementation, MTX-4's room keys among
+them, are in CONFORMANCE.md.
 
-### Specification: TDSP 2.0 (draft)
+From the last draft, draft-10, to the release (#137):
+
+- **The version instead of the marker** (FRM-2, §11.3, VER-3): frames and invitations carry
+  `2` where the drafts wrote their marker; a frame or an invitation under a draft's marker is
+  `unsupported-version`. Control state is persisted with `2`, and one persisted under a draft's
+  marker, draft-10's included, or under none, is read as none: a device of the creator starts as
+  a new device, anyone else waits for an answer. A document of a draft goes on as a new one.
+- **The wire's files** (§3.6, §14): `wire/frames-v2.json`, `wire/invitations-v2.json` and the
+  published vectors `frames-v2.json`, `invitations-v2.json` and `control-v2.json`, in the wire
+  lock, replace the draft's `-draft-10` files; the behaviour vectors are `clock-v2.json`,
+  `digests-v2.json`, `updates-v2.json` and `flows-v2.json`. Two vectors that refused `2` refuse
+  draft-10's marker instead.
+- **The engine** (`@tdsp/document-protocol`): `CURRENT_FRAME_VERSION` and `INVITATION_VERSION`
+  are the number `2`; `PersistedControlState.tdsp` is `number | string`, so that a state a draft
+  persisted still types.
+- **Every package** is version 2.0.0.
+
+### Specification: TDSP 2.0
 
 How the text is written:
 
@@ -35,11 +53,10 @@ How the text is written:
 
 The frame and the wire:
 
-- **The draft's wire** (VER-3): `wire/frames-draft-10.json` and `wire/invitations-draft-10.json`
-  are frozen like 1.x's files, and `packages/document-protocol/test-vectors/frames-draft-10.json`,
-  `invitations-draft-10.json` and `control-draft-10.json` are the published vectors, read by a
-  receiver of `yjs-paragraphs/1` (the `profile` field of `frames-draft-10.json`), all of them in
-  the wire lock. An incompatible change of the draft names a new marker.
+- **The wire** (§3.6, VER-3): `wire/frames-v2.json` and `wire/invitations-v2.json` are frozen
+  like 1.x's files, and `packages/document-protocol/test-vectors/frames-v2.json`,
+  `invitations-v2.json` and `control-v2.json` are the published vectors, read by a receiver of
+  `yjs-paragraphs/1` (the `profile` field of `frames-v2.json`), all of them in the wire lock.
 - **Extension fields** (§4.4, FRM-9 to FRM-12): a field whose name contains `.` is ignored when
   unknown, in frames, snapshots, registers and overlays; the keys of objects whose keys are data —
   a snapshot's and a `control` frame's `targets`, `lastEditBySender` — are not field names, so a
@@ -65,7 +82,7 @@ The frame and the wire:
   lengths, two lengths each within bounds among them — and a delete range whose clock plus length
   does: `isUpdate` took them, and applied they left the replica at a clock its own state vector
   could not carry, which every receiver refused.
-  The behaviour vectors `updates-draft-10.json` show it (§3.6). Where a second reading of the text
+  The behaviour vectors `updates-v2.json` show it (§3.6). Where a second reading of the text
   could differ, it now says what the reference does: `missing-field` at every level, integers
   without a sign, the device tag's spare bits unchecked, the invitation's problems in their order,
   `recipients`, another provider, how JSON content parses, the Yjs files of the reference, 5 001
@@ -396,9 +413,9 @@ references and Appendix G:
   keeps only what does not assume a lying member.
 
 - **The marker and the wire files** (VER-3, §3.6): the marker is
-  `de.wappensc.together.tdsp.probe.draft-10`. `wire/frames-draft-10.json` (24 frames) and
-  `wire/invitations-draft-10.json` replace draft-5's frozen files, and `frames-draft-10.json`,
-  `invitations-draft-10.json` and `control-draft-10.json` its published vectors, all of them in
+  `de.wappensc.together.tdsp.probe.draft-10`. `wire/frames-v2.json` (24 frames) and
+  `wire/invitations-v2.json` replace draft-5's frozen files, and `frames-v2.json`,
+  `invitations-v2.json` and `control-v2.json` its published vectors, all of them in
   the wire lock as draft-5's were. Control state is persisted with the marker, and one persisted
   under another marker, or none, is read as none.
 - **On the wire** (§4.3, §4.4, §7.5): a `control` frame carries `targets` — the registers its
@@ -899,10 +916,10 @@ Healing at the next occasion (draft-10), besides wording, references and Appendi
   removed refuses to send (403) and delivers nothing more of the thread. A notice not from the
   creator is not taken and is logged (`removal-ignored`), not recorded in the integrity log.
 - Behaviour vectors beside the wire's (§3.6), not in the wire lock:
-  `test-vectors/clock-draft-10.json` (CTL-45 as pure functions), `digests-draft-10.json` (the
+  `test-vectors/clock-v2.json` (CTL-45 as pure functions), `digests-v2.json` (the
   control digest through its RFC 8785 text, the state digest from the delete-set bytes, LOS-24),
-  `updates-draft-10.json` (what a reader of updates takes and refuses, Appendix A) and
-  `flows-draft-10.json` (28 flows of several devices in five case groups — answers to all, decisions of two devices of the creator, what bootstraps a device, bounds, Unicode and bytes, and healing at the next occasion —,
+  `updates-v2.json` (what a reader of updates takes and refuses, Appendix A) and
+  `flows-v2.json` (28 flows of several devices in five case groups — answers to all, decisions of two devices of the creator, what bootstraps a device, bounds, Unicode and bytes, and healing at the next occasion —,
   with the format to run them, version 3: a text may be written as a repeat; a matcher with
   `$pieces` (`atLeast`, optional `text`) stands for one update sent in pieces: at least
   `atLeast` frames, each within `maxBytes`, whose updates applied to an empty document project as
@@ -917,7 +934,7 @@ Healing at the next occasion (draft-10), besides wording, references and Appendi
   written, escapes included; the entry of a 32 000-byte frame in the event is read back only.
 - `wire/signal-v1.json`: the §4.5 edit as a 2.0 frame in the Signal envelope, Appendix D's
   example — an entry added within envelope version 1.
-- `wire/frames-draft-10.json`: a decision on a right on a layer, two decisions in one frame, a
+- `wire/frames-v2.json`: a decision on a right on a layer, two decisions in one frame, a
   repeat to all, and an edit with an extension field, 24 frames in all; the
   published vectors gain a valid frame with a right on a layer.
 - `DocumentProfile` gains `pendingBytes` and `giveUpPending`, both required: an engine refuses a

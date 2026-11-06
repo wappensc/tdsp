@@ -48,7 +48,7 @@ export type ControlTarget =
 /** The target that holds why the creator closed the document (CTL-23). */
 export const CLOSE_REASON = "close-reason";
 
-/** The reasons for the close this draft defines (CTL-23); an application may name its own. */
+/** The reasons for the close this version defines (CTL-23); an application may name its own. */
 export const CLOSE_REASON_CODES: ReadonlySet<string> = new Set([
   "finished",
   "continued",
@@ -81,7 +81,7 @@ export function isCloseReason(value: unknown): value is string {
 
 /**
  * Whether a device of the creator may set `value` as the reason for the close (CTL-23): one this
- * draft defines, or an application's, named as FRM-15 names an extension, of at most 128 bytes.
+ * version defines, or an application's, named as FRM-15 names an extension, of at most 128 bytes.
  */
 export function isNamedCloseReason(value: unknown): value is string {
   return (

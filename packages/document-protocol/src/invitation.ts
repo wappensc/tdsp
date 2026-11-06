@@ -11,8 +11,8 @@ import { isProfileId } from "./framing";
  */
 
 /** The invitation format this module reads and writes: the `tdsp` parameter. */
-/** The draft marker, as for frames (VER-3): a 1.x reader refuses the link as `unsupported-version`. */
-export const INVITATION_VERSION = "de.wappensc.together.tdsp.probe.draft-10";
+/** The invitation version, 2 (§11.3): a 1.x link, and a draft's link under its marker (VER-3), are another version. */
+export const INVITATION_VERSION = 2;
 
 /** The most participants an email invitation may name, as the email binding bounds them. */
 export const MAX_INVITATION_RECIPIENTS = 64;
@@ -128,7 +128,7 @@ export function invitationFromUrl(link: string | URL): ParsedInvitation {
 /**
  * Reads an invitation from a query (with or without its `?`), strictly (§11.3): a parameter
  * this version defines that appears twice, is empty or out of range rejects the invitation; a
- * parameter it does not define is ignored — `policy` of 1.x among them, since the draft shares
+ * parameter it does not define is ignored — `policy` of 1.x among them, since 2.0 shares
  * no policy (SND-16).
  */
 export function parseInvitation(query: string | URLSearchParams): ParsedInvitation {

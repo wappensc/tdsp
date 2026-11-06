@@ -63,7 +63,7 @@ import { registerStateDigest } from "./registers";
 /**
  * What a device of the creator persists, as `onControlStateChange` hands it (CTL-26): its registers
  * and close, its tag, its clock — here the control clock, which its own clock is never below while
- * its wall clock is right — and whether it is bootstrapped (RSY-14), by this draft (VER-3).
+ * its wall clock is right — and whether it is bootstrapped (RSY-14), under version 2 (VER-3).
  */
 function persistedOf(engine: DocumentEngine): PersistedControlState {
   const device = engine.deviceTag;
@@ -3650,7 +3650,7 @@ describe("send scheduling and retry", () => {
         await port.inner.send(
           DOCUMENT_ID,
           "mallory",
-          `{"tdsp":2,"kind":"edit","documentId":"${DOCUMENT_ID}","update":"AA=="}`,
+          `{"tdsp":"de.wappensc.together.tdsp.probe.draft-10","kind":"edit","documentId":"${DOCUMENT_ID}","update":"AA=="}`,
         );
         await bob.sync();
         const reasons = errors.map((e) => (e instanceof FrameDecodeError ? e.reason : String(e)));

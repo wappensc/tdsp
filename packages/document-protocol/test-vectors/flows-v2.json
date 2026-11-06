@@ -1,5 +1,5 @@
 {
-  "$comment": "TDSP 2.0 draft flow vectors (draft revision 10): behaviour, not wire — each flow is several devices on one channel, an initial state, a fixed start time, input steps in delivery order and what each device must then show and must have sent, in five case groups (1 answers to all, 2 decisions of two devices of the creator, 3 what bootstraps a device, 4 bounds, Unicode and bytes, 5 healing at the next occasion: the report, a gap that rests and wakes, one request for many, the close sent again). `format` says how to run them; its `version` is that of the format, which a runner checks before it runs any. Checked in src/flow-vectors.test.ts.",
+  "$comment": "TDSP 2.0 flow vectors: behaviour, not wire — each flow is several devices on one channel, an initial state, a fixed start time, input steps in delivery order and what each device must then show and must have sent, in five case groups (1 answers to all, 2 decisions of two devices of the creator, 3 what bootstraps a device, 4 bounds, Unicode and bytes, 5 healing at the next occasion: the report, a gap that rests and wakes, one request for many, the close sent again). `format` says how to run them; its `version` is that of the format, which a runner checks before it runs any. Checked in src/flow-vectors.test.ts.",
   "format": {
     "version": 3,
     "run": "Each flow runs alone, from `start` (ms since 1970-01-01 UTC) on one clock that only the steps move, on one channel of the document `documentId`, profile `profile`, creator `creator`. Every device is one engine of the implementation under test, of the member it names; the creator's devices are the devices of `creator`. A flow with `prelude` runs that prelude's steps first, with its devices and the flow's own; what the prelude's devices sent is not the flow's.",
@@ -25,7 +25,7 @@
     },
     "names": "Kinds of evidence and standings are the reference implementation's names for what the requirements cited make observable; another implementation maps its own."
   },
-  "version": "de.wappensc.together.tdsp.probe.draft-10",
+  "version": 2,
   "profile": "yjs-paragraphs/1",
   "documentId": "doc-flows",
   "creator": "alice",
@@ -1113,7 +1113,7 @@
         {
           "inject": "alice",
           "frame": {
-            "tdsp": "de.wappensc.together.tdsp.probe.draft-10",
+            "tdsp": 2,
             "kind": "control",
             "documentId": "doc-flows",
             "device": "QnJva2VuLWFwcGxpY2F0aW",
@@ -1143,7 +1143,7 @@
         {
           "inject": "alice",
           "frame": {
-            "tdsp": "de.wappensc.together.tdsp.probe.draft-10",
+            "tdsp": 2,
             "kind": "control",
             "documentId": "doc-flows",
             "device": "QnJva2VuLWFwcGxpY2F0aW",
@@ -1383,7 +1383,7 @@
         {
           "inject": "mallory",
           "frame": {
-            "tdsp": "de.wappensc.together.tdsp.probe.draft-10",
+            "tdsp": 2,
             "kind": "resync-response",
             "documentId": "doc-flows",
             "respondsTo": "$request:bob",
@@ -1411,7 +1411,7 @@
         {
           "inject": "mallory",
           "frame": {
-            "tdsp": "de.wappensc.together.tdsp.probe.draft-10",
+            "tdsp": 2,
             "kind": "edit",
             "documentId": "doc-flows",
             "update": "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQRQbGFuAAA="

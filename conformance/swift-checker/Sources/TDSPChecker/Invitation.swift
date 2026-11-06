@@ -107,7 +107,7 @@ public enum InvitationReader {
         if values["tdsp"] == nil && values["documentId"] == nil {
             return .refused("not-an-invitation", "neither tdsp nor documentId")
         }
-        guard values["tdsp"] == FrameDecoder.draftMarker else {
+        guard values["tdsp"] == Edition.version else {
             return .refused("unsupported-version", "tdsp is \(values["tdsp"] ?? "missing")")
         }
         for name in ["provider", "documentId", "creatorMemberId", "profile"] where (values[name] ?? "").isEmpty {

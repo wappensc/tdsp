@@ -126,7 +126,7 @@ export interface SplittingOptions {
   readonly frameSize: (update: Uint8Array) => number;
   /**
    * The frames, in order, of one piece each, for an update whose frame exceeds `maxBytes` (TDSP
-   * 2.0 draft, SND-17). Throws if that is impossible.
+   * 2.0, SND-17). Throws if that is impossible.
    */
   readonly pieces: (update: Uint8Array, roots: ReadonlySet<string>) => string[];
   /** Sends a frame that is already complete — one piece. Resolves on success, throws on any failure. */

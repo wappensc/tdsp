@@ -58,10 +58,8 @@ type InvitationVector =
   | { name: string; query: string; valid: true; invitation: unknown }
   | { name: string; query: string; valid: false; problem: string };
 
-describe("frame test vectors, at the draft marker", () => {
-  const { profile, vectors } = load<{ profile: string; vectors: FrameVector[] }>(
-    "frames-draft-10.json",
-  );
+describe("frame test vectors, at version 2", () => {
+  const { profile, vectors } = load<{ profile: string; vectors: FrameVector[] }>("frames-v2.json");
 
   /** What a receiver whose document has the vectors' profile reads: the frame, then its CRDT bytes (§4.4). */
   const read = (text: string): Frame => {
@@ -93,8 +91,8 @@ describe("frame test vectors, at the draft marker", () => {
   });
 });
 
-describe("invitation test vectors, at the draft marker", () => {
-  const { vectors } = load<{ vectors: InvitationVector[] }>("invitations-draft-10.json");
+describe("invitation test vectors, at version 2", () => {
+  const { vectors } = load<{ vectors: InvitationVector[] }>("invitations-v2.json");
 
   it.each(vectors.map((v) => [v.name, v] as const))("%s", (_name, vector) => {
     const read = parseInvitation(vector.query);
@@ -106,9 +104,9 @@ describe("invitation test vectors, at the draft marker", () => {
   });
 });
 
-describe("control-state test vectors, at the draft marker", () => {
+describe("control-state test vectors, at version 2", () => {
   const { layer, vectors } = load<{ layer: string; vectors: ControlTestVector[] }>(
-    "control-draft-10.json",
+    "control-v2.json",
   );
 
   /** Each member's right as CTL-13 applies it, on the document and on the vectors' layer. */
@@ -150,11 +148,11 @@ describe("control-state test vectors, at the draft marker", () => {
 
 type ClockVector = { name: string; op: string } & Record<string, unknown>;
 
-describe("clock test vectors, at the draft marker", () => {
+describe("clock test vectors, at version 2", () => {
   const { constants, vectors } = load<{
     constants: { MAX_MS: number; MAX_COUNTER: number; SPAN: number };
     vectors: ClockVector[];
-  }>("clock-draft-10.json");
+  }>("clock-v2.json");
 
   it("state the constants of CTL-45", () => {
     expect(constants).toStrictEqual({
@@ -220,7 +218,7 @@ describe("clock test vectors, at the draft marker", () => {
   });
 });
 
-describe("digest test vectors, at the draft marker", () => {
+describe("digest test vectors, at version 2", () => {
   const { control, deletions, fromUpdates } = load<{
     control: {
       name: string;
@@ -244,7 +242,7 @@ describe("digest test vectors, at the draft marker", () => {
       encoding: string;
       digest: string;
     }[];
-  }>("digests-draft-10.json");
+  }>("digests-v2.json");
   const hex = (bytes: Uint8Array) =>
     [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   const fromHex = (text: string) =>

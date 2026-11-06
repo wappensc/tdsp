@@ -141,7 +141,7 @@ export function newDeviceTag(): string {
 }
 
 /**
- * Whether `target` is a target this draft defines: `member:…`, a valid `layer:…:member:…`, `pace`, or
+ * Whether `target` is a target this version defines: `member:…`, a valid `layer:…:member:…`, `pace`, or
  * `close-reason`.
  */
 export function isControlTarget(target: string): target is ControlTarget {

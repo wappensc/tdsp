@@ -33,11 +33,11 @@ import {
 import { profileFor } from "./profile";
 
 /**
- * The draft wire (VER-3): these tests hold the
- * encoder and the decoder to the frames in `wire/frames-draft-10.json`, the invitation writer to
- * `wire/invitations-draft-10.json`, and the profile `yjs-paragraphs/1` to the bytes of 1.x §4.5,
- * which 2.0 keeps. Both files are frozen like 1.x's `frames-v1.json`: within the draft marker an
- * entry may be added, never changed or removed (VER-3).
+ * The 2.0 wire: these tests hold the
+ * encoder and the decoder to the frames in `wire/frames-v2.json`, the invitation writer to
+ * `wire/invitations-v2.json`, and the profile `yjs-paragraphs/1` to the bytes of 1.x §4.5,
+ * which 2.0 keeps. Both files are frozen like 1.x's `frames-v1.json`: within a version an
+ * entry may be added, never changed or removed (VER-1).
  */
 
 const read = (relative: string): string =>
@@ -50,7 +50,7 @@ interface FrameEntry {
   readonly frame: string;
 }
 
-const FRAMES_FILE = "wire/frames-draft-10.json";
+const FRAMES_FILE = "wire/frames-v2.json";
 const FRAMES = JSON.parse(read(FRAMES_FILE)) as {
   $comment: string;
   version: string;
@@ -157,7 +157,7 @@ function asInput(frame: Frame): Record<string, unknown> {
   }
 }
 
-describe("frames at the draft marker", () => {
+describe("frames at version 2", () => {
   it("are the version this engine writes", () => {
     expect(CURRENT_FRAME_VERSION).toBe(FRAMES.version);
   });
@@ -190,7 +190,7 @@ describe("frames at the draft marker", () => {
   );
 });
 
-describe("the control frames at the draft marker", () => {
+describe("the control frames at version 2", () => {
   const controls = FRAMES.entries.filter((entry) => entry.kind === "control");
   const registersOf = (entry: FrameEntry) => entry.input.targets as Record<string, Register>;
 
@@ -217,8 +217,8 @@ describe("the control frames at the draft marker", () => {
   });
 });
 
-describe("invitation links at the draft marker", () => {
-  const LINKS_FILE = "wire/invitations-draft-10.json";
+describe("invitation links at version 2", () => {
+  const LINKS_FILE = "wire/invitations-v2.json";
   const LINKS = JSON.parse(read(LINKS_FILE)) as {
     $comment: string;
     version: string;

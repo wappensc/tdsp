@@ -33,7 +33,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 /**
  * Files whose entries are the wire, frozen: the reference implementation's and the published
  * vectors — of every version, since a version's files stay as they were when the next one comes
- * (CONTRIBUTING.md, "A change to the wire") — the bindings' own, and the draft's (VER-3).
+ * (CONTRIBUTING.md, "A change to the wire") — and the bindings' own.
  */
 export const WIRE_FILES = [
   "wire/frames-v1.json",
@@ -44,11 +44,11 @@ export const WIRE_FILES = [
   "packages/document-protocol/test-vectors/frames-v1.json",
   "packages/document-protocol/test-vectors/invitations-v1.json",
   "bridges/email-bridge/test-vectors/member-ids-v1.json",
-  "wire/frames-draft-10.json",
-  "wire/invitations-draft-10.json",
-  "packages/document-protocol/test-vectors/frames-draft-10.json",
-  "packages/document-protocol/test-vectors/invitations-draft-10.json",
-  "packages/document-protocol/test-vectors/control-draft-10.json",
+  "wire/frames-v2.json",
+  "wire/invitations-v2.json",
+  "packages/document-protocol/test-vectors/frames-v2.json",
+  "packages/document-protocol/test-vectors/invitations-v2.json",
+  "packages/document-protocol/test-vectors/control-v2.json",
 ] as const;
 
 /** The specification's normative wire sections, by heading: frame, profiles, control state, invitations, values. */
@@ -73,8 +73,11 @@ export const WIRE_DOCUMENTS: readonly string[] = [
   "bindings/email.md",
 ];
 
-/** The file whose `version` is the draft marker frames and invitations carry, while there is one (VER-3). */
-const MARKER_FILE = "wire/frames-draft-10.json";
+/**
+ * The file whose `version` is what frames carry: a string while it is a draft's marker (VER-3), a
+ * number once released. The current version's frames.
+ */
+const MARKER_FILE = "wire/frames-v2.json";
 
 export const LOCK_FILE = "wire/wire-lock.json";
 

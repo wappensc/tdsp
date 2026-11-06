@@ -293,7 +293,7 @@ export interface TransportProfile {
 /**
  * Reads a `TransportProfile` off the wire (the bridge's `GET /transport-profile`), or
  * `undefined` if it is not one — which the adapter turns into a failed call, never into
- * "no profile" (TRN-13). Strict on purpose, and as a whole: a missing field, a field the draft
+ * "no profile" (TRN-13). Strict on purpose, and as a whole: a missing field, a field TDSP 2.0
  * does not define, a number that is negative or not finite, `null` where no limit is not
  * allowed — each makes the whole profile unusable rather than half-applied. Requiring every
  * field is what keeps a misspelled one from reading as "no bound", which is a way to end up

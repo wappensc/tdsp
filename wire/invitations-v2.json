@@ -1,6 +1,6 @@
 {
-  "$comment": "The draft engine's invitation links at draft revision 10, frozen like frames-draft-10.json.",
-  "version": "de.wappensc.together.tdsp.probe.draft-10",
+  "$comment": "The TDSP 2.0 engine's invitation links at invitation version 2, frozen like frames-v2.json.",
+  "version": 2,
   "entries": [
     {
       "name": "Matrix",
@@ -11,7 +11,7 @@
         "channelId": "!room:example.org",
         "profile": "yjs-paragraphs/1"
       },
-      "link": "tdsp=de.wappensc.together.tdsp.probe.draft-10&provider=matrix&documentId=doc-1&creatorMemberId=%40alice%3Aexample.org&channelId=%21room%3Aexample.org&profile=yjs-paragraphs%2F1"
+      "link": "tdsp=2&provider=matrix&documentId=doc-1&creatorMemberId=%40alice%3Aexample.org&channelId=%21room%3Aexample.org&profile=yjs-paragraphs%2F1"
     },
     {
       "name": "email with PGP, and an application's own parameter to ignore",
@@ -24,7 +24,7 @@
         "pgp": true,
         "profile": "yjs-paragraphs/1"
       },
-      "link": "tdsp=de.wappensc.together.tdsp.probe.draft-10&provider=email&documentId=doc-2&creatorMemberId=alice%40example.org&threadRoot=%3Croot-1%40example.org%3E&recipients=alice%40example.org%2Cbob%40example.org&pgp=1&profile=yjs-paragraphs%2F1"
+      "link": "tdsp=2&provider=email&documentId=doc-2&creatorMemberId=alice%40example.org&threadRoot=%3Croot-1%40example.org%3E&recipients=alice%40example.org%2Cbob%40example.org&pgp=1&profile=yjs-paragraphs%2F1"
     },
     {
       "name": "a policy with a leading zero is dropped, the invitation still opens",
@@ -35,7 +35,7 @@
         "channelId": "g1",
         "profile": "yjs-paragraphs/1"
       },
-      "link": "tdsp=de.wappensc.together.tdsp.probe.draft-10&provider=signal&documentId=doc-3&creatorMemberId=c0ffee&channelId=g1&profile=yjs-paragraphs%2F1"
+      "link": "tdsp=2&provider=signal&documentId=doc-3&creatorMemberId=c0ffee&channelId=g1&profile=yjs-paragraphs%2F1"
     }
   ]
 }

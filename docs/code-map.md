@@ -33,5 +33,5 @@ read_when:
   or Matrix and email groups skipped instead of ran.
 - `wire/wire-lock.json` hashes the specification's wire sections (§4, §5, §7, §11,
   Appendices A and B), the binding documents in `bindings/` but the local bridge interface,
-  and the wire files, with the draft marker while there is one (VER-3), so a change of wording
+  and the wire files, with the version frames carry, so a change of wording
   in any of them, even an editorial one, fails `tools/wire-lock.wire.test.ts`.

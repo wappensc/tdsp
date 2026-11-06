@@ -429,15 +429,16 @@ export interface ControlSnapshot extends RegisterState {
 export type ControlStanding = { readonly kind: "none" } | { readonly kind: "bootstrapped" };
 
 /**
- * What a client persists and restores (CTL-26, CTL-39): its control state, the draft it was written
- * by (VER-3), whether it was bootstrapped, whether it was in a capacity conflict, and on a device of
+ * What a client persists and restores (CTL-26, CTL-39): its control state, the version it was
+ * written under (VER-3), whether it was bootstrapped, whether it was in a capacity conflict, and on a device of
  * the creator its device tag, its own clock and its frames not yet known to be sent, which a
  * restarted engine sends again. Never sent to anyone: the snapshot in an answer is the plain
- * `ControlSnapshot`. A state another draft persisted — another `tdsp`, or none — is read as none.
+ * `ControlSnapshot`. A state persisted under another version — a draft's marker, or none — is read
+ * as none (VER-3).
  */
 export interface PersistedControlState {
-  /** The draft marker of the engine that persisted it (VER-3). */
-  readonly tdsp?: string;
+  /** The version of the engine that persisted it, 2; a draft of 2.0 wrote its marker (VER-3). */
+  readonly tdsp?: number | string;
   readonly profile?: string;
   readonly control: RegisterState;
   /** This device's tag (CTL-20). */
@@ -799,7 +800,7 @@ export interface DocumentEngineOptions {
    * bootstrapped only if it was when persisted (CTL-26, RSY-14); without a tag it continues under a
    * new one. For anyone else it is used only when it was taken once bootstrapped (`bootstrapped`):
    * its rights show at once, and it bootstraps this client after its first read on from
-   * `restore.cursor` shows no gap (CTL-39, CTL-41); otherwise an answer does. A state another draft
+   * `restore.cursor` shows no gap (CTL-39, CTL-41); otherwise an answer does. A state a draft of 2.0
    * persisted counts as none (VER-3).
    */
   controlState?: PersistedControlState;
@@ -4009,7 +4010,7 @@ export class DocumentEngine {
           ? { kind: "control", text: owed.control }
           : null;
       } catch {
-        return null; // a frame of another draft, which no receiver reads (VER-3)
+        return null; // a frame of a draft of 2.0, which no receiver reads (VER-3)
       }
     }
     return owed.update !== undefined &&
@@ -4897,7 +4898,7 @@ export class DocumentEngine {
     }
   }
 
-  /** This client's control state as it persists it (CTL-26, CTL-39), with the draft that wrote it (VER-3). */
+  /** This client's control state as it persists it (CTL-26, CTL-39), with the version that wrote it (VER-3). */
   #persisted(
     control: ControlState,
     clock: Clock,
@@ -4982,8 +4983,8 @@ function snapshotHolds(snapshot: DecodedSnapshot, held: ControlState): boolean {
 
 /**
  * Persisted control state as the engine reads it back (CTL-26, CTL-39): with its registers, or
- * `undefined` for a state another draft wrote (VER-3), or one that holds no registers in this draft's
- * form, which counts as no control state at all.
+ * `undefined` for a state written under another version — a draft's marker, or none (VER-3) — or one
+ * that holds no registers in this version's form, which counts as no control state at all.
  */
 function readPersisted(
   state: PersistedControlState | undefined,

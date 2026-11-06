@@ -1,6 +1,6 @@
 # TDSP — Together Document Sync Protocol
 
-**Specification · TDSP 2.0 (draft) · 4 November 2026**
+**Specification · TDSP 2.0 · 6 November 2026**
 
 ## 1. Introduction
 
@@ -46,7 +46,7 @@ replaceable ([§2.1](#21-layers)).
 
 ### 1.2 Status of this document
 
-This is a draft of **TDSP 2.0**, the core of the protocol. It changes the wire of
+This is **TDSP 2.0**, the core of the protocol. It changes the wire of
 TDSP 1.x incompatibly, in four places, and keeps every use case 1.x covers
 ([§1.7](#17-what-must-stay)):
 
@@ -85,9 +85,10 @@ from 1.x, requirement by requirement, is [Appendix
 G](#appendix-g-changes-from-tdsp-1x). A later version changes the wire only as
 [§14](#14-versioning-and-extensibility) describes.
 
-Until TDSP releases 2.0, frames and invitations of this draft carry a draft
-marker instead of the version `2` (VER-3), so that no draft frame passes for
-TDSP 2.0 and every 1.x engine refuses it.
+Frames and invitations carry the version `2`. The drafts of 2.0 carried a draft
+marker in its place; a 2.0 engine refuses their frames and invitations as another
+version, as every 1.x engine does, and reads control state they persisted as none
+(VER-3).
 
 TDSP adds no security layer of its own; its security properties are those of
 the messenger it runs on, plus what [§15.3](#153-what-tdsp-enforces-itself)
@@ -103,7 +104,7 @@ name them) and, for the one profile it defines, Yjs update encoding
 version 1 as [Appendix A](#appendix-a-profile-yjs-paragraphs1) pins it; a bridge or adapter
 implementer also reads the binding of their messenger ([bindings/](bindings/)).
 [§14](#14-versioning-and-extensibility) lists each part's version, and which parts
-stay drafts after the release.
+are stable and which stay drafts.
 A reference implementation exists; [Appendix F](#appendix-f-reference-implementation)
 names its parts. Where it deviates from this document, this document states the
 intended behaviour. A second reading of the text that is no engine passes the
@@ -848,9 +849,7 @@ snapshot ([§7](#7-control-state)), with the rights those registers give — the
 permissions, not what a closed document takes (LAY-5). The bindings publish their own
 ([bindings/](bindings/)). An implementation in another language shows it reads
 the wire as this specification does by passing them; the reference
-implementation checks itself against the same files. Until TDSP releases 2.0
-they carry the draft marker and are named `frames-draft-10.json`,
-`invitations-draft-10.json` and `control-draft-10.json` (VER-3).
+implementation checks itself against the same files.
 
 Beside them, in the same directory, it publishes **behaviour vectors**
 (informative), which fix no wire and are not in the wire lock:
@@ -871,9 +870,7 @@ and by each piece's bound, not by how many pieces it took or where they were cut
 The published vectors, the wire's and these, are what "checked against the
 vectors" means ([CONFORMANCE.md](CONFORMANCE.md)): an implementation that passes
 them reads, merges, digests, orders and recovers as this specification does,
-which is no exchange with a second engine. Until 2.0 they are named
-`clock-draft-10.json`, `digests-draft-10.json`, `updates-draft-10.json` and
-`flows-draft-10.json` (VER-3). [Appendix F](#appendix-f-reference-implementation)
+which is no exchange with a second engine. [Appendix F](#appendix-f-reference-implementation)
 names a checker that reads them.
 
 ## 4. The payload frame
@@ -896,7 +893,7 @@ Every frame has these three fields:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `tdsp` | integer | The frame format version: 2 (until TDSP releases 2.0, the draft marker of VER-3 in its place) |
+| `tdsp` | integer | The frame format version: 2 |
 | `kind` | string | What the frame is ([§4.2](#42-kinds)) |
 | `documentId` | string | The document, 1 to 255 bytes in UTF-8 |
 
@@ -908,8 +905,7 @@ Any frame may also carry `crit` and extension fields ([§4.4](#44-decoding-and-r
   *Rationale:* a single framed format with no unframed fallback means a payload
   from an unrelated protocol, an old version or a corrupted message fails loudly
   instead of reaching the CRDT, which would otherwise apply it or crash unpredictably.
-- **FRM-2** · *engine* — A sender MUST write `"tdsp": 2` (until TDSP releases 2.0,
-  the draft marker of VER-3 in its place).
+- **FRM-2** · *engine* — A sender MUST write `"tdsp": 2`.
   *Rationale:* the field identifies a TDSP frame among arbitrary text — an email
   body, a chat message — and names the format version a receiver must implement.
 - **FRM-3** · *engine* — A documentId MUST be 1 to 255 bytes long in UTF-8.
@@ -1004,7 +1000,7 @@ report — and a test — can tell a version mismatch from a malformed message:
 | Reason | When |
 |---|---|
 | `not-json` | The payload is not valid UTF-8, not valid JSON, not a JSON object, or not I-JSON: an object names a member twice, or a string holds an unpaired surrogate; or it nests arrays and objects more than 32 deep ([§1.6](#16-notation)) |
-| `unsupported-version` | `tdsp` is missing or is not 2 (until TDSP releases 2.0, not the draft marker of VER-3) |
+| `unsupported-version` | `tdsp` is missing or is not 2 — 1.x's 1 and a draft's marker (VER-3) among them |
 | `unknown-kind` | `kind` is not one of §4.2 |
 | `missing-field` | A field the kind requires is absent — in the frame, a snapshot, a register, an overlay or one of its ranges |
 | `invalid-field` | A field has the wrong type or a value the layout forbids — an integer out of range, Base64 that does not decode or is not in its canonical form ([§1.6](#16-notation)), an empty `update`, an `update` or `stateVector` the document's profile does not read as exactly one update or state vector (PRF-1, item 9; bytes after a complete one included), a device tag that is not 22 base64url characters, an unknown `target`, a `value` its target cannot take, a clock that is not an array of exactly two integers in their ranges, a register, a snapshot or an overlay that is not an object, a register with a field besides `value`, `clock` and `device` (extension fields aside), a `control` frame without registers and without `closed: true`, a `controlClock` and `controlDigest` of which only one is `null`, an unknown `reason`, an overlong `text`, a `crit` that is not a list of 1 to 16 distinct names of extensions the frame carries, an answer's `pieces` that is not `null` and differs from its `piece`, a `pieces` without `stateVector` or a `stateVector` without `pieces`, a snapshot or overlay that breaks its layout (§5.4, §7.5) — or the frame, a snapshot or an overlay has a field whose name has no `.` and that its layout does not define; or an extension the receiver implements and `crit` names has a value its definition forbids (FRM-16) |
@@ -1126,8 +1122,7 @@ report — and a test — can tell a version mismatch from a malformed message:
 ### 4.5 Example
 
 A real `edit` frame for documentId `doc-a1b2c3`, produced by the reference
-encoder, which until TDSP releases 2.0 writes the draft marker where this shows
-`2` (VER-3). Its update is the whole state of a new `yjs-paragraphs/1` document
+encoder. Its update is the whole state of a new `yjs-paragraphs/1` document
 whose first paragraph holds "Hi" — one Yjs client, clocks 0 to 3:
 
 ```json
@@ -2213,7 +2208,7 @@ backup of hers holds the state, the document is closed and continued as a new on
 - **CTL-26** · *engine, application* — A device of the creator MUST persist a
   decision *before* it hands it to the transport, as part of its control state,
   together with its tag and its clock (CTL-45), whether it is bootstrapped
-  (RSY-14), the draft's marker (VER-3), and the complete `control` frames not yet
+  (RSY-14), the version it is written under (VER-3), and the complete `control` frames not yet
   known to be sent; it MUST
   keep each such frame as a pending change until the transport accepts it or
   refuses it for good (SND-6, SND-8). A restarted device MUST restore that state
@@ -2327,8 +2322,8 @@ backup of hers holds the state, the document is closed and continued as a new on
 1.x's CTL-2, CTL-3, CTL-8, CTL-9, CTL-11, CTL-12, CTL-14, CTL-16, CTL-17, CTL-18
 and CTL-19 are withdrawn ([Appendix G](#appendix-g-changes-from-tdsp-1x)).
 
-CTL-24, CTL-28, CTL-29, CTL-31, CTL-33 and CTL-35, requirements of the previous
-draft revision of 2.0, are withdrawn ([CHANGELOG.md](CHANGELOG.md)); 1.x had none of
+CTL-24, CTL-28, CTL-29, CTL-31, CTL-33 and CTL-35, requirements of an earlier
+draft of 2.0, are withdrawn ([CHANGELOG.md](CHANGELOG.md)); 1.x had none of
 them.
 
 ## 8. Bootstrap and resync
@@ -3204,8 +3199,8 @@ it ([bindings/](bindings/)).
   (YJS-1); the refusal tells it that it did, so that it can undo it.
 
 1.x's SND-4 and FRG-1 to FRG-8 are withdrawn ([Appendix
-G](#appendix-g-changes-from-tdsp-1x)). SND-14 and SND-23, requirements of the
-previous draft revision of 2.0, are withdrawn: no frame promises a follow-up, so
+G](#appendix-g-changes-from-tdsp-1x)). SND-14 and SND-23, requirements of an
+earlier draft of 2.0, are withdrawn: no frame promises a follow-up, so
 there is no `due` to keep ([CHANGELOG.md](CHANGELOG.md)).
 
 ## 10. Loss detection
@@ -3743,8 +3738,8 @@ and limits, not occasions for rules of their own:
   one sent (LOS-21).
 
 1.x's LOS-3 and LOS-5 are withdrawn ([Appendix
-G](#appendix-g-changes-from-tdsp-1x)). LOS-11 and LOS-16, requirements of the
-previous draft revision of 2.0, are withdrawn: no frame promises a follow-up, so
+G](#appendix-g-changes-from-tdsp-1x)). LOS-11 and LOS-16, requirements of an
+earlier draft of 2.0, are withdrawn: no frame promises a follow-up, so
 silence is evidence of nothing ([CHANGELOG.md](CHANGELOG.md)).
 
 ## 11. Invitations
@@ -3814,7 +3809,7 @@ number stays so that references to §11.3 keep their meaning.
 
 | Parameter | Field | Required | Value |
 |---|---|---|---|
-| `tdsp` | invitation version | yes | `2` (until TDSP releases 2.0, the draft marker of VER-3 in its place) |
+| `tdsp` | invitation version | yes | `2` |
 | `provider` | messenger | yes | the binding's name: lowercase letters, digits, `.` and `-`, 1–64 characters, the first a letter or a digit |
 | `documentId` | documentId | yes | 1–255 UTF-8 bytes |
 | `creatorMemberId` | creatorMemberId | yes | 1–255 UTF-8 bytes |
@@ -3940,20 +3935,19 @@ changes with what the document requires — how a binding carries a frame, say. 
 binding names the core versions whose frames it carries, and a change to one
 document needs no new version of another.
 
-The parts of TDSP 2.0, their versions, and which of them become stable when TDSP
-releases 2.0; until then all are this draft:
+The parts of TDSP 2.0, their versions, and which of them are stable:
 
-| Part | Version | With the release |
+| Part | Version | Status |
 |---|---|---|
-| Core (this document) | 2.0; frames and invitations `tdsp` 2, until the release the draft marker (VER-3) | Stable |
+| Core (this document) | 2.0; frames and invitations `tdsp` 2 | Stable |
 | Profile `yjs-paragraphs/1` ([Appendix A](#appendix-a-profile-yjs-paragraphs1)) | 1; Yjs update encoding version 1, by Yjs 13.6.33 | Stable |
 | Bridges and the envelope ([bridges.md](bindings/bridges.md)) | Bindings 2.0; envelope `tdsp` 1 | Stable |
 | Signal binding ([signal.md](bindings/signal.md)) | Bindings 2.0 | Stable |
 | Matrix binding ([matrix.md](bindings/matrix.md)) | Bindings 2.0; `EncryptedFile` v2 of the Matrix Client-Server API v1.19 | Stable |
 | Email binding ([email.md](bindings/email.md)) | Bindings 2.0 | Stable, but for the layout of a mail, which stays a draft: an incompatible change of the layout increments the email binding's version, and until the layout is specified, email bridges interoperate only within one release of this repository |
 | Local bridge interface ([local-bridge-interface.md](bindings/local-bridge-interface.md)) | Bindings 2.0 | Draft; optional. An incompatible change increments its version, and until it is stable, adapters and bridges interoperate only within one release of this repository |
-| The wire's test vectors ([§3.6](#36-conformance-suite)): frames, invitations, control | Named and marked for draft-10 (VER-3) | Stable and in the wire lock, with `2` in place of the marker |
-| Behaviour vectors ([§3.6](#36-conformance-suite)): clock, digests, updates, flows | Named for draft-10 | Informative and not in the wire lock; renamed for the release |
+| The wire's test vectors ([§3.6](#36-conformance-suite)): frames, invitations, control | `frames-v2.json`, `invitations-v2.json`, `control-v2.json`; `tdsp` 2 | Stable and in the wire lock |
+| Behaviour vectors ([§3.6](#36-conformance-suite)): clock, digests, updates, flows | `clock-v2.json`, `digests-v2.json`, `updates-v2.json`, `flows-v2.json` | Informative and not in the wire lock |
 
 - **VER-1** · *all* — An incompatible change MUST increment the version that
   governs it. A receiver that does not implement a version MUST fail loudly — by
@@ -3975,21 +3969,22 @@ releases 2.0; until then all are this draft:
   named as CTL-23 says: their names keep them apart.
   *Rationale:* two implementations inventing the same value for different meanings
   cannot be told apart on the wire.
-- **VER-3** · *engine, application* — Until TDSP 2.0 is released, an implementation
-  of this draft MUST write, in every frame's and every invitation's `tdsp`, a draft
-  marker in place of `2`, MUST accept only that marker, and MUST name a new marker
-  for every incompatible change of the draft. The marker of this draft is
-  `de.wappensc.together.tdsp.probe.draft-10`. An engine MUST persist its control
-  state (CTL-26, CTL-39) with that marker, and MUST read control state persisted
-  under another marker, or under none, as none: a device of the creator then starts
-  as a new device (CTL-27), anyone else waits for an answer (RSY-14).
-  *Rationale:* a draft that wrote `2` would leave frames behind that a released 2.0
-  reads as its own, although they may mean something else; a marker that is not a
-  number makes every 1.x engine refuse a draft frame loudly (VER-1), and every
-  released engine too. A persisted state is as much the draft's own as a frame: read
-  under another draft, its registers or its bootstrap may mean something else. What
-  a released 2.0 engine does with control state persisted under a draft marker is
-  for the release to say; read as none, as here, is the safe side.
+- **VER-3** · *engine, application* — An engine MUST write `2` in every frame's
+  and every invitation's `tdsp` (FRM-2, [§11.3](#113-invitation-as-a-link)). The
+  drafts of 2.0 wrote a draft marker there instead, the last of them
+  `de.wappensc.together.tdsp.probe.draft-10`; a frame or an invitation under such
+  a marker is of another version (`unsupported-version`). An engine MUST persist
+  its control state (CTL-26, CTL-39) with `2` in its `tdsp`, and MUST read control
+  state persisted under a draft marker, or under none, as none: a device of the
+  creator then starts as a new device (CTL-27), anyone else waits for an answer
+  (RSY-14).
+  *Rationale:* no draft wrote `2`, so no draft frame passes for 2.0; a marker that
+  is not a number made every 1.x engine refuse a draft frame loudly (VER-1), as a
+  2.0 engine does. A persisted state is as much its version's own as a frame: the
+  frames of a draft's document are refused, so its control state would govern a
+  document nobody can continue, and its registers or its bootstrap may mean
+  something else. Read as none, a draft's document is continued as a new one
+  ([§6.2](#62-creating-a-document)), as a document of any other version is.
 - **VER-4** · *application* — An application MUST show the person each participant
   whose frames its engine rejects as `unsupported-version` (FRM-7): that this
   participant uses another version, and that what they write does not reach this
@@ -4457,8 +4452,7 @@ Moved to [bindings/bridges.md](bindings/bridges.md#appendix-c-the-bindings-compa
 
 *Informative.* Produced by the reference encoder, documentId `doc-a1b2c3`,
 profile `yjs-paragraphs/1`, from a device of the creator tagged
-`Ms3dRk0ZyS7cH1qkM8fWNA`, which is bootstrapped; until TDSP releases 2.0 the
-encoder writes the draft marker where these show `2` (VER-3). The `edit` frame is in
+`Ms3dRk0ZyS7cH1qkM8fWNA`, which is bootstrapped. The `edit` frame is in
 [§4.5](#45-example).
 
 `control` — the device's first decision, at 10:00 UTC on 26 October 2026: `bob`
@@ -4646,7 +4640,7 @@ keeps its own version 1, with the frame as a JSON string:
 
 ## Appendix F. Reference implementation
 
-*Informative.* The reference implementation of this draft is TypeScript: its
+*Informative.* The reference implementation of TDSP 2.0 is TypeScript: its
 engine runs on Node.js and in the browser, its bridges on Node.js.
 
 | Part | Class | What it is |
@@ -4660,7 +4654,7 @@ engine runs on Node.js and in the browser, its bridges on Node.js.
 | `loopback` | adapter, bridge | The one check of whether an address is a loopback address, as the local bridge interface defines it |
 | `bridge-log` | bridge | The bridges' structured log. Its callers log identifiers, never message bodies, keys or credentials; as a safety net it redacts a field whose name suggests a secret (`password`, `token`, `secret`, `credential`, …), cuts every string at a bound, and escapes control characters so that a value cannot begin a line of its own |
 
-The adapters and bridges carry this draft's frames unchanged, since the envelope
+The adapters and bridges carry 2.0's frames unchanged, since the envelope
 did not change, and serve the transport profile of [§3.5](#35-transport-profile)
 (TRN-13); of what 2.0's bindings changed or added they implement part. Beside the
 implementation, the repository holds a small checker in Swift,
@@ -4835,7 +4829,7 @@ The changes have nine reasons, which the tables below cite by letter:
 | LOS-23 (with PRF-1, item 2) | What an engine holds for missing predecessors is bounded, given up beyond as *history truncated*; a profile says how | 1.x bounded the buffer of fragments; pieces wait in the CRDT's pending structures, which anyone in the channel can fill. |
 | LOS-24 | The definition of a digest, of the state digest and of the control digest | A definition every receiver compares across implementations needs an ID |
 | YJS-4 | A receiver applies content YJS-1 forbids, and projects it one way | A CRDT cannot refuse part of the state it converges to, and engines that project it differently disagree about every attribution offset after it. |
-| VER-3 | The draft marker, also in persisted control state | A draft must never leave frames that a released 2.0 would read as its own, nor a persisted state another draft would read as its own. |
+| VER-3 | The drafts of 2.0 are another version, their persisted control state none | A draft must never leave frames, nor a persisted state, that the released 2.0 reads as its own. |
 | VER-4 | An application shows whose frames are of another version | VER-1's loud failure reached only the application, and the person saw a silent participant instead. |
 | VER-5 (with VER-6) | What a revision that defines a new right must define (VER-6); a later minor revision may define further codes of `close-reason` | The rules any later right must keep are laid down now; the later decision holds, so a value needs only a place for a tie. |
 | SEC-1, SEC-2 | The `SHOULD` of §15.3 and the `MUST` of §15.5 (email without PGP) as requirements of their own | Without an ID §1.3 left them informative; the content is unchanged |

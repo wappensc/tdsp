@@ -1,6 +1,6 @@
 # TDSP bindings — Bridges and the common envelope
 
-**Specification · TDSP bindings 2.0 (draft) · 4 November 2026**
+**Specification · TDSP bindings 2.0 · 6 November 2026**
 
 Part of TDSP 2.0, whose core is [SPECIFICATION.md](../SPECIFICATION.md). This
 document holds what TDSP 1.4 had in §12.1 to §12.5, §13 up to §13.1 and Appendix C of its specification, unchanged in

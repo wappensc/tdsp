@@ -165,7 +165,7 @@ describe("parseTransportProfile (SND-16; TRN-13)", () => {
       { ...valid(), bounds: { minIntervalMs: Number.POSITIVE_INFINITY, maxBytes: null } },
     ],
     ["a misspelled bound", { ...valid(), bounds: { minIntervalMs: null, maxByte: 32_000 } }],
-    ["a field the draft does not define", { ...valid(), somethingNew: 1 }],
+    ["a field 2.0 does not define", { ...valid(), somethingNew: 1 }],
     ["a pacing value left out", withoutPacing("minChars")],
     ["a pacing that states nothing", { ...valid(), pacing: {} }],
     ["a misspelled pacing value", withPacing({ maxChar: 5 })],

@@ -54,8 +54,8 @@ public enum VectorSuite {
                 throw VectorError(description: "cannot read \(url.path)")
             }
             let file = try JSONParser.parse([UInt8](data), options: .vectorFile)
-            guard file["version"]?.stringValue == FrameDecoder.draftMarker else {
-                throw VectorError(description: "the file's version is not \(FrameDecoder.draftMarker)")
+            guard Edition.isVersion(file["version"]) else {
+                throw VectorError(description: "the file's version is not \(Edition.version)")
             }
             return FileReport(file: path, outcomes: try runner(file))
         } catch {

@@ -1,6 +1,6 @@
 # TDSP bindings — Email
 
-**Specification · TDSP bindings 2.0 (draft) · 3 November 2026**
+**Specification · TDSP bindings 2.0 · 6 November 2026**
 
 Part of TDSP 2.0, whose core is [SPECIFICATION.md](../SPECIFICATION.md). This
 document holds what TDSP 1.4 had in §13.4 of its specification, unchanged in
