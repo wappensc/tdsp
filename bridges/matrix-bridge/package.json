@@ -19,6 +19,8 @@
     "@tdsp/messenger-port": "workspace:*"
   },
   "devDependencies": {
-    "@tdsp/messenger-matrix": "workspace:*"
+    "@tdsp/document-protocol": "workspace:*",
+    "@tdsp/messenger-matrix": "workspace:*",
+    "@tdsp/reconciliation": "workspace:*"
   }
 }
