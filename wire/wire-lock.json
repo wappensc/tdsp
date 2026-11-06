@@ -413,10 +413,10 @@
     "## Appendix B. Recommended values": "55ff2977919145f7d5d4e84c7f567b86d7c3dc6b88b1469f729addcec9485fcb"
   },
   "documents": {
-    "bindings/bridges.md": "484cbd616d419208853147b63e4aca6f2da2854a0f74d13c71eff5b1fb8eb67f",
+    "bindings/bridges.md": "4f2429fb09934d74d9e1a49cbdb32aa8afdaed8567ba48d25cf9b5d6d7fa5c10",
     "bindings/signal.md": "e31c5363c06885975f56c3c89aa7a6d5fed612d8077abc8c8dc2086c4f55ecab",
     "bindings/matrix.md": "d1e49db24e129d74b9289b01bf38ed678f73095a30c3d4461eccea984d722391",
-    "bindings/email.md": "03e407a5595cfc1bc2bcfe58e017373403390bf934a234a308ac2c8cc76b7105"
+    "bindings/email.md": "44d320bb6792bbb27bd3a9e9fdb9e05c0d39ee7e7fadce64c245cb5ef9e542d5"
   },
   "draftMarker": "de.wappensc.together.tdsp.probe.draft-10"
 }
