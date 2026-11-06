@@ -74,7 +74,7 @@ independently written counterpart has run them: a small checker in Swift,
 [conformance/swift-checker/](conformance/swift-checker/), by its authors' account written only from
 the documents and the standards they name — parser, register merge, digests, clock — passed every vector but the
 flows, which need an engine, when it last ran: on `df1e532`, the merge of #128 (draft-10), 335
-vectors in eight files. It lists where the text left it to choose. No CI job runs it; a pull
+vectors in eight files, and its own 14 tests passed. It lists where the text left it to choose. No CI job runs it; a pull
 request that changes the specification, a binding or the vectors runs it and moves this commit
 ([CONTRIBUTING.md](CONTRIBUTING.md), "The Swift checker"). It is no engine, so
 the vectors show that this implementation and a second reading of the text agree on the wire,
