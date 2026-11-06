@@ -1,6 +1,6 @@
 # TDSP bindings — Matrix
 
-**Specification · TDSP bindings 2.0 (draft) · 3 November 2026**
+**Specification · TDSP bindings 2.0 · 6 November 2026**
 
 Part of TDSP 2.0, whose core is [SPECIFICATION.md](../SPECIFICATION.md). This
 document holds what TDSP 1.4 had in §13.3 of its specification, unchanged in
@@ -150,8 +150,7 @@ or after decrypting, which keeps the length. It takes the result only as UTF-8. 
 fails a check is dropped, and its frame is not delivered.
 
 **Example events.** *Informative.* The `edit` frame of
-[§4.5](../SPECIFICATION.md#45-example), with `2` where this draft writes its marker
-(VER-3). In the event, as Megolm encrypts it in an encrypted room — the event type, its
+[§4.5](../SPECIFICATION.md#45-example). In the event, as Megolm encrypts it in an encrypted room — the event type, its
 content and the room id; a plain room's event carries the same type and content:
 
 ```json
