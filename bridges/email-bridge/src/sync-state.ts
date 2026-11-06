@@ -452,7 +452,14 @@ export function createSyncState(
     if (ownAddress !== undefined && isRemoved(bound, ownAddress)) {
       return;
     }
-    const messages = await receiver.fetchThreadMessages(documentId);
+    const fetched = await receiver.fetchThreadMessages(documentId);
+    // The creator's mails first, in their order, then the others': a removal notice this poll
+    // reads (EML-14) — from the sent folder, on another device of the creator, which is read
+    // after the inbox — applies before the mail it explains is checked against the held set
+    // (EML-2), rather than after it.
+    const creator = normalizeAddress(bound.creatorMemberId);
+    const fromCreator = (message: IncomingMail) => normalizeAddress(message.from) === creator;
+    const messages = [...fetched.filter(fromCreator), ...fetched.filter((m) => !fromCreator(m))];
     for (const message of messages) {
       // One mail the bridge cannot read must not keep it from the others (BRG-18). It was marked
       // as processed before anything was checked; a failure that may pass, of `gpg` say, would

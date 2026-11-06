@@ -175,6 +175,22 @@ describe("receiving, without PGP (EML-2, EML-14)", () => {
     expect(sync.getDeliveries("doc-1").map((d) => d.payload)).toEqual(["after"]);
   });
 
+  it("takes, on another device of the creator, a mail to the reduced set read in the same poll as her notice, before it", async () => {
+    setBindRecord(bindStorePath, "doc-1", plainRecord());
+    const receiver = new FakeMailReceiver();
+    const { logger } = capturingLogger();
+    const sync = createSyncState(receiver, bindStorePath, undefined, logger, undefined, ALICE);
+    // The inbox is read before the sent folder, where her other device filed the notice (EML-12).
+    receiver.seed("doc-1", [
+      mail("<m1@x>", BOB, [ALICE], frame("after")),
+      mail("<n1@x>", ALICE, [BOB, CAROL], notice(CAROL)),
+    ]);
+    await sync.pollOnce("doc-1");
+    expect(getBindRecord(bindStorePath, "doc-1")?.removed).toEqual([CAROL]);
+    expect(sync.getDeliveries("doc-1").map((d) => d.payload)).toEqual(["after"]);
+    expect(sync.getRejections("doc-1")).toEqual([]);
+  });
+
   it("rejects a mail from a removed participant once the notice is taken", async () => {
     const { receiver, sync } = bobsBridge();
     receiver.seed("doc-1", [
