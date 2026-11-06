@@ -4111,7 +4111,7 @@ it is only *worth using* with it.
 |---|---|---|
 | Permissions | The creator grants and revokes; each engine but a device of the creator refuses to send an edit before its bootstrap, and each refuses one while its own permission is `read` or revoked, in a capacity conflict, and once the document is closed — also when its permission is unknown after the bootstrap, which counts as `read` (CTL-13, CTL-32) | Among cooperating engines only, and only while their applications keep what the engine refuses out of the engine's document, which a resync answer carries whole (CTL-42, RSY-10); receivers do not reject an edit for its sender's permission (CTL-7) |
 | Rights on layers | The creator sets a member's right on a layer, or lets it inherit the permission on the document; each engine refuses to send a change of a layer on which its permission is `read`, of any layer once its permission on the document is revoked, and a change that touches such a layer whole (LAY-5, LAY-6, LAY-7) | As for permissions: among cooperating engines only; `read` hides nothing, every participant reads every layer it receives |
-| Creator identity | Fixed; `control` frames only from it (CTL-5); the snapshot of an answer is what its sender holds of the creator's decisions, merged as such (CTL-25), and only her devices give a device of the creator her state (RSY-14, CTL-46); device tags tell its devices apart and authenticate nothing | Exactly as strong as the messenger's sender authentication, among cooperating participants (§15.2); a snapshot carried between the creator's devices (ARC-5) as strong as the service that carries it |
+| Creator identity | Fixed; `control` frames only from it (CTL-5); the snapshot of an answer is what its sender holds of the creator's decisions, merged as such (CTL-25); only her devices bootstrap a device of the creator (RSY-14, CTL-46), and once bootstrapped it merges members' answers as any device does (CTL-25, RSY-12); device tags tell its devices apart and authenticate nothing | Exactly as strong as the messenger's sender authentication, among cooperating participants (§15.2); a snapshot carried between the creator's devices (ARC-5) as strong as the service that carries it |
 | Replay of control frames | Control state is registers ([§7.1](#71-what-control-state-is), CTL-22) | A replayed register changes nothing (CTL-6) |
 | Close | Cooperating engines stop sending edits of their own; edits sent before the close still arrive and apply (LIF-6) | Among cooperating engines only, and only while their applications keep a change made after the close out of the engine's document (CTL-42) — a modified engine can keep sending edits, which genuine engines apply, exactly as with `read` (CTL-7) |
 | Convergence | The CRDT | Unconditional, given the same set of updates — not given a lost one |
@@ -4243,11 +4243,13 @@ The reference implementation uses all five.
   document. Nothing else about pacing is shared.
 - **A clock far ahead.** A device of the creator whose clock runs ahead wins
   concurrent decisions until the others catch up (CTL-22). A register far in the
-  future — from a broken application of the creator — holds until a decision on its
-  target made in knowledge of it, which takes a clock above it (CTL-21, CTL-45); no
-  device's own clock runs more than a day ahead for it. At the end of the range no
-  decision on that target is possible; the person continues in a new document
-  (§6.2).
+  future — from a broken application of the creator, which members pass on as any
+  register (CTL-25), or from a participant whose software ignores this
+  specification ([§15.4](#154-what-is-not-guaranteed)) — holds until a decision on
+  its target made in knowledge of it, which takes a clock above it (CTL-21,
+  CTL-45); no receiver sets it aside (CTL-45), and no device's own clock runs more
+  than a day ahead for it. At the end of the range no decision on that target is
+  possible; the person continues in a new document (§6.2).
 - **Many device tags and targets**: the creator's account can name tags and
   targets at will; CTL-30 bounds what a receiver holds, and refuses and reports the
   rest.
