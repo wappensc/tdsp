@@ -2,7 +2,8 @@
 
 TDSP's own code is licensed under the MIT License ([LICENSE](LICENSE)).
 
-**Apart from the checker named at the end, this repository contains no third-party code.** It
+**Apart from the checker and the one file of the Matrix bridge named at the end, this repository
+contains no third-party code.** It
 declares dependencies, which your package manager fetches at install time, and two of its
 bridges run programs you install yourself. This file lists both, so that anyone who packages
 and distributes a bridge or a package from this repository knows what comes with it and under
@@ -155,3 +156,17 @@ the MIT License; [conformance/swift-checker/NOTICE.md](conformance/swift-checker
 their license texts and copyright notices, which travel with any copy of the checker. It is no
 dependency, so it is not in [third-party-licenses.json](third-party-licenses.json). This
 repository's maintainers decided to keep it, with these notices.
+
+## A check translated from matrix-rust-sdk
+
+[bridges/matrix-bridge/src/own-device-signature.ts](bridges/matrix-bridge/src/own-device-signature.ts)
+translates into TypeScript how matrix-rust-sdk decides that a device is signed by its owner's
+identity (`is_cross_signed_by_owner`), for the bridge's own device only, from the commit
+`90db5fe3` that `@matrix-org/matrix-sdk-crypto-nodejs` 0.6.6 is built from. matrix-rust-sdk is
+the Matrix.org Foundation's, under the Apache License 2.0 (Copyright 2020 The Matrix.org
+Foundation C.I.C.). The file names its sources, its copyright and license, and what was changed;
+the license text comes with every installation of the bridge, in the `LICENSE` of
+`@matrix-org/matrix-sdk-crypto-nodejs`, under the same license. The bridge calls it instead of the
+library's `getDevice()`, whose result aborts the process when it ends; the file says why, and
+which risks that brings. This repository's maintainers decided on 2026-11-06 to translate it,
+with this notice, until the library releases that result.

@@ -1007,6 +1007,10 @@ Healing at the next occasion (draft-10), besides wording, references and Appendi
   its account's identity: the send fails as `needs-person` (`409`) until the device is confirmed
   with `pnpm run matrix:confirm-device` (MTX-4). It no longer delivers a frame from a device its
   owner has not signed. It still shares room keys with every device (CONFORMANCE.md).
+- A Matrix bridge that sent into an encrypted room no longer aborts when it ends ("there is no
+  reactor running"). It checks its own device's signature (MTX-4) itself, translated from
+  matrix-rust-sdk, instead of through the library's `getDevice()`, whose result kept the crypto
+  store alive past `close()` (#135).
 - The bridges offer the cursor, `GET /channels/:documentId/deliveries-since?after=` (TRN-18,
   TRN-21), and `SignalMessengerPort`, `MatrixMessengerPort` and `EmailMessengerPort` offer
   `receiveSince()`; an engine on them now reads through the cursor, and a cursor its bridge no

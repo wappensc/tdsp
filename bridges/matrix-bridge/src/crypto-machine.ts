@@ -18,6 +18,7 @@ import {
   uploadKeys,
   whoami,
 } from "./matrix-api.ts";
+import { isOwnDeviceCrossSigned } from "./own-device-signature.ts";
 
 /**
  * `ShieldColor.None` of `@matrix-org/matrix-sdk-crypto-nodejs`, whose `.d.ts` declares it as an
@@ -162,6 +163,8 @@ export async function createCryptoMachine(
     0, // StoreType.Sqlite
   );
 
+  const ed25519 = machine.identityKeys.ed25519.toBase64();
+
   // Upload this device's own keys immediately — every later
   // shareRoomKey/encrypt call assumes it's already done.
   await processOutgoingRequests(machine, config);
@@ -185,25 +188,29 @@ export async function createCryptoMachine(
     await machine.markRequestAsSent(query.id, query.type, response);
   }
 
-  /** Whether this device is signed by its account's identity, as the homeserver lists it now. */
+  /**
+   * Whether this device is signed by its account's identity, as the homeserver lists it now
+   * (MTX-4). Checked by `isOwnDeviceCrossSigned`, not by the library's `getDevice()`, whose
+   * `Device` aborts the process on exit (own-device-signature.ts says why). Once signed, it is
+   * asked again only after a /sync reports a change of the account's own devices; until then,
+   * at every send, so a device a person has just confirmed sends at once.
+   */
+  let ownSignedSinceLastChange = false;
   async function ownDeviceSigned(): Promise<boolean> {
-    const signed = async () =>
-      (
-        await machine.getDevice(new UserId(userId), new DeviceId(deviceId))
-      )?.isCrossSignedByOwner() === true;
-    if (await signed()) {
+    if (ownSignedSinceLastChange) {
       return true;
     }
-    // A confirmation reaches the machine with a later /sync's device lists; asked for now, a
-    // device a person has just confirmed sends at once.
-    await queryDevicesOf([userId]);
-    return signed();
+    const response: unknown = JSON.parse(
+      await queryKeys(config, JSON.stringify({ device_keys: { [userId]: [deviceId] } })),
+    );
+    ownSignedSinceLastChange = isOwnDeviceCrossSigned(response, { userId, deviceId, ed25519 });
+    return ownSignedSinceLastChange;
   }
 
   return {
     userId,
     deviceId,
-    ed25519: machine.identityKeys.ed25519.toBase64(),
+    ed25519,
 
     async ensureRoomKeyShared(roomId, memberUserIds) {
       const memberIds = memberUserIds.map((id) => new UserId(id));
@@ -307,6 +314,9 @@ export async function createCryptoMachine(
     },
 
     async receiveSync(toDeviceEvents, deviceListsChanged, deviceListsLeft, oneTimeKeyCounts) {
+      if (deviceListsChanged.includes(userId)) {
+        ownSignedSinceLastChange = false;
+      }
       await machine.receiveSyncChanges(
         JSON.stringify(toDeviceEvents),
         new DeviceLists(
