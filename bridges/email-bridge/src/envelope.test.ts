@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   decodeEnvelope,
   decodeInvite,
+  decodeRemovalNotice,
   encodeEnvelope,
+  encodeRemovalNotice,
   foreignEnvelopeVersion,
   isValidMessageId,
+  recipientHeadersCoverHeldSet,
   recipientHeadersMatchClosedSet,
   subjectForDocument,
 } from "./envelope.ts";
@@ -125,6 +128,97 @@ describe("recipientHeadersMatchClosedSet", () => {
         closedSet,
       ),
     ).toBe(true);
+  });
+});
+
+describe("recipientHeadersCoverHeldSet (EML-2 against the held set, EML-14)", () => {
+  const held = ["alice@example.org", "bob@example.org"];
+  const removed = ["carol@example.org"];
+
+  it("takes a mail to exactly the held set", () => {
+    expect(
+      recipientHeadersCoverHeldSet("alice@example.org", ["bob@example.org"], [], held, removed),
+    ).toBe(true);
+  });
+
+  it("takes a mail that also addresses a participant already removed", () => {
+    expect(
+      recipientHeadersCoverHeldSet(
+        "alice@example.org",
+        ["bob@example.org"],
+        ["Carol@Example.org"],
+        held,
+        removed,
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses a removed sender, a participant left out, and anyone else addressed", () => {
+    expect(
+      recipientHeadersCoverHeldSet(
+        "carol@example.org",
+        ["alice@example.org", "bob@example.org"],
+        [],
+        held,
+        removed,
+      ),
+    ).toBe(false);
+    expect(recipientHeadersCoverHeldSet("alice@example.org", [], [], held, removed)).toBe(false);
+    expect(
+      recipientHeadersCoverHeldSet(
+        "alice@example.org",
+        ["bob@example.org", "mallory@example.org"],
+        [],
+        held,
+        removed,
+      ),
+    ).toBe(false);
+  });
+
+  it("is EML-2's exact check while nobody is removed", () => {
+    const set = ["alice@example.org", "bob@example.org", "carol@example.org"];
+    const cases: [string, string[]][] = [
+      ["alice@example.org", ["bob@example.org", "carol@example.org"]],
+      ["alice@example.org", ["bob@example.org"]],
+      ["alice@example.org", ["bob@example.org", "carol@example.org", "mallory@example.org"]],
+      ["mallory@example.org", ["alice@example.org", "bob@example.org", "carol@example.org"]],
+    ];
+    for (const [sender, to] of cases) {
+      expect(recipientHeadersCoverHeldSet(sender, to, [], set, [])).toBe(
+        recipientHeadersMatchClosedSet(sender, to, [], set),
+      );
+    }
+  });
+});
+
+describe("encodeRemovalNotice/decodeRemovalNotice (EML-14)", () => {
+  const notice = {
+    tdsp: 1,
+    kind: "remove",
+    documentId: "doc-1",
+    participant: "carol@example.org",
+  } as const;
+
+  it("round-trips a notice, and is no frame envelope", () => {
+    const text = encodeRemovalNotice(notice);
+    expect(decodeRemovalNotice(text)).toEqual(notice);
+    expect(decodeEnvelope(text)).toBeUndefined();
+  });
+
+  it("refuses anything that is not exactly a notice", () => {
+    for (const other of [
+      { ...notice, tdsp: 2 },
+      { ...notice, kind: "frame" },
+      { ...notice, documentId: 1 },
+      { ...notice, participant: "Carol@Example.org" },
+      { ...notice, participant: "Carol <carol@example.org>" },
+      { tdsp: 1, kind: "remove", documentId: "doc-1" },
+    ]) {
+      expect(decodeRemovalNotice(JSON.stringify(other)), JSON.stringify(other)).toBeUndefined();
+    }
+    expect(decodeRemovalNotice("not json")).toBeUndefined();
+    const frame = encodeEnvelope({ tdsp: 1, kind: "frame", documentId: "doc-1", frame: "" });
+    expect(decodeRemovalNotice(frame)).toBeUndefined();
   });
 });
 

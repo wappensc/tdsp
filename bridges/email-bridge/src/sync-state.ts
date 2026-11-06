@@ -7,13 +7,21 @@ import {
   deliveriesAfter,
   retainNewest,
 } from "@tdsp/messenger-port";
-import { type BindRecord, getBindRecord } from "./bind-store.ts";
+import {
+  type BindRecord,
+  getBindRecord,
+  heldParticipants,
+  isRemoved,
+  recordRemoval,
+} from "./bind-store.ts";
 import {
   decodeEnvelope,
+  decodeRemovalNotice,
   foreignEnvelopeVersion,
   normalizeAddress,
   pgpFormatOf,
-  recipientHeadersMatchClosedSet,
+  type RemovalNotice,
+  recipientHeadersCoverHeldSet,
 } from "./envelope.ts";
 import type { GpgInvoker } from "./gpg-invoke.ts";
 import type { IncomingMail, MailReceiver } from "./mail-transport.ts";
@@ -71,11 +79,13 @@ const MAX_READ_ATTEMPTS = 3;
  * anything is surfaced as a `Delivery` (bindings/email.md EML-2, EML-3). Beyond
  * those checks this module only routes: membership, the document's lifecycle and
  * resync requests are frames inside the opaque payload, read and enforced by
- * `document-protocol`, so nothing here writes the bind-store or checks a creator:
+ * `document-protocol`. The one thing it writes to the bind-store is the creator's removal
+ * of a participant from the thread (EML-14), which is the channel's, not a frame:
  *
- * 1. **Transport level** (`recipientHeadersMatchClosedSet`, PGP-independent):
- *    the sender plus everyone addressed must be exactly the closed
- *    participant set. PGP signs the body, never these headers.
+ * 1. **Transport level** (`recipientHeadersCoverHeldSet`, PGP-independent):
+ *    the sender is in the participant set this bridge holds, everyone in it is
+ *    addressed, and anyone else addressed is a participant already removed.
+ *    PGP signs the body, never these headers.
  * 2. **Identity level** (PGP-enabled documents only): the
  *    body must be an inline OpenPGP message that decrypts and verifies
  *    against **the document's own keyring** and carries a signature made by
@@ -110,6 +120,11 @@ export function createSyncState(
   logger: Logger = loggerFromEnv("email-bridge"),
   /** How much of each document's deliveries `getDeliveries` keeps (BRG-17). */
   retention: DeliveryRetention = DEFAULT_DELIVERY_RETENTION,
+  /**
+   * This bridge's own address. Once the creator removed it from a document's thread, nothing
+   * more of that thread is delivered (EML-14); left out, the bridge cannot tell, and goes on.
+   */
+  ownAddress: string | undefined = undefined,
 ): SyncState {
   /** How many deliveries each document's window has taken in, its dropped ones included (TRN-18). */
   const appended = new Map<string, number>();
@@ -213,10 +228,13 @@ export function createSyncState(
     if (format === "plain") {
       // A plain, human-readable message in the thread (the invite email,
       // say) is not a protocol message and was never going to be
-      // applied — only a well-formed *envelope* arriving with no PGP
-      // protection on a PGP-enabled document is a rejection worth
-      // recording.
-      if (decodeEnvelope(message.text) !== undefined) {
+      // applied — only a well-formed *envelope*, or a removal notice (EML-14),
+      // arriving with no PGP protection on a PGP-enabled document is a
+      // rejection worth recording.
+      if (
+        decodeEnvelope(message.text) !== undefined ||
+        decodeRemovalNotice(message.text) !== undefined
+      ) {
         reject(documentId, message, "pgp-unsigned");
       }
       return undefined;
@@ -267,13 +285,68 @@ export function createSyncState(
     return result.payload;
   }
 
+  /**
+   * Takes a removal notice that passed EML-2 and, with PGP, EML-3 (bindings/email.md EML-14):
+   * from the creator, naming a participant of the held set other than the creator, it removes
+   * that participant for good. A notice naming one already removed — the creator's own notice
+   * read back from the sent folder (EML-12), or a second notice — changes nothing and says
+   * nothing. Any other notice is not taken, and logged rather than recorded as a violation: the
+   * integrity log's reasons are the ones every bridge names (BRG-12, BRG-15), and none of them
+   * fits a notice that is well-formed but not the creator's to give.
+   */
+  function takeRemovalNotice(
+    documentId: string,
+    bound: BindRecord,
+    message: IncomingMail,
+    notice: RemovalNotice,
+  ): void {
+    const sender = normalizeAddress(message.from);
+    const creator = normalizeAddress(bound.creatorMemberId);
+    const ignore = (reason: string) =>
+      logger.warn("removal-ignored", {
+        reason,
+        documentId,
+        messageId: message.messageId,
+        sender,
+        participant: notice.participant,
+      });
+    if (sender !== creator) {
+      ignore("not-from-creator");
+      return;
+    }
+    if (notice.participant === creator) {
+      ignore("names-the-creator");
+      return;
+    }
+    if (isRemoved(bound, notice.participant)) {
+      return;
+    }
+    if (
+      !heldParticipants(bound).some((address) => normalizeAddress(address) === notice.participant)
+    ) {
+      ignore("not-a-participant");
+      return;
+    }
+    recordRemoval(bindStorePath, documentId, notice.participant);
+    logger.info("participant-removed", {
+      documentId,
+      messageId: message.messageId,
+      participant: notice.participant,
+    });
+  }
+
   async function processMessage(documentId: string, message: IncomingMail): Promise<void> {
     if (message.messageId.length === 0) {
       return;
     }
+    // The record as it is now: a removal taken from an earlier mail of the same poll applies.
     const boundAtArrival = getBindRecord(bindStorePath, documentId);
     if (!boundAtArrival) {
       return; // this bridge never started this thread — silently ignored
+    }
+    // The creator removed this bridge's own address: nothing more of the thread (EML-14).
+    if (ownAddress !== undefined && isRemoved(boundAtArrival, ownAddress)) {
+      return;
     }
 
     // IMAP re-reads the whole thread on every poll: a mail already processed is
@@ -293,17 +366,18 @@ export function createSyncState(
       return;
     }
 
-    // Check 1 (transport-level, independent of and prior to any PGP
-    // check): the sender plus everyone this message was addressed to must
-    // exactly equal the document's closed participant set — a mismatch
-    // means someone was silently added or excluded at the raw header
-    // level.
+    // Check 1 (transport-level, independent of and prior to any PGP check, EML-2): the
+    // sender is in the set this bridge holds, everyone in it is addressed, and anyone else
+    // addressed was removed (EML-14) — otherwise someone was silently added or left out at the
+    // raw header level, or the sender is no longer a participant. Every way of failing it is
+    // the one reason it always had, so the integrity log's vocabulary stays as it is.
     if (
-      !recipientHeadersMatchClosedSet(
+      !recipientHeadersCoverHeldSet(
         message.from,
         message.to,
         message.cc,
-        boundAtArrival.recipients,
+        heldParticipants(boundAtArrival),
+        boundAtArrival.removed ?? [],
       )
     ) {
       reject(documentId, message, "recipient-list-mismatch");
@@ -320,6 +394,14 @@ export function createSyncState(
     if (foreign !== undefined) {
       if (foreign.documentId === documentId) {
         logger.warn("unsupported-envelope-version", { ...foreign, messageId: message.messageId });
+      }
+      return;
+    }
+    const notice = decodeRemovalNotice(text);
+    if (notice !== undefined) {
+      // Not a frame: whatever comes of it, nothing of it is delivered (EML-14).
+      if (notice.documentId === documentId) {
+        takeRemovalNotice(documentId, boundAtArrival, message, notice);
       }
       return;
     }
@@ -364,6 +446,10 @@ export function createSyncState(
   async function poll(documentId: string): Promise<void> {
     const bound = getBindRecord(bindStorePath, documentId);
     if (!bound) {
+      return;
+    }
+    // Removed from the thread: nothing more of it is read (EML-14).
+    if (ownAddress !== undefined && isRemoved(bound, ownAddress)) {
       return;
     }
     const messages = await receiver.fetchThreadMessages(documentId);

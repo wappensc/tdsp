@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { normalizeAddress } from "./envelope.ts";
 
 /**
  * The local `documentId ↔ thread` bind-store (SPECIFICATION.md §12.2, §13.4),
@@ -9,9 +10,10 @@ import { dirname } from "node:path";
  * thread's own first, human-readable invite email in one call, since
  * email has no pre-existing channel to attach to.
  *
- * `recipients` is the document's permanently closed distribution list
- * (the closed participant set, bindings/email.md §13.4) — fixed at
- * `startThread` and never mutated afterward, in either direction.
+ * `recipients` is the participant set as the thread started (bindings/email.md EML-1) — fixed
+ * at `startThread` and never mutated afterward. `removed` is who the creator has removed from it
+ * since (EML-14); the set this bridge holds is the one less the other ({@link heldParticipants}),
+ * so it only ever shrinks.
  *
  * No permission, archived or deleted state: membership and the
  * document's lifecycle are control frames owned by `document-protocol`, and a
@@ -19,6 +21,12 @@ import { dirname } from "node:path";
  */
 export interface BindRecord {
   readonly recipients: readonly string[];
+  /**
+   * The participants the creator removed (bindings/email.md EML-14), as canonical MemberIds,
+   * each one of `recipients`. Only ever added to, by {@link recordRemoval}; absent in a record
+   * from which nobody was removed.
+   */
+  readonly removed?: readonly string[];
   readonly creatorMemberId: string;
   readonly profile: string;
   readonly threadRootMessageId: string;
@@ -105,4 +113,52 @@ export function setBindRecord(path: string, documentId: string, record: BindReco
   const data = loadBindStore(path);
   data[documentId] = record;
   saveBindStore(path, data);
+}
+
+/**
+ * The participant set this bridge holds for a document (bindings/email.md EML-14): the set the
+ * thread started with, less everyone the creator removed, in the order the thread started with
+ * and as written there.
+ */
+export function heldParticipants(record: BindRecord): readonly string[] {
+  const removed = new Set((record.removed ?? []).map(normalizeAddress));
+  return record.recipients.filter((address) => !removed.has(normalizeAddress(address)));
+}
+
+/** Whether the creator removed `address` from the document's thread (EML-14). */
+export function isRemoved(record: BindRecord, address: string): boolean {
+  const wanted = normalizeAddress(address);
+  return (record.removed ?? []).some((removed) => normalizeAddress(removed) === wanted);
+}
+
+/**
+ * Removes `participant` from the set held for `documentId` and writes it to disk, so the removal
+ * outlasts a restart (EML-14): read, changed and written in one synchronous step, so two
+ * removals in this process cannot lose each other. Only ever adds to `removed`, never takes from
+ * it, so removals end the same whatever order they arrive in. Returns the record as written, or
+ * `undefined` when there is no record or `participant` is not one of its participants other than
+ * the creator.
+ */
+export function recordRemoval(
+  path: string,
+  documentId: string,
+  participant: string,
+): BindRecord | undefined {
+  const data = loadBindStore(path);
+  const record = data[documentId];
+  const wanted = normalizeAddress(participant);
+  if (
+    record === undefined ||
+    normalizeAddress(record.creatorMemberId) === wanted ||
+    !record.recipients.some((address) => normalizeAddress(address) === wanted)
+  ) {
+    return undefined;
+  }
+  if (isRemoved(record, wanted)) {
+    return record;
+  }
+  const updated: BindRecord = { ...record, removed: [...(record.removed ?? []), wanted] };
+  data[documentId] = updated;
+  saveBindStore(path, data);
+  return updated;
 }
