@@ -10,7 +10,9 @@ import { type LivePair, livePairs } from "./live-pair.ts";
  * bridge of their own, both bridges on the local Synapse — every frame goes through the
  * bridges and the homeserver, nothing between the engines but the messenger (ARC-3).
  * The engine's own tests run against the in-memory transport (L0); this shows the same
- * engine bootstraps, converges and carries a decision over a real one.
+ * engine bootstraps, converges and carries a decision over a real one, in a plain room and in
+ * an encrypted one, where every frame is a Megolm event between devices their owners signed
+ * (bindings/matrix.md MTX-4).
  */
 const available = await hasTestMatrixHomeserver();
 
@@ -53,29 +55,33 @@ describe.skipIf(!available)("the 2.0 engine over two Matrix bridges and a local 
     return { alice, bob };
   }
 
-  it("bootstraps a joiner, converges concurrent edits, and carries a decision of the creator", async () => {
-    const pair = await pairs.start();
-    const { alice, bob } = await start(pair);
+  it.each(["plain", "encrypted"] as const)(
+    "in the %s room: bootstraps a joiner, converges concurrent edits, and carries a decision of the creator",
+    async (room) => {
+      const pair = await pairs.start(room);
+      const { alice, bob } = await start(pair);
 
-    // The joiner is bootstrapped by the creator's answer to its request (RSY-4, CTL-13).
-    await syncUntil([alice, bob], () => bob.hasCompletedBootstrap);
-    expect(bob.permissionOf(pair.memberId)).toBe("write");
+      // The joiner is bootstrapped by the creator's answer to its request (RSY-4, CTL-13).
+      await syncUntil([alice, bob], () => bob.hasCompletedBootstrap);
+      expect(bob.permissionOf(pair.memberId)).toBe("write");
 
-    // Concurrent edits, each sent before the other arrived, converge (§3.3).
-    alice.edit((fragment) => insertPlainText(fragment, 0, "hello "));
-    bob.edit((fragment) => insertPlainText(fragment, 0, "world "));
-    await Promise.all([alice.flush(), bob.flush()]);
-    await syncUntil(
-      [alice, bob],
-      () =>
-        getPlainText(alice.fragment) === getPlainText(bob.fragment) &&
-        getPlainText(alice.fragment).includes("hello") &&
-        getPlainText(alice.fragment).includes("world"),
-    );
+      // Concurrent edits, each sent before the other arrived, converge (§3.3).
+      alice.edit((fragment) => insertPlainText(fragment, 0, "hello "));
+      bob.edit((fragment) => insertPlainText(fragment, 0, "world "));
+      await Promise.all([alice.flush(), bob.flush()]);
+      await syncUntil(
+        [alice, bob],
+        () =>
+          getPlainText(alice.fragment) === getPlainText(bob.fragment) &&
+          getPlainText(alice.fragment).includes("hello") &&
+          getPlainText(alice.fragment).includes("world"),
+      );
 
-    // A decision of the creator reaches the member (§7).
-    await alice.setMembership(pair.memberId, "read");
-    await syncUntil([alice, bob], () => bob.permissionOf(pair.memberId) === "read");
-    expect(alice.permissionOf(pair.memberId)).toBe("read");
-  }, 120_000);
+      // A decision of the creator reaches the member (§7).
+      await alice.setMembership(pair.memberId, "read");
+      await syncUntil([alice, bob], () => bob.permissionOf(pair.memberId) === "read");
+      expect(alice.permissionOf(pair.memberId)).toBe("read");
+    },
+    120_000,
+  );
 });
