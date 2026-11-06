@@ -108,8 +108,9 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
   them — for a documentId its sender learned while a member of the document's
   channel, say — would let someone outside that channel write into the document,
   and a deletion from there would fill its integrity log with records nobody in
-  the channel caused. The email binding's channel is a fixed participant set,
-  checked for every message (EML-2).
+  the channel caused. The email binding's channel is a participant set fixed
+  when the thread starts and shrunk only by the creator (EML-1, EML-14), checked
+  for every message (EML-2).
 - **BRG-11** · *bridge* — A bridge MUST make every delivery received for a document
   available, cumulatively and unfiltered (TRN-7): not filtered by kind, content or
   sender. It MAY drop silently a message its messenger presents again — the same

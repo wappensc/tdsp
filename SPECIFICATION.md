@@ -175,7 +175,7 @@ across a process boundary through it, and no one else.
 | **Creator** | The one participant who created a document. Fixed at creation, never transferable; the document's single authority ([§2.3](#23-the-creator-is-the-single-authority)) |
 | **Engine** | The component that runs the protocol for one document on one device ([§1.4](#14-conformance-classes)) |
 | **Messenger** | The system that carries messages between participants — a messaging service, or any other message system with the properties of [§15.1](#151-what-a-messenger-must-provide) |
-| **Channel** | The messenger-level conversation a document rides on: a Signal group, a Matrix room, an email thread with a fixed participant set. Set up by people, not by TDSP — but for an email thread, which the creator's bridge starts with the invitation ([email binding](bindings/email.md)) |
+| **Channel** | The messenger-level conversation a document rides on: a Signal group, a Matrix room, an email thread with a participant set fixed when it starts, which only its creator can shrink. Set up by people, not by TDSP — but for an email thread, which the creator's bridge starts with the invitation ([email binding](bindings/email.md)) |
 | **Binding** | The association of a documentId with a channel, held by a bridge; also, a messenger binding: how frames travel on one messenger ([bindings/](bindings/)) |
 | **Delivery** | One received message, as the transport contract presents it: an id, a documentId, a sender and a payload |
 | **Frame** | The payload of one delivery: a JSON object ([§4](#4-the-payload-frame)) |
@@ -4844,8 +4844,8 @@ The changes have nine reasons, which the tables below cite by letter:
 **Moved** into [bindings/](bindings/) (F): §12 (BRG-1 to BRG-17), §12.6 (LBI-1 to
 LBI-6, the routes gaining an optional cursor and instance), §13 (BND-1 to BND-3,
 SIG-1 to SIG-3, MTX-1 to MTX-4, EML-1 to EML-12) and Appendix C — unchanged in
-substance, but for these, and with BRG-18, BND-4, SIG-4 to SIG-7, MTX-5 to MTX-7
-and EML-13 new:
+substance, but for these, and with BRG-18, BND-4, SIG-4 to SIG-7, MTX-5 to MTX-7,
+EML-13 and EML-14 new:
 
 | Requirements | Change | Why |
 |---|---|---|
@@ -4862,6 +4862,7 @@ and EML-13 new:
 | BND-3 | The 64 hexadecimal digits are ASCII | A Unicode test for hexadecimal digits takes full-width forms too, a second spelling of the same hash. |
 | BND-4 (new) | The `MAY` of §13.1 to carry a frame as an attachment, as a requirement of its own | A `MAY` without an ID, which §1.3 left informative although it was meant to apply; the content is unchanged |
 | EML-13 (new) | The part of 1.x's EML-8 on what an application shows of the creator's key, as a requirement of its own | It was a part of a longer requirement, and requires what it did there |
+| EML-1, EML-2; EML-14 (new) | The participant set only shrinks: the creator's bridge sends a removal notice into the thread, and every bridge removes that participant from the set it holds, never adding one back; a message is taken when its sender is in that set and its recipients cover it, beyond it only participants already removed | Without "removal wins" (§15.4) a revocation alone may be undone by a concurrent grant; the channel's removal ends what a person receives (§6.6), and an email thread had none. |
 | SIG-4, SIG-5 (new) | When a group send is accepted, by `signal-cli`'s result per recipient, each recipient skipped as an identity to trust a notice (BRG-15); a bridge reads a connection before `signal-cli` pushes into it | `signal-cli` reports a group message sent once one member got it, and hands each waiting message to a device once; a member whose identity changed receives nothing while every send succeeds. |
 | SIG-7 (new) | A send `signal-cli` refuses because it cannot load the account is `unavailable` while the bridge's link status, which SIG-7 defines, shows the device linked, `needs-person` once it shows it unlinked | `signal-cli` refuses so for a passing failure and for an unlinked device alike; only the second waits for the person. |
 | SIG-6 (new) | A bridge that receives through a subscription reads before it subscribes, on every connection, and keeps its instance across ending it only if its `signal-cli` hands on the message in hand | `signal-cli` 0.14.9 drops the message it is handling when the last subscription ends. |

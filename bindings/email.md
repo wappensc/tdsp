@@ -11,26 +11,26 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
 [§1.4](../SPECIFICATION.md#14-conformance-classes)).
 
 **Maturity: draft in part.** The exact layout of a mail — its MIME structure, the
-OpenPGP message and the invitation's block, with their algorithms (the rows *Carrier*,
-*Body* and *Invitation*) — is what the reference email bridge writes: not specified for a
+OpenPGP message, the invitation's block and the removal notice, with their algorithms (the rows
+*Carrier*, *Body*, *Invitation* and *Removal*) — is what the reference email bridge writes: not specified for a
 second implementation, not part of TDSP 2.0's stable set
 ([§14](../SPECIFICATION.md#14-versioning-and-extensibility)), and free to change without a
 new version of the core. An incompatible change of the layout increments this binding's
 version; until the layout is specified, email bridges interoperate only within one release
-of this repository. Every requirement of this binding, EML-1 to EML-13, stands as written.
+of this repository. Every requirement of this binding, EML-1 to EML-14, stands as written.
 
 ### 13.4 Email
 
 Email has no channel to bind to, no server-side membership and, without PGP, no
 sender authentication. The binding therefore fixes the participants when the
-thread starts and checks every message against them.
+thread starts, lets only the creator remove one, and checks every message against them.
 
 | Aspect | Binding |
 |---|---|
 | Account | An SMTP and an IMAP account at one provider, over TLS (EML-7); for PGP, the person's own secret key in their `gpg` keyring, and a keyring of each document's own for the participants' keys (EML-4) |
 | Security (BND-1) | Without PGP: none, against anyone — `From` is as forgeable as any header, and a document is as confidential as plain email: readable to every mail provider on the way (EML-9). With PGP, added by the binding (EML-3): the body of every frame mail confidential, its integrity, and the sender authentic as the holder of the key the invitation pinned (EML-8), also against the mail providers; the headers — the documentId in `Subject` and `x-tdsp-document`, every participant's address, the times — stay readable to every mail provider on the way, and so do the invitation's human-readable text and its link, with the documentId, the creator's MemberId, the recipients, the thread root, the profile and any parameter of the application's own (INV-10) |
-| Channel | A thread: a closed set of participants fixed when the thread starts, rooted at the invitation's `Message-ID` |
-| Carrier | One email per frame. `Subject: tdsp document <documentId>`; header `x-tdsp-document: <documentId>`; `In-Reply-To` and `References` name the thread root; `To`/`Cc` name every participant but the sender |
+| Channel | A thread: a closed set of participants fixed when the thread starts, from which only the creator removes one (EML-14), rooted at the invitation's `Message-ID` |
+| Carrier | One email per frame. `Subject: tdsp document <documentId>`; header `x-tdsp-document: <documentId>`; `In-Reply-To` and `References` name the thread root; `To`/`Cc` name every participant of the set the bridge holds (EML-14) but the sender |
 | Body, PGP off | The envelope JSON as plain text |
 | Body, PGP on | The same JSON, signed and encrypted to every participant, the sender included, as one inline ASCII-armoured OpenPGP message |
 | Own devices | A copy of every frame mail in the sender's own sent folder, which every device of the address searches (EML-12) |
@@ -39,21 +39,34 @@ thread starts and checks every message against them.
 | Accepted (TRN-6) | The mail server accepted the message for every recipient (EML-11) |
 | Message-ID | `<local@domain>`, at most 200 characters, local part and domain from `[A-Za-z0-9._~+-]` and `[A-Za-z0-9.-]` |
 | Invitation | The thread's first message: human-readable text with the invitation link; with PGP, followed by exactly one armoured block, signed by the creator and encrypted to each participant, whose plaintext is `{"tdsp":1, "kind":"invite", documentId, creator, profile, participants: [{address, fingerprint}], keys, policy?}` — `policy` is TDSP 1.x's, which a bridge or application of TDSP 2.0 neither writes nor reads |
+| Removal | A mail in the thread like a frame mail, whose body is `{"tdsp":1, "kind":"remove", documentId, participant}` — plain, or signed and encrypted like a frame's — addressed to the set before the removal (EML-14) |
 | Immutability | A second message under an already-seen `Message-ID` with different content is an integrity violation; one with identical content is a harmless re-read |
 | Retention (LIF-8) | Unknown: as long as the mailboxes keep the thread's mails, which the provider or the person may limit; an application that knows it tells its engine |
 | Transport profile | To a provider — bounds: floor 15 s, 4 MiB; suggested pacing 35 s / 120 s / 60 s, of which only the 35 s are a decision, the rest estimates. To a server on the same machine — no bounds; the engine's defaults as pacing ([Appendix B](../SPECIFICATION.md#appendix-b-recommended-values)) |
 | Frames carried | TDSP 2.0's, and 1.x's, unchanged ([§2.2](../SPECIFICATION.md#22-two-wrappers-two-readers)) |
 
-- **EML-1** · *bridge* — The participant set MUST be fixed when the thread starts
-  and MUST NOT change for the life of the document, in either direction.
-  *Rationale:* nothing outside TDSP enforces who is on an email thread; a
-  participant who could be removed could be silently cut off from seeing what
-  happens next, and one who could be added is an intrusion path.
-- **EML-2** · *bridge* — A receiving bridge MUST reject a message whose sender plus
-  `To` and `Cc` recipients are not exactly the participant set, before and
-  independently of any PGP check.
+- **EML-1** · *bridge* — The participant set MUST be fixed when the thread starts.
+  It MUST NOT grow for the life of the document, and MUST shrink only by a
+  participant the creator removes (EML-14).
+  *Rationale:* nothing outside TDSP enforces who is on an email thread. One who
+  could be added is an intrusion path; one whom anyone could remove could be
+  silently cut off from seeing what happens next. The creator's removal reaches
+  the removed participant too, and it is how a channel ends a person's part where
+  a revocation alone does not ([§6.6](../SPECIFICATION.md#66-who-takes-part)).
+- **EML-2** · *bridge* — A receiving bridge MUST reject a message, before and
+  independently of any PGP check, unless its sender is a participant of the set
+  the bridge holds, everyone in that set is the sender or among the `To` and `Cc`
+  recipients, and every other recipient is a participant the bridge removed
+  (EML-14).
   *Rationale:* a signature covers the body, not the headers; a validly signed
-  message could otherwise quietly exclude a participant from that one message.
+  message could otherwise quietly exclude a participant from that one message. A
+  participant who has not yet read a removal still addresses the set before it,
+  so a recipient already removed is taken; a removed participant is no longer
+  taken as a sender. A message that reaches a bridge before the removal it
+  follows, addressed to the set after it, leaves out a participant that bridge
+  still holds and is rejected: recorded as a violation (BRG-15), what it carried
+  is missing on that device until loss detection asks for it again
+  ([§10](../SPECIFICATION.md#10-loss-detection)), once the removal has arrived.
 - **EML-3** · *bridge* — For a PGP document, a receiving bridge MUST reject — never
   apply with a flag — any message that is not encrypted, that is not signed, whose
   signature does not verify, or whose signing key is not the key the creator's
@@ -119,6 +132,29 @@ thread starts and checks every message against them.
   rather than imply it.
   *Rationale:* the fingerprint is what a person compares with the creator outside
   the application; only that comparison makes the creator *verified* (EML-8).
+- **EML-14** · *bridge* — Only the creator removes a participant. On its
+  application's request (LIF-9) the creator's bridge MUST send a removal notice into
+  the thread, addressed to the set before the removal and, with PGP, signed and
+  encrypted like a frame mail; it MUST refuse the request from any account but the
+  creator's, for the creator herself, and for an address not in the set it holds. A
+  receiving bridge MUST take a notice only when it passes EML-2 and, with PGP,
+  EML-3, and its sender is the creator; it MUST then remove that participant from
+  the set it holds, keep the set so across restarts, and never add one back. A
+  notice is not a frame: the bridge hands nothing of it to the engine. From then on
+  the bridge addresses and, with PGP, encrypts every mail to the set it holds. A
+  bridge that finds its own address removed MUST refuse every further send into the
+  thread as one waiting cannot change (`rejected`) and deliver nothing more of it.
+  *Rationale:* TDSP 2.0 has no "removal wins": a revocation alone may be undone by
+  a concurrent grant ([§15.4](../SPECIFICATION.md#154-what-is-not-guaranteed)), while
+  whoever the channel removes receives nothing new, whatever any register says
+  ([§6.6](../SPECIFICATION.md#66-who-takes-part)). A set that only shrinks, on the
+  creator's word alone, ends the same whatever order the notices arrive in, and the
+  notice goes to the set before the removal, so the removed participant learns of
+  it too. Its limits: a bridge that never receives the notice keeps addressing the
+  removed participant, who keeps receiving that participant's mail; a mail the
+  removed participant sent before the removal and that reaches a bridge after it is
+  rejected; and without PGP the notice is as forgeable as any mail (EML-9) —
+  anyone can remove a participant from the set of a bridge that reads a forged one.
 
 - **EML-9** · *bridge, application* — Email without PGP does not meet
   [§15.1](../SPECIFICATION.md#151-what-a-messenger-must-provide): it has no sender authentication.
