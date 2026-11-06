@@ -35,8 +35,8 @@ import { hasValidSignature } from "./device-confirmation.ts";
  *    exactly its own usage, and every Ed25519 key in them is a valid key;
  * 2. the master key signed the self-signing and the user-signing key (`verify_subkey`): the
  *    library builds the own identity only from all three;
- * 3. the device is this one (`user_id`, `device_id`), its Ed25519 key is the running bridge's,
- *    and it signed its own keys (`check_self_signature`);
+ * 3. the device is this one (`user_id`, `device_id`), it signed its keys with the Ed25519 key
+ *    they publish (`check_self_signature`), and that key is the running bridge's;
  * 4. the self-signing key signed the device's keys (`verify_device_keys`).
  * A key signs with the first Ed25519 key of its `keys`, in key-id order, as
  * `get_first_key_and_id` takes it. A signature covers the object's canonical JSON without its
@@ -48,8 +48,9 @@ import { hasValidSignature } from "./device-confirmation.ts";
  *   sends; what it accepts from others is still the library's check (`shieldState`). A mistake
  *   would let an unsigned device of this bridge send, whose frames receivers that follow
  *   MTX-4 still refuse.
- * - It can drift from the library: a later version may check more. `own-device-signature.test.ts`
- *   compares both on the same answers, so an upgrade that changes the library's verdict fails.
+ * - It can drift from the library: a later version may check more.
+ *   `own-device-signature.security.test.ts` compares both on the same answers, so an upgrade
+ *   that changes the library's verdict fails.
  * - Ed25519 is node:crypto's (OpenSSL), not vodozemac's; Base64 is decoded leniently. Both
  *   accept only signatures that verify; they may differ only on inputs no honest signer makes.
  * - It answers from the homeserver's current answer, not from the library's stored identity, as
@@ -93,13 +94,18 @@ export function isOwnDeviceCrossSigned(
   if (!isObject(device) || device.user_id !== own.userId || device.device_id !== own.deviceId) {
     return false;
   }
-  // DeviceKeys::check_self_signature, with this bridge's own key.
+  // DeviceKeys::check_self_signature: the device signed its keys with the key they publish.
   const deviceKeyId = `ed25519:${own.deviceId}`;
   const deviceKeys = device.keys;
-  if (!isObject(deviceKeys) || deviceKeys[deviceKeyId] !== own.ed25519) {
+  const published = isObject(deviceKeys) ? deviceKeys[deviceKeyId] : undefined;
+  if (
+    !isEd25519Key(published) ||
+    !hasValidSignature(device, own.userId, deviceKeyId, published as string)
+  ) {
     return false;
   }
-  if (!hasValidSignature(device, own.userId, deviceKeyId, own.ed25519)) {
+  // The library stores no other keys for its own device: they must be the running bridge's.
+  if (published !== own.ed25519) {
     return false;
   }
   // SelfSigningPubkey::verify_device_keys.
