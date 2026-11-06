@@ -126,7 +126,12 @@ export function signJson(seed: Uint8Array, value: Readonly<Record<string, unknow
   );
 }
 
-function hasValidSignature(
+/**
+ * Whether `value` carries a valid Ed25519 signature by `publicKey` under `userId` and `keyId`,
+ * over its canonical JSON without `signatures` and `unsigned`. A value canonical JSON cannot
+ * hold, a missing or malformed signature or key: not signed.
+ */
+export function hasValidSignature(
   value: Readonly<Record<string, unknown>>,
   userId: string,
   keyId: string,
