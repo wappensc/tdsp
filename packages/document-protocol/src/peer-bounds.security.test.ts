@@ -1,6 +1,8 @@
 import { InMemoryMessengerPort } from "@tdsp/messenger-mock";
 import {
+  applyUpdate,
   createDocument,
+  encodeStateVector,
   encodeUpdate,
   getFragment,
   getPlainText,
@@ -11,7 +13,13 @@ import {
 } from "@tdsp/reconciliation";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ControlState, type Register } from "./control-state";
-import { decodeFrame, encodeControlFrame, encodeEditFrame, FrameDecodeError } from "./framing";
+import {
+  decodeFrame,
+  encodeControlFrame,
+  encodeEditFrame,
+  encodeHeartbeatFrame,
+  FrameDecodeError,
+} from "./framing";
 import { DocumentEngine } from "./index";
 
 /**
@@ -19,7 +27,8 @@ import { DocumentEngine } from "./index";
  * state's own bounds (control.security.test.ts): updates whose predecessors never come (LOS-23),
  * the creator's pace (SND-15), `control` frames beyond what one frame may carry (§4.3, §4.4), and
  * an update nested beyond what the profile reads, which an engine never sends of its own and a
- * receiver refuses whole (SND-26, YJS-1).
+ * receiver refuses whole (SND-26, YJS-1), and a report whose update the profile does not read,
+ * which a receiver refuses whole as it refuses such an edit (SND-27, FRM-6).
  * Security tests: only the CI role may change this file (.github/CODEOWNERS).
  */
 
@@ -186,14 +195,16 @@ describe("a pace runs at most as the bound (SND-15)", () => {
   });
 });
 
+const LAYER = "com.example.comments/1";
+
+/** A value of `levels` nested objects, the outermost the first level (Appendix A). */
+function nested(levels: number): unknown {
+  let value: unknown = 1;
+  for (let level = 0; level < levels; level++) value = { a: value };
+  return value;
+}
+
 describe("an update nested beyond what the profile reads (SND-26, YJS-1, Appendix A, FRM-6)", () => {
-  const LAYER = "com.example.comments/1";
-  /** A value of `levels` nested objects, the outermost the first level (Appendix A). */
-  const nested = (levels: number): unknown => {
-    let value: unknown = 1;
-    for (let level = 0; level < levels; level++) value = { a: value };
-    return value;
-  };
   const editsOf = async (port: InMemoryMessengerPort, sender: string) =>
     (await port.receive(DOCUMENT_ID, "observer")).filter(
       (delivery) => delivery.sender === sender && decodeFrame(delivery.payload).kind === "edit",
@@ -232,4 +243,63 @@ describe("an update nested beyond what the profile reads (SND-26, YJS-1, Appendi
     expect(errors).toStrictEqual([expect.objectContaining({ reason: "invalid-field" })]);
     expect(errors[0]).toBeInstanceOf(FrameDecodeError);
   });
+});
+
+describe("a report's update is checked as an edit's: one the profile does not read rejects the report whole (SND-27, FRM-6, Appendix A)", () => {
+  /** Bytes as `hex` writes them, two digits a byte. */
+  const hex = (text: string): Uint8Array =>
+    new Uint8Array(text.split(" ").map((byte) => Number.parseInt(byte, 16)));
+
+  /** An update with a value nested 33 levels, as an engine that does not check its own changes would send it. */
+  const nestedUpdate = (): Uint8Array => {
+    const forged = createDocument();
+    transact(forged, () => forged.getMap(LAYER).set("deeper", nested(33)));
+    return encodeUpdate(forged);
+  };
+
+  it.each([
+    ["nested 33 levels", nestedUpdate],
+    ["bytes that are no update", () => hex("ff ff ff")],
+    // No structs; a delete set of client 1 with one range at the clock 2^53.
+    [
+      "a variable-length integer beyond 2^53 − 1",
+      () => hex("00 01 01 01 80 80 80 80 80 80 80 10 01"),
+    ],
+    // The same range of length 1 at the clock 2^53 − 1: it ends at 2^53.
+    ["an end clock beyond 2^53 − 1", () => hex("00 01 01 01 ff ff ff ff ff ff ff 0f 01")],
+  ])(
+    "%s: rejected whole as invalid-field, nothing of it applied, and its digests no evidence",
+    async (_name, update) => {
+      const port = new InMemoryMessengerPort();
+      const errors: unknown[] = [];
+      const { bob } = await pair(port, (error) => errors.push(error));
+      const before = encodeUpdate(bob.document);
+      // A state ahead of what Bob holds: judged, the report would show him a gap (LOS-4).
+      const ahead = createDocument();
+      applyUpdate(ahead, before);
+      insertPlainText(getFragment(ahead), 0, "z");
+      await port.send(
+        DOCUMENT_ID,
+        "carol",
+        encodeHeartbeatFrame({
+          documentId: DOCUMENT_ID,
+          controlClock: null,
+          controlDigest: null,
+          stateVector: encodeStateVector(ahead),
+          stateDigest: "96a296d224f285c6",
+          stream: "5eed5eed5eed5eed",
+          sequence: 1,
+          update: update(),
+        }),
+      );
+      await bob.sync();
+      // Long past the wait a gap needs before it is believed (LOS-6).
+      await vi.advanceTimersByTimeAsync(60_000);
+      await bob.sync();
+      expect(errors).toStrictEqual([expect.objectContaining({ reason: "invalid-field" })]);
+      expect(errors[0]).toBeInstanceOf(FrameDecodeError);
+      expect(encodeUpdate(bob.document)).toStrictEqual(before);
+      expect(bob.syncHealth.suspicions).toStrictEqual([]);
+    },
+  );
 });
