@@ -10,6 +10,8 @@ import {
 } from "@tdsp/reconciliation";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
+import { type Clock, compareClocks } from "./clock";
+import { ControlState, type Register } from "./control-state";
 import {
   CURRENT_FRAME_VERSION,
   decodeFrame,
@@ -32,8 +34,8 @@ import { profileFor } from "./profile";
 
 /**
  * The draft wire (VER-3): these tests hold the
- * encoder and the decoder to the frames in `wire/frames-draft-5.json`, the invitation writer to
- * `wire/invitations-draft-5.json`, and the profile `yjs-paragraphs/1` to the bytes of 1.x §4.5,
+ * encoder and the decoder to the frames in `wire/frames-draft-10.json`, the invitation writer to
+ * `wire/invitations-draft-10.json`, and the profile `yjs-paragraphs/1` to the bytes of 1.x §4.5,
  * which 2.0 keeps. Both files are frozen like 1.x's `frames-v1.json`: within the draft marker an
  * entry may be added, never changed or removed (VER-3).
  */
@@ -48,7 +50,7 @@ interface FrameEntry {
   readonly frame: string;
 }
 
-const FRAMES_FILE = "wire/frames-draft-5.json";
+const FRAMES_FILE = "wire/frames-draft-10.json";
 const FRAMES = JSON.parse(read(FRAMES_FILE)) as {
   $comment: string;
   version: string;
@@ -68,27 +70,29 @@ function encode(entry: FrameEntry): string {
       return encodeEditFrame(
         documentId,
         bytes(input.update),
-        Number(input.due ?? 0),
-        input.extensions as Parameters<typeof encodeEditFrame>[3],
+        input.extensions as Parameters<typeof encodeEditFrame>[2],
       );
     case "control":
       return encodeControlFrame(input as Parameters<typeof encodeControlFrame>[0]);
     case "heartbeat":
       return encodeHeartbeatFrame({
         documentId,
-        control: (input.control ?? null) as Record<string, number> | null,
+        controlClock: (input.controlClock ?? null) as Clock | null,
         controlDigest: (input.controlDigest ?? null) as string | null,
         stateVector: bytes(input.stateVector),
         stateDigest: String(input.stateDigest),
         stream: String(input.stream),
         sequence: Number(input.sequence),
+        // A report may carry its sender's last edit again (§4.3); without one the field is absent.
+        ...(input.update === undefined ? {} : { update: bytes(input.update) }),
       });
     case "resync-request":
       return encodeResyncRequestFrame({
         documentId,
         requestId: String(input.requestId),
-        control: (input.control ?? null) as Record<string, number> | null,
+        controlClock: (input.controlClock ?? null) as Clock | null,
         controlDigest: (input.controlDigest ?? null) as string | null,
+        all: input.all === true,
         force: input.force === true,
         stateVector: bytes(input.stateVector),
         stateDigest: String(input.stateDigest),
@@ -121,12 +125,19 @@ function encode(entry: FrameEntry): string {
 function asInput(frame: Frame): Record<string, unknown> {
   switch (frame.kind) {
     case "edit":
-      return { documentId: frame.documentId, update: base64(frame.update), due: frame.due };
+      return { documentId: frame.documentId, update: base64(frame.update) };
     case "control": {
       const { kind: _kind, ...rest } = frame;
       return rest;
     }
-    case "heartbeat":
+    case "heartbeat": {
+      const { kind: _kind, stateVector, update, ...rest } = frame;
+      return {
+        ...rest,
+        stateVector: base64(stateVector),
+        ...(update === undefined ? {} : { update: base64(update) }),
+      };
+    }
     case "resync-request": {
       const { kind: _kind, stateVector, ...rest } = frame;
       return { ...rest, stateVector: base64(stateVector) };
@@ -152,7 +163,7 @@ describe("frames at the draft marker", () => {
   });
 
   it("hold at least the entries frozen so far: an entry may be added, never removed", () => {
-    expect(FRAMES.entries.length).toBeGreaterThanOrEqual(22);
+    expect(FRAMES.entries.length).toBeGreaterThanOrEqual(24);
   });
 
   it("cover every kind", () => {
@@ -179,8 +190,35 @@ describe("frames at the draft marker", () => {
   );
 });
 
+describe("the control frames at the draft marker", () => {
+  const controls = FRAMES.entries.filter((entry) => entry.kind === "control");
+  const registersOf = (entry: FrameEntry) => entry.input.targets as Record<string, Register>;
+
+  it("state a control clock no lower than any register they carry (CTL-20, CTL-45)", () => {
+    for (const entry of controls) {
+      const clock = entry.input.controlClock as Clock;
+      for (const register of Object.values(registersOf(entry))) {
+        expect(compareClocks(clock, register.clock), entry.name).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
+  it("form one history: the creator's heartbeat states the clock and digest of what they merge to, the close aside (LOS-24)", () => {
+    const merged = new ControlState();
+    for (const entry of controls) merged.take({ closed: false, targets: registersOf(entry) });
+    const heartbeat = FRAMES.entries.find(
+      (entry) => entry.kind === "heartbeat" && entry.input.controlClock !== null,
+    ) as FrameEntry;
+    expect(heartbeat.input.controlClock).toEqual(merged.clock);
+    expect(heartbeat.input.controlDigest).toBe(merged.digest);
+    const close = controls.find((entry) => entry.input.closed === true) as FrameEntry;
+    merged.close();
+    expect(close.input.controlDigest).toBe(merged.digest);
+  });
+});
+
 describe("invitation links at the draft marker", () => {
-  const LINKS_FILE = "wire/invitations-draft-5.json";
+  const LINKS_FILE = "wire/invitations-draft-10.json";
   const LINKS = JSON.parse(read(LINKS_FILE)) as {
     $comment: string;
     version: string;

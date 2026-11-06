@@ -10,8 +10,8 @@ messenger, and every participant merges what arrives locally.
 
 This repository holds the specification ([SPECIFICATION.md](SPECIFICATION.md), normative)
 and a reference implementation of every conformance class; [CONFORMANCE.md](CONFORMANCE.md)
-says what that implementation has verified, and against what. TDSP adds no security layer
-of its own: a document is as confidential as the messenger channel it travels in. Never
+says what it has verified, and against what. TDSP assumes cooperating participants and adds
+no security layer of its own: a document is as confidential as its messenger channel. Never
 state a security property that the specification, a test and CONFORMANCE.md do not back.
 
 ## Start every task here
@@ -115,13 +115,13 @@ Keep metadata accurate when the document changes.
 - One message carries two wrappers (SPECIFICATION.md §2.2): the envelope, which only a
   bridge reads to route by `documentId`, and inside it the frame, which only the engine
   reads. Adapters and bridges pass a frame on unparsed (ARC-3).
-- `DocumentEngine` (`packages/document-protocol/src/index.ts`) holds control state (§7)
-  and bootstrap and resync (§8), and composes one module per other part of the
-  specification: `control-state.ts` (§7, operations and their merge), `framing.ts` and
-  `strict-json.ts` (§4), `profile.ts` (§5; the profile itself, `split.ts` for §9.4
-  included, is `packages/reconciliation`), `resync-gate.ts` (RSY-3), `send-scheduler.ts`
-  and `sync-policy.ts` (§9.1–9.3), `digest.ts` (LOS-12), `loss-detector.ts` (§10),
-  `invitation.ts` (§11.3).
+- `DocumentEngine` (`packages/document-protocol/src/index.ts`) holds control state (§7) and
+  bootstrap and resync (§8), and composes one module per other part: `control-state.ts`,
+  `registers.ts` and `clock.ts` (§7), `framing.ts` and `strict-json.ts` (§4), `profile.ts`
+  (§5; the profile itself, `split.ts` and `update-bounds.ts` included, is
+  `packages/reconciliation`), `resync-gate.ts`, `answer-turn.ts` and `own-requests.ts`
+  (§8), `send-scheduler.ts` and `sync-policy.ts` (§9), `steady-clock.ts` (SND-25),
+  `digest.ts` (LOS-12), `loss-detector.ts` (§10), `invitation.ts` (§11.3).
 - The three bridges share one layout: `index.ts` (environment, bind to 127.0.0.1),
   `server.ts` (the local bridge interface, §12.6), `bind-store.ts` (`documentId` ↔
   channel, §12.2; both in `bindings/`), `sync-state.ts` (receiving), `send-failure.ts` (§3.4) and

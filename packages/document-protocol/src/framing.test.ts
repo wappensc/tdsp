@@ -57,14 +57,14 @@ describe("the frame (SPECIFICATION.md §4)", () => {
   it("is JSON text with the draft marker, the kind and the documentId first", () => {
     const frame = encodeEditFrame(DOC, new Uint8Array([1, 2, 3]));
     expect(frame).toBe(
-      '{"tdsp":"de.wappensc.together.tdsp.probe.draft-5","kind":"edit","documentId":"doc-1","update":"AQID","due":0}',
+      '{"tdsp":"de.wappensc.together.tdsp.probe.draft-10","kind":"edit","documentId":"doc-1","update":"AQID"}',
     );
-    expect(CURRENT_FRAME_VERSION).toBe("de.wappensc.together.tdsp.probe.draft-5");
+    expect(CURRENT_FRAME_VERSION).toBe("de.wappensc.together.tdsp.probe.draft-10");
   });
 
   it("round-trips an edit, with a real Yjs update that still applies", () => {
     const frame = decodeFrame(encodeEditFrame(DOC, helloUpdate));
-    expect(frame).toEqual({ kind: "edit", documentId: DOC, update: helloUpdate, due: 0 });
+    expect(frame).toEqual({ kind: "edit", documentId: DOC, update: helloUpdate });
     const doc = new Y.Doc();
     Y.applyUpdate(doc, frame.kind === "edit" ? frame.update : new Uint8Array());
     expect(doc.getXmlFragment("content").toString()).toContain("Hi");
@@ -88,7 +88,7 @@ describe("the frame (SPECIFICATION.md §4)", () => {
       text: "My app cannot open this document.",
     });
     expect(full).toBe(
-      '{"tdsp":"de.wappensc.together.tdsp.probe.draft-5","kind":"decline","documentId":"doc-1","reason":"unsupported-profile","profiles":["com.example.markdown/1"],"text":"My app cannot open this document."}',
+      '{"tdsp":"de.wappensc.together.tdsp.probe.draft-10","kind":"decline","documentId":"doc-1","reason":"unsupported-profile","profiles":["com.example.markdown/1"],"text":"My app cannot open this document."}',
     );
     expect(decodeFrame(full)).toEqual({
       kind: "decline",
@@ -328,40 +328,53 @@ describe("extensions a receiver implements (FRM-10, FRM-16, FRM-17)", () => {
     ).toBe("unsupported-extension");
   });
 
-  it("does not expose one inside a snapshot, its targets or an overlay", () => {
+  it("does not expose one inside a snapshot, its registers or an overlay", () => {
+    const register = { value: "read", clock: [1, 0], device: "A".repeat(22), [MOOD]: "calm" };
     const response = encodeResyncResponseFrame({
       documentId: DOC,
       respondsTo: "0123456789abcdef",
       update: new Uint8Array([0, 0]),
-      control: { profile: "yjs-paragraphs/1", vector: {}, targets: {}, [MOOD]: "calm" },
+      control: {
+        profile: "yjs-paragraphs/1",
+        closed: false,
+        targets: { "member:bob": register },
+        [MOOD]: "calm",
+      },
       attribution: { ranges: [], lastEditBySender: {}, [MOOD]: "busy" },
     });
     const frame = decodeFrame(response, implemented);
     expect(frame.kind).toBe("resync-response");
     expect(frame.extensions).toBeUndefined();
+    // Nor is it kept in the register (FRM-17): only `value`, `clock` and `device` are read.
+    expect(
+      frame.kind === "resync-response" ? frame.control?.targets["member:bob"] : undefined,
+    ).toEqual({
+      value: "read",
+      clock: [1, 0],
+      device: "A".repeat(22),
+    });
   });
 
   it("writes them after the defined fields, and crit only for extensions the frame carries", () => {
-    const text = encodeEditFrame(DOC, update, 0, { fields: { [MOOD]: "calm" }, crit: [MOOD] });
+    const text = encodeEditFrame(DOC, update, { fields: { [MOOD]: "calm" }, crit: [MOOD] });
     expect(Object.keys(JSON.parse(text))).toEqual([
       "tdsp",
       "kind",
       "documentId",
       "update",
-      "due",
       MOOD,
       "crit",
     ]);
     expect(decodeFrame(text, implemented).extensions).toEqual({ [MOOD]: "calm" });
     expect(
       Object.keys(
-        JSON.parse(encodeEditFrame(DOC, update, 0, { fields: { [MOOD]: "calm" }, crit: [] })),
+        JSON.parse(encodeEditFrame(DOC, update, { fields: { [MOOD]: "calm" }, crit: [] })),
       ),
     ).not.toContain("crit");
-    expect(() => encodeEditFrame(DOC, update, 0, { fields: { mood: "calm" }, crit: [] })).toThrow(
+    expect(() => encodeEditFrame(DOC, update, { fields: { mood: "calm" }, crit: [] })).toThrow(
       /dot/,
     );
-    expect(() => encodeEditFrame(DOC, update, 0, { fields: {}, crit: [MOOD] })).toThrow(/crit/);
+    expect(() => encodeEditFrame(DOC, update, { fields: {}, crit: [MOOD] })).toThrow(/crit/);
   });
 });
 
@@ -380,24 +393,26 @@ describe("no fragments (SND-17)", () => {
   });
 });
 
-describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", () => {
+describe("registers, snapshots, heartbeats and requests (§4.3, §7)", () => {
   const TAG = "A".repeat(22);
   const OTHER = "B".repeat(22);
   const empty = Y.encodeStateVector(new Y.Doc());
-  const grant = encodeControlFrame({
-    documentId: DOC,
-    device: TAG,
-    counter: 2,
-    target: "member:bob",
-    value: "write",
-    seen: { [OTHER]: 1 },
-  });
+  const T = 1_793_008_800_000;
+  const bob = { value: "write" as const, clock: [T, 0] as const, device: TAG };
   const STATE = "00112233aabbccdd";
   const CONTROL = "ffeeddcc44332211";
   const STREAM = "5eed5eed5eed5eed";
+  const grant = encodeControlFrame({
+    documentId: DOC,
+    device: TAG,
+    targets: { "member:bob": bob },
+    closed: false,
+    controlClock: [T, 0],
+    controlDigest: CONTROL,
+  });
   const heartbeat = encodeHeartbeatFrame({
     documentId: DOC,
-    control: { [TAG]: 2 },
+    controlClock: [T, 0],
     controlDigest: CONTROL,
     stateVector: empty,
     stateDigest: STATE,
@@ -407,8 +422,9 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
   const request = encodeResyncRequestFrame({
     documentId: DOC,
     requestId: "0123456789abcdef",
-    control: null,
+    controlClock: null,
     controlDigest: null,
+    all: false,
     force: false,
     stateDigest: STATE,
     stateVector: empty,
@@ -417,14 +433,10 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
   });
   const snapshot = {
     profile: "yjs-paragraphs/1",
-    vector: { [TAG]: 2 },
+    closed: false,
     targets: {
-      close: { seen: {}, heads: [] },
-      "member:bob": {
-        seen: { [TAG]: 1 },
-        heads: [{ device: TAG, counter: 2, value: "write", seen: {} }],
-      },
-      pace: { seen: { [TAG]: 0 }, heads: [{ device: TAG, counter: 1, value: 5000, seen: {} }] },
+      "member:bob": { value: "write", clock: [T, 0], device: TAG },
+      pace: { value: 5000, clock: [T, 1], device: OTHER },
     },
   };
   const response = encodeResyncResponseFrame({
@@ -434,55 +446,128 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
     control: snapshot,
     attribution: { ranges: [{ start: 0, end: 2, authorId: "alice" }], lastEditBySender: {} },
   });
+  const withSnapshot = (control: unknown) => tampered(response, { control });
+  /** `grant` with its one register changed. */
+  const withRegister = (register: unknown) =>
+    tampered(grant, { targets: { "member:bob": register } });
 
-  it("round-trips an operation on every kind of target (CTL-20)", () => {
+  it("round-trips a register on every kind of target (CTL-20)", () => {
     expect(grant).toBe(
-      `{"tdsp":"${CURRENT_FRAME_VERSION}","kind":"control","documentId":"doc-1","device":"${TAG}","counter":2,"target":"member:bob","value":"write","seen":{"${OTHER}":1},"due":0}`,
+      `{"tdsp":"${CURRENT_FRAME_VERSION}","kind":"control","documentId":"doc-1","device":"${TAG}","targets":{"member:bob":{"value":"write","clock":[${T},0],"device":"${TAG}"}},"closed":false,"controlClock":[${T},0],"controlDigest":"${CONTROL}"}`,
     );
     for (const [target, value] of [
       ["member:bob", "read"],
       ["member:bob", null],
-      ["close", true],
+      ["layer:com.example.comments/1:member:bob", "write"],
+      ["layer:com.example.comments/1:member:bob", null],
       ["pace", 30000],
+      ["pace", 0],
     ] as const) {
+      const register = { value, clock: [T, 3] as const, device: OTHER };
       const frame = encodeControlFrame({
         documentId: DOC,
         device: TAG,
-        counter: 1,
-        target,
-        value,
-        seen: {},
+        targets: { [target]: register },
+        closed: false,
+        controlClock: [T, 3],
+        controlDigest: CONTROL,
       });
       expect(decodeFrame(frame)).toEqual({
         kind: "control",
         documentId: DOC,
         device: TAG,
-        counter: 1,
-        target,
-        value,
-        seen: {},
-        due: 0,
+        targets: { [target]: register },
+        closed: false,
+        controlClock: [T, 3],
+        controlDigest: CONTROL,
       });
     }
   });
 
-  it("writes a vector in one spelling: its devices sorted", () => {
+  it("writes a frame's registers in one spelling: targets in code unit order, each value, clock, device", () => {
     const frame = encodeControlFrame({
       documentId: DOC,
       device: TAG,
-      counter: 1,
-      target: "close",
-      value: true,
-      seen: { [OTHER]: 3, ["C".repeat(22)]: 1 },
+      targets: {
+        pace: { device: TAG, clock: [T, 2], value: 1000 } as never,
+        "member:carol": { clock: [T, 1], value: "read", device: TAG } as never,
+        "layer:com.example.comments/1:member:bob": { value: "write", clock: [T, 0], device: TAG },
+      },
+      closed: false,
+      controlClock: [T, 2],
+      controlDigest: CONTROL,
     });
-    expect(frame).toContain(`"seen":{"${OTHER}":3,"${"C".repeat(22)}":1}`);
+    expect(frame).toContain(
+      `"targets":{"layer:com.example.comments/1:member:bob":{"value":"write","clock":[${T},0],"device":"${TAG}"},"member:carol":{"value":"read","clock":[${T},1],"device":"${TAG}"},"pace":{"value":1000,"clock":[${T},2],"device":"${TAG}"}}`,
+    );
   });
 
-  it("round-trips a heartbeat with a control vector, and one without (SND-11)", () => {
+  it("carries the close as a flag: a frame without registers carries it, one with registers may (CTL-20, CTL-23)", () => {
+    const close = encodeControlFrame({
+      documentId: DOC,
+      device: TAG,
+      targets: {},
+      closed: true,
+      controlClock: [T, 0],
+      controlDigest: CONTROL,
+    });
+    expect(decodeFrame(close)).toEqual({
+      kind: "control",
+      documentId: DOC,
+      device: TAG,
+      targets: {},
+      closed: true,
+      controlClock: [T, 0],
+      controlDigest: CONTROL,
+    });
+    expect(decodeFrame(tampered(grant, { closed: true }))).toMatchObject({ closed: true });
+    // A frame with nothing decided is no frame.
+    expect(reasonOf(tampered(close, { closed: false }))).toBe("invalid-field");
+    expect(() =>
+      encodeControlFrame({
+        documentId: DOC,
+        device: TAG,
+        targets: {},
+        closed: false,
+        controlClock: null,
+        controlDigest: null,
+      }),
+    ).toThrow(/register, or the close/);
+  });
+
+  it("carries a control clock and its digest together, or neither — neither from a device not bootstrapped (RSY-14, LOS-24)", () => {
+    const notBootstrapped = encodeControlFrame({
+      documentId: DOC,
+      device: TAG,
+      targets: { "member:bob": bob },
+      closed: false,
+      controlClock: null,
+      controlDigest: null,
+    });
+    expect(decodeFrame(notBootstrapped)).toMatchObject({ controlClock: null, controlDigest: null });
+    expect(reasonOf(tampered(notBootstrapped, { controlDigest: CONTROL }))).toBe("invalid-field");
+    expect(reasonOf(tampered(grant, { controlDigest: null }))).toBe("invalid-field");
+    expect(reasonOf(tampered(grant, { controlClock: null }))).toBe("invalid-field");
+    expect(() =>
+      encodeControlFrame({
+        documentId: DOC,
+        device: TAG,
+        targets: { "member:bob": bob },
+        closed: false,
+        controlClock: [T, 0],
+        controlDigest: null,
+      }),
+    ).toThrow(/control digest/);
+  });
+
+  it("round-trips a heartbeat with a control clock, and one without (SND-11)", () => {
+    expect(heartbeat).toBe(
+      `{"tdsp":"${CURRENT_FRAME_VERSION}","kind":"heartbeat","documentId":"doc-1","controlClock":[${T},0],"controlDigest":"${CONTROL}","stateVector":"AA==","stateDigest":"${STATE}","stream":"${STREAM}","sequence":7}`,
+    );
     expect(decodeFrame(heartbeat)).toEqual({
       kind: "heartbeat",
       documentId: DOC,
-      control: { [TAG]: 2 },
+      controlClock: [T, 0],
       controlDigest: CONTROL,
       stateVector: empty,
       stateDigest: STATE,
@@ -491,30 +576,75 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
     });
     const plain = encodeHeartbeatFrame({
       documentId: DOC,
-      control: null,
+      controlClock: null,
       controlDigest: null,
       stateVector: empty,
       stateDigest: STATE,
     });
-    expect(decodeFrame(plain)).toMatchObject({ control: null, controlDigest: null });
-    // A control digest goes with a control vector, and a digest is 16 lowercase hex digits (LOS-12).
+    expect(decodeFrame(plain)).toMatchObject({ controlClock: null, controlDigest: null });
+    // A control digest goes with a control clock, and a digest is 16 lowercase hex digits (LOS-24).
     expect(reasonOf(tampered(plain, { controlDigest: CONTROL }))).toBe("invalid-field");
     expect(reasonOf(tampered(heartbeat, { controlDigest: null }))).toBe("invalid-field");
+    expect(reasonOf(tampered(heartbeat, { controlDigest: "FFEEDDCC44332211" }))).toBe(
+      "invalid-field",
+    );
     expect(reasonOf(tampered(heartbeat, { stateDigest: "00112233AABBCCDD" }))).toBe(
       "invalid-field",
     );
     expect(reasonOf(tampered(heartbeat, { stateDigest: undefined }))).toBe("missing-field");
   });
 
-  it("round-trips a request without a snapshot, and one with a vector that asks regardless (RSY-16)", () => {
+  it("round-trips a heartbeat that carries its sender's last update after its sequence, and one without; the update is never null or empty (§4.3)", () => {
+    const carrying = encodeHeartbeatFrame({
+      documentId: DOC,
+      controlClock: null,
+      controlDigest: null,
+      stateVector: empty,
+      stateDigest: STATE,
+      stream: STREAM,
+      sequence: 3,
+      update: helloUpdate,
+    });
+    expect(Object.keys(JSON.parse(carrying)).slice(-3)).toEqual(["stream", "sequence", "update"]);
+    expect(decodeFrame(carrying)).toEqual({
+      kind: "heartbeat",
+      documentId: DOC,
+      controlClock: null,
+      controlDigest: null,
+      stateVector: empty,
+      stateDigest: STATE,
+      stream: STREAM,
+      sequence: 3,
+      update: helloUpdate,
+    });
+    // Without one the field is absent, and the frame reads without it.
+    expect(Object.keys(JSON.parse(heartbeat))).not.toContain("update");
+    expect(Object.hasOwn(decodeFrame(heartbeat), "update")).toBe(false);
+    for (const update of [null, "", "AQ", 7]) {
+      expect(reasonOf(tampered(carrying, { update })), String(update)).toBe("invalid-field");
+    }
+    expect(() =>
+      encodeHeartbeatFrame({
+        documentId: DOC,
+        controlClock: null,
+        controlDigest: null,
+        stateVector: empty,
+        stateDigest: STATE,
+        update: new Uint8Array(),
+      }),
+    ).toThrow(/never empty/);
+  });
+
+  it("round-trips a request that states nothing, and one that states its clock, asks all and asks regardless (RSY-16)", () => {
     expect(request).toBe(
-      `{"tdsp":"${CURRENT_FRAME_VERSION}","kind":"resync-request","documentId":"doc-1","requestId":"0123456789abcdef","control":null,"controlDigest":null,"force":false,"stateVector":"AA==","stateDigest":"00112233aabbccdd","stream":"${STREAM}","sequence":8}`,
+      `{"tdsp":"${CURRENT_FRAME_VERSION}","kind":"resync-request","documentId":"doc-1","requestId":"0123456789abcdef","controlClock":null,"controlDigest":null,"all":false,"force":false,"stateVector":"AA==","stateDigest":"00112233aabbccdd","stream":"${STREAM}","sequence":8}`,
     );
     const forced = encodeResyncRequestFrame({
       documentId: DOC,
       requestId: "0123456789abcdef",
-      control: { [TAG]: 4 },
+      controlClock: [T, 4],
       controlDigest: CONTROL,
+      all: true,
       force: true,
       stateVector: empty,
       stateDigest: STATE,
@@ -525,23 +655,31 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
       kind: "resync-request",
       documentId: DOC,
       requestId: "0123456789abcdef",
-      control: { [TAG]: 4 },
+      controlClock: [T, 4],
       controlDigest: CONTROL,
+      all: true,
       force: true,
       stateVector: empty,
       stateDigest: STATE,
       stream: STREAM,
       sequence: 1,
     });
+    expect(reasonOf(tampered(request, { controlDigest: CONTROL }))).toBe("invalid-field");
+    expect(reasonOf(tampered(forced, { controlClock: null }))).toBe("invalid-field");
   });
 
-  it("round-trips a snapshot of operations with its attribution overlay (CTL-25)", () => {
+  it("round-trips a snapshot of registers with its attribution overlay (§7.5, CTL-25)", () => {
     expect(decodeFrame(response)).toMatchObject({
       kind: "resync-response",
       control: snapshot,
       stateVector: null,
       stateDigest: null,
     });
+    expect(response).toContain(
+      `"control":{"profile":"yjs-paragraphs/1","closed":false,"targets":{`,
+    );
+    const closedEmpty = { ...snapshot, closed: true, targets: {} };
+    expect(decodeFrame(withSnapshot(closedEmpty))).toMatchObject({ control: closedEmpty });
   });
 
   it("carries the responder's state vector and digest together in an answer's last piece, or neither (RSY-18)", () => {
@@ -627,11 +765,11 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
       expect(reasonOf(tampered(frame, { sequence: 0 }))).toBe("invalid-field");
       expect(reasonOf(tampered(frame, { sequence: 2 ** 32 }))).toBe("invalid-field");
     }
+    const unstated = { controlClock: null, controlDigest: null };
     expect(() =>
       encodeHeartbeatFrame({
         documentId: DOC,
-        control: null,
-        controlDigest: null,
+        ...unstated,
         stateVector: empty,
         stateDigest: STATE,
         stream: "x",
@@ -640,8 +778,7 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
     expect(() =>
       encodeHeartbeatFrame({
         documentId: DOC,
-        control: null,
-        controlDigest: null,
+        ...unstated,
         stateVector: empty,
         stateDigest: STATE,
         sequence: 0,
@@ -652,8 +789,7 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
       decodeFrame(
         encodeHeartbeatFrame({
           documentId: DOC,
-          control: null,
-          controlDigest: null,
+          ...unstated,
           stateVector: empty,
           stateDigest: STATE,
         }),
@@ -664,118 +800,230 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
     });
   });
 
-  it("refuses to write an operation that is not one", () => {
+  it("refuses to write a register that is not one, or a target that is none (CTL-20, CTL-45)", () => {
     const base = {
       documentId: DOC,
       device: TAG,
-      counter: 1,
-      target: "member:bob" as const,
-      value: "read" as const,
-      seen: {},
+      closed: false,
+      controlClock: [T, 0] as const,
+      controlDigest: CONTROL,
     };
-    expect(() => encodeControlFrame({ ...base, device: "short" })).toThrow(/device tag/);
-    expect(() => encodeControlFrame({ ...base, counter: 0 })).toThrow(/counter/);
-    expect(() => encodeControlFrame({ ...base, counter: 2 ** 32 })).toThrow(/counter/);
-    expect(() => encodeControlFrame({ ...base, target: "close", value: "read" })).toThrow(
-      /cannot set/,
-    );
-    // A right on a layer (LAY-5): written and read like a member's; a malformed one is no target.
-    const layer = encodeControlFrame({
-      ...base,
-      target: "layer:com.example.comments/1:member:bob",
-      value: "write",
-    });
-    expect(decodeFrame(layer)).toMatchObject({
-      target: "layer:com.example.comments/1:member:bob",
-      value: "write",
-    });
-    expect(reasonOf(tampered(layer, { target: "layer:Comments:member:bob" }))).toBe(
-      "invalid-field",
-    );
-    expect(reasonOf(tampered(layer, { target: "layer:com.example.comments/1:member:" }))).toBe(
-      "invalid-field",
-    );
-    expect(reasonOf(tampered(layer, { value: true }))).toBe("invalid-field");
-    expect(() => encodeControlFrame({ ...base, target: "pace", value: -1 })).toThrow(/cannot set/);
-    expect(() => encodeControlFrame({ ...base, target: `member:${"x".repeat(256)}` })).toThrow(
-      /member id/,
-    );
+    const one = (target: string, register: unknown) =>
+      encodeControlFrame({ ...base, targets: { [target]: register } as never });
     expect(() =>
-      encodeControlFrame({
-        ...base,
-        seen: Object.fromEntries(
-          Array.from({ length: 65 }, (_, i) => [String(i).padStart(22, "x"), 1]),
-        ),
-      }),
-    ).toThrow(/more than 64/);
+      encodeControlFrame({ ...base, device: "short", targets: { "member:bob": bob } }),
+    ).toThrow(/device tag/);
+    // The close is a flag, no target (§7.1).
+    expect(() => one("close", { value: true, clock: [T, 0], device: TAG })).toThrow(
+      /control target/,
+    );
+    expect(() => one("policy", bob)).toThrow(/control target/);
+    expect(() => one("member:bob", { ...bob, value: true })).toThrow(/register/);
+    expect(() => one("pace", { ...bob, value: -1 })).toThrow(/register/);
+    expect(() => one("pace", { ...bob, value: "write" })).toThrow(/register/);
+    // The reason for the close: any string of 1 to 128 UTF-8 bytes, what it names is its application's
+    // (CTL-23, VER-5).
+    for (const value of [
+      "finished",
+      "com.example.moved/1",
+      "expired",
+      "Fertig!",
+      "é".repeat(64),
+      "x".repeat(128),
+    ]) {
+      expect(() => one("close-reason", { ...bob, value }), value).not.toThrow();
+    }
+    for (const value of ["", 3, null, "x".repeat(129), "é".repeat(65)]) {
+      expect(() => one("close-reason", { ...bob, value }), String(value)).toThrow(/register/);
+    }
+    expect(() => one("member:bob", { ...bob, device: "short" })).toThrow(/register/);
+    for (const clock of [[T], [T, 0, 0], [-1, 0], [2 ** 48, 0], [0, 65_536], [1.5, 0]]) {
+      expect(() => one("member:bob", { ...bob, clock }), JSON.stringify(clock)).toThrow(/register/);
+    }
+    expect(() =>
+      encodeControlFrame({ ...base, targets: { "member:bob": bob }, controlClock: [T, 65_536] }),
+    ).toThrow(/control clock/);
+    expect(() => one(`member:${"x".repeat(256)}`, bob)).toThrow(/member id/);
+    expect(() => one("layer:Comments:member:bob", bob)).toThrow(/control target/);
+    // At most 5 002 targets: 5 000 members and rights on layers, the pace and the reason for the close
+    // (CTL-30).
+    const many = (count: number) =>
+      Object.fromEntries(Array.from({ length: count }, (_, i) => [`member:m${i}`, bob]));
+    expect(() => encodeControlFrame({ ...base, targets: many(5_002) })).not.toThrow();
+    expect(() => encodeControlFrame({ ...base, targets: many(5_003) })).toThrow(/5002 targets/);
     expect(() => encodeEditFrame(DOC, new Uint8Array())).toThrow(/update/);
     expect(() => encodeEditFrame("", new Uint8Array([1]))).toThrow(/documentId/);
   });
 
-  it("missing-field, for each required field of the kinds V1 changed", () => {
-    for (const field of ["device", "counter", "target", "value", "seen"]) {
+  it("reads a right on a layer like a member's, and a malformed one as no target (LAY-5)", () => {
+    const target = "layer:com.example.comments/1:member:bob";
+    const layer = encodeControlFrame({
+      documentId: DOC,
+      device: TAG,
+      targets: { [target]: { ...bob, value: "read" } },
+      closed: false,
+      controlClock: [T, 0],
+      controlDigest: CONTROL,
+    });
+    expect(decodeFrame(layer)).toMatchObject({ targets: { [target]: { value: "read" } } });
+    const renamed = (name: string) => tampered(layer, { targets: { [name]: bob } });
+    expect(reasonOf(renamed("layer:Comments:member:bob"))).toBe("invalid-field");
+    expect(reasonOf(renamed("layer:com.example.comments/1:member:"))).toBe("invalid-field");
+    expect(reasonOf(renamed(`member:${"x".repeat(256)}`))).toBe("invalid-field");
+    expect(reasonOf(renamed("member:"))).toBe("invalid-field");
+  });
+
+  it("missing-field, for each required field of the kinds this draft defines anew", () => {
+    for (const field of ["device", "targets", "closed", "controlClock", "controlDigest"]) {
       expect(reasonOf(tampered(grant, { [field]: undefined })), field).toBe("missing-field");
     }
-    for (const field of ["control", "stateVector"]) {
+    for (const field of ["controlClock", "controlDigest", "stateVector"]) {
       expect(reasonOf(tampered(heartbeat, { [field]: undefined })), field).toBe("missing-field");
     }
-    for (const field of ["requestId", "control", "force", "stateVector"]) {
+    for (const field of [
+      "requestId",
+      "controlClock",
+      "controlDigest",
+      "all",
+      "force",
+      "stateVector",
+    ]) {
       expect(reasonOf(tampered(request, { [field]: undefined })), field).toBe("missing-field");
+    }
+    for (const field of ["profile", "closed", "targets"]) {
+      expect(reasonOf(withSnapshot({ ...snapshot, [field]: undefined })), field).toBe(
+        "missing-field",
+      );
+    }
+    for (const field of ["value", "clock", "device"]) {
+      expect(reasonOf(withRegister({ ...bob, [field]: undefined })), field).toBe("missing-field");
     }
   });
 
-  it("invalid-field: a 1.x field, a wrong type, a value that does not fit its target", () => {
-    expect(reasonOf(tampered(grant, { sequence: 1 }))).toBe("invalid-field");
+  it("invalid-field: a field of an earlier draft or of 1.x, a wrong type, a value that does not fit its target", () => {
+    for (const [field, value] of [
+      ["counter", 1],
+      ["target", "member:bob"],
+      ["value", "write"],
+      ["seen", {}],
+      ["sequence", 1],
+    ] as const) {
+      expect(reasonOf(tampered(grant, { [field]: value })), field).toBe("invalid-field");
+    }
+    expect(reasonOf(tampered(heartbeat, { control: { [TAG]: 2 } }))).toBe("invalid-field");
     expect(reasonOf(tampered(heartbeat, { controlSequence: 0 }))).toBe("invalid-field");
+    expect(reasonOf(tampered(request, { control: null }))).toBe("invalid-field");
     expect(reasonOf(tampered(request, { bootstrap: true }))).toBe("invalid-field");
-    expect(reasonOf(tampered(grant, { counter: 0 }))).toBe("invalid-field");
-    expect(reasonOf(tampered(grant, { counter: 1.5 }))).toBe("invalid-field");
     expect(reasonOf(tampered(grant, { device: "not a tag" }))).toBe("invalid-field");
-    expect(reasonOf(tampered(grant, { target: "policy" }))).toBe("invalid-field");
-    expect(reasonOf(tampered(grant, { value: true }))).toBe("invalid-field");
-    expect(reasonOf(tampered(grant, { target: "pace", value: "write" }))).toBe("invalid-field");
-    expect(reasonOf(tampered(grant, { seen: [1] }))).toBe("invalid-field");
-    expect(reasonOf(tampered(grant, { seen: { bob: 1 } }))).toBe("invalid-field");
-    expect(reasonOf(tampered(heartbeat, { control: { [TAG]: -1 } }))).toBe("invalid-field");
+    expect(reasonOf(tampered(grant, { targets: [bob] }))).toBe("invalid-field");
+    expect(reasonOf(tampered(grant, { targets: { policy: bob } }))).toBe("invalid-field");
+    // The close is a flag, no target (§7.1).
+    expect(reasonOf(tampered(grant, { targets: { close: { ...bob, value: true } } }))).toBe(
+      "invalid-field",
+    );
+    expect(reasonOf(withRegister({ ...bob, value: true }))).toBe("invalid-field");
+    expect(reasonOf(tampered(grant, { targets: { pace: bob } }))).toBe("invalid-field");
+    expect(reasonOf(tampered(grant, { targets: { pace: { ...bob, value: 2 ** 32 } } }))).toBe(
+      "invalid-field",
+    );
+    expect(reasonOf(tampered(grant, { closed: "no" }))).toBe("invalid-field");
+    expect(reasonOf(tampered(request, { all: "yes" }))).toBe("invalid-field");
+    expect(reasonOf(tampered(request, { all: 1 }))).toBe("invalid-field");
     expect(reasonOf(tampered(request, { force: "yes" }))).toBe("invalid-field");
   });
 
+  it("invalid-field: a clock that is not an array of exactly two integers in their ranges (CTL-45)", () => {
+    const bad: unknown[] = [
+      [1],
+      [1, 2, 3],
+      [-1, 0],
+      [2 ** 48, 0],
+      [0, 65_536],
+      [0, -1],
+      [1.5, 0],
+      "1,0",
+      1,
+      {},
+      ["1", 0],
+      [],
+    ];
+    for (const clock of bad) {
+      const label = JSON.stringify(clock);
+      expect(reasonOf(withRegister({ ...bob, clock })), label).toBe("invalid-field");
+      expect(reasonOf(tampered(grant, { controlClock: clock })), label).toBe("invalid-field");
+      expect(reasonOf(tampered(heartbeat, { controlClock: clock })), label).toBe("invalid-field");
+      expect(
+        reasonOf(tampered(request, { controlClock: clock, controlDigest: CONTROL })),
+        label,
+      ).toBe("invalid-field");
+    }
+    // A register's clock is never null: only the frame's own control clock may be.
+    expect(reasonOf(withRegister({ ...bob, clock: null }))).toBe("invalid-field");
+    // The ends of the ranges are clocks.
+    const last = [2 ** 48 - 1, 65_535];
+    expect(reasonOf(withRegister({ ...bob, clock: last }))).toBe("decoded");
+    expect(reasonOf(withRegister({ ...bob, clock: [0, 0] }))).toBe("decoded");
+    expect(reasonOf(tampered(heartbeat, { controlClock: last }))).toBe("decoded");
+  });
+
+  it("invalid-field: a register that is not exactly value, clock and device; an extension in it is ignored (CTL-20, FRM-9)", () => {
+    expect(reasonOf(withRegister({ ...bob, note: 1 }))).toBe("invalid-field");
+    expect(reasonOf(withRegister({ ...bob, counter: 1 }))).toBe("invalid-field");
+    expect(reasonOf(withRegister({ ...bob, device: "x" }))).toBe("invalid-field");
+    expect(reasonOf(withRegister({ ...bob, device: 7 }))).toBe("invalid-field");
+    expect(reasonOf(withRegister("write"))).toBe("invalid-field");
+    expect(reasonOf(withRegister(null))).toBe("invalid-field");
+    expect(reasonOf(withRegister([bob]))).toBe("invalid-field");
+    const extended = decodeFrame(withRegister({ ...bob, "com.example.x/1": { any: 1 } }));
+    expect(extended.kind === "control" ? extended.targets : undefined).toEqual({
+      "member:bob": { value: "write", clock: [T, 0], device: TAG },
+    });
+  });
+
   it("invalid-field: a snapshot that breaks its layout anywhere rejects the whole response", () => {
-    const withSnapshot = (control: unknown) => tampered(response, { control });
-    expect(reasonOf(withSnapshot({ ...snapshot, vector: undefined }))).toBe("missing-field");
+    // A field this layout does not define, `vector`, `aboveHoles` and `sequence` among them (§7.5).
+    expect(reasonOf(withSnapshot({ ...snapshot, vector: {} }))).toBe("invalid-field");
+    expect(reasonOf(withSnapshot({ ...snapshot, aboveHoles: {} }))).toBe("invalid-field");
     expect(reasonOf(withSnapshot({ ...snapshot, sequence: 1 }))).toBe("invalid-field");
+    expect(reasonOf(withSnapshot({ ...snapshot, profile: "Yjs" }))).toBe("invalid-field");
+    expect(reasonOf(withSnapshot({ ...snapshot, closed: 0 }))).toBe("invalid-field");
+    // A snapshot holds `profile`, `closed` and `targets`, nothing else: any other field is invalid (§7.5, FRM-6).
+    expect(reasonOf(withSnapshot({ ...snapshot, confirmed: true }))).toBe("invalid-field");
+    expect(reasonOf(withSnapshot({ ...snapshot, targets: [] }))).toBe("invalid-field");
+    expect(reasonOf(withSnapshot({ ...snapshot, targets: { policy: bob } }))).toBe("invalid-field");
     expect(
-      reasonOf(withSnapshot({ ...snapshot, targets: { policy: { seen: {}, heads: [] } } })),
+      reasonOf(withSnapshot({ ...snapshot, targets: { close: { ...bob, value: true } } })),
     ).toBe("invalid-field");
     expect(
       reasonOf(
-        withSnapshot({
-          ...snapshot,
-          targets: {
-            close: { seen: {}, heads: [{ device: "x", counter: 1, value: true, seen: {} }] },
-          },
-        }),
+        withSnapshot({ ...snapshot, targets: { "member:bob": { ...bob, clock: [T, 65_536] } } }),
       ),
     ).toBe("invalid-field");
+    // A target of operations and heads, not a register, lacks a register's fields (CTL-20, §7.5).
+    expect(
+      reasonOf(withSnapshot({ ...snapshot, targets: { "member:bob": { seen: {}, heads: [] } } })),
+    ).toBe("missing-field");
+  });
+
+  it("holds at most 5 002 targets in a frame or a snapshot (CTL-30, §7.5)", () => {
+    const many = (count: number) =>
+      Object.fromEntries(Array.from({ length: count }, (_, i) => [`member:m${i}`, bob]));
+    expect(reasonOf(tampered(grant, { targets: many(5_002) }))).toBe("decoded");
+    expect(reasonOf(tampered(grant, { targets: many(5_003) }))).toBe("invalid-field");
+    expect(reasonOf(withSnapshot({ ...snapshot, targets: many(5_002) }))).toBe("decoded");
+    expect(reasonOf(withSnapshot({ ...snapshot, targets: many(5_003) }))).toBe("invalid-field");
+  });
+
+  it("not-json: a target named twice, so that a frame or a snapshot holds one register per target (§1.6)", () => {
+    const register = JSON.stringify(bob);
     expect(
       reasonOf(
-        withSnapshot({
-          ...snapshot,
-          targets: {
-            close: { seen: {}, heads: [{ device: TAG, counter: 1, value: "write", seen: {} }] },
-          },
-        }),
+        grant.replace(
+          `"targets":{"member:bob":${register}}`,
+          `"targets":{"member:bob":${register},"member:bob":${JSON.stringify({ ...bob, value: "read" })}}`,
+        ),
       ),
-    ).toBe("invalid-field");
-    const tooMany = Array.from({ length: 65 }, (_, i) => ({
-      device: TAG,
-      counter: i + 1,
-      value: true,
-      seen: {},
-    }));
-    expect(
-      reasonOf(withSnapshot({ ...snapshot, targets: { close: { seen: {}, heads: tooMany } } })),
-    ).toBe("invalid-field");
+    ).toBe("not-json");
   });
 
   it("reads an overlay range without an author as null, and refuses an empty author id (§5.4, ATR-2)", () => {
@@ -793,29 +1041,6 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
     );
   });
 
-  it("invalid-field: a snapshot with two heads of one device on a target (§7.5, CTL-24)", () => {
-    const withHeads = (heads: unknown[]) =>
-      tampered(response, {
-        control: {
-          ...snapshot,
-          targets: { ...snapshot.targets, "member:bob": { seen: {}, heads } },
-        },
-      });
-    const head = (device: string, counter: number, value: string) => ({
-      device,
-      counter,
-      value,
-      seen: {},
-    });
-    expect(reasonOf(withHeads([head(TAG, 2, "write"), head(TAG, 3, "read")]))).toBe(
-      "invalid-field",
-    );
-    expect(reasonOf(withHeads([head(TAG, 2, "write"), head(TAG, 2, "read")]))).toBe(
-      "invalid-field",
-    );
-    expect(reasonOf(withHeads([head(TAG, 2, "write"), head(OTHER, 1, "read")]))).toBe("decoded");
-  });
-
   /** `frame` with `from` written as `to`, which must be there to replace. */
   const written = (frame: string, from: string, to: string): string => {
     expect(frame.includes(from), from).toBe(true);
@@ -823,33 +1048,41 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
   };
 
   it("invalid-field: an integer field written with a fraction or an exponent, or as -0 (§1.6, §4.3)", () => {
-    const edit = encodeEditFrame(DOC, helloUpdate, 30000);
-    for (const due of ["30000.0", "3e4", "3E4", "30000e0", "3e+4"]) {
-      expect(reasonOf(written(edit, '"due":30000', `"due":${due}`)), due).toBe("invalid-field");
+    for (const sequence of ["7.0", "7e0", "7E0", "0.7e1", "7e+0"]) {
+      expect(reasonOf(written(heartbeat, '"sequence":7', `"sequence":${sequence}`)), sequence).toBe(
+        "invalid-field",
+      );
     }
-    expect(reasonOf(written(encodeEditFrame(DOC, helloUpdate, 0), '"due":0', '"due":-0'))).toBe(
+    // Inside a clock, a register's and a frame's own (CTL-45).
+    const clock = `"clock":[${T},0]`;
+    for (const spelling of [
+      `[${T}.0,0]`,
+      "[1.7930088e12,0]",
+      `[${T},0.0]`,
+      `[${T},-0]`,
+      `[${T},0e0]`,
+    ]) {
+      expect(reasonOf(written(grant, clock, `"clock":${spelling}`)), spelling).toBe(
+        "invalid-field",
+      );
+    }
+    expect(reasonOf(written(grant, `"controlClock":[${T},0]`, `"controlClock":[${T},0E0]`))).toBe(
       "invalid-field",
     );
-    expect(reasonOf(written(grant, '"counter":2', '"counter":2.0'))).toBe("invalid-field");
-    expect(reasonOf(written(grant, `"seen":{"${OTHER}":1}`, `"seen":{"${OTHER}":1E0}`))).toBe(
-      "invalid-field",
-    );
-    expect(reasonOf(written(heartbeat, `"control":{"${TAG}":2}`, `"control":{"${TAG}":2.0}`))).toBe(
-      "invalid-field",
-    );
+    expect(
+      reasonOf(written(heartbeat, `"controlClock":[${T},0]`, `"controlClock":[1.7930088E12,0]`)),
+    ).toBe("invalid-field");
     const pace = encodeControlFrame({
       documentId: DOC,
       device: TAG,
-      counter: 3,
-      target: "pace",
-      value: 30000,
-      seen: {},
+      targets: { pace: { value: 30000, clock: [T, 1], device: TAG } },
+      closed: false,
+      controlClock: [T, 1],
+      controlDigest: CONTROL,
     });
     expect(reasonOf(written(pace, '"value":30000', '"value":3e4'))).toBe("invalid-field");
-    expect(reasonOf(written(response, '"counter":1,"value":5000', '"counter":1,"value":5e3'))).toBe(
-      "invalid-field",
-    );
-    expect(reasonOf(written(response, `"vector":{"${TAG}":2}`, `"vector":{"${TAG}":2.0}`))).toBe(
+    expect(reasonOf(written(response, '"value":5000', '"value":5e3'))).toBe("invalid-field");
+    expect(reasonOf(written(response, `"clock":[${T},1]`, `"clock":[${T},1.0]`))).toBe(
       "invalid-field",
     );
     expect(reasonOf(written(response, '"end":2', '"end":2.0'))).toBe("invalid-field");
@@ -857,7 +1090,7 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
     const dotted = tampered(response, {
       control: {
         ...snapshot,
-        targets: { "member:@bob:example.org": { seen: { [TAG]: 1 }, heads: [] } },
+        targets: { "member:@bob:example.org": { value: "read", clock: [T, 7], device: TAG } },
       },
       attribution: {
         ranges: [{ start: 0, end: 2, authorId: "bob@example.org" }],
@@ -868,10 +1101,10 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
     expect(reasonOf(written(dotted, '"bob@example.org":2', '"bob@example.org":2.0'))).toBe(
       "invalid-field",
     );
-    expect(reasonOf(written(dotted, `"seen":{"${TAG}":1}`, `"seen":{"${TAG}":1.0}`))).toBe(
+    expect(reasonOf(written(dotted, `"clock":[${T},7]`, `"clock":[${T},7.0]`))).toBe(
       "invalid-field",
     );
-    for (const frame of [edit, grant, heartbeat, pace, response]) {
+    for (const frame of [grant, heartbeat, pace, response]) {
       expect(reasonOf(frame)).toBe("decoded");
     }
   });
@@ -884,13 +1117,7 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
     expect(
       reasonOf(tampered(response, { control: { ...snapshot, "com.example.x/1": [2.5] } })),
     ).toBe("decoded");
-    const inTarget = {
-      ...snapshot.targets,
-      close: { seen: {}, heads: [], "com.example.x/1": 0.5 },
-    };
-    expect(reasonOf(tampered(response, { control: { ...snapshot, targets: inTarget } }))).toBe(
-      "decoded",
-    );
+    expect(reasonOf(withRegister({ ...bob, "com.example.x/1": 0.5 }))).toBe("decoded");
     const inRange = {
       ranges: [{ start: 0, end: 2, authorId: "alice", "com.example.x/1": 1e-3 }],
       lastEditBySender: {},
@@ -907,24 +1134,20 @@ describe("control operations, snapshots, heartbeats and requests (§4.3, §7)", 
   });
 });
 
-describe("due: when a sender will speak again (SND-14)", () => {
-  it("rides in every edit and control frame, 0 for no promise", () => {
-    const edit = encodeEditFrame(DOC, new Uint8Array([1]), 20_000);
-    expect(decodeFrame(edit)).toMatchObject({ kind: "edit", due: 20_000 });
-    expect(reasonOf(tampered(edit, { due: undefined }))).toBe("missing-field");
-    expect(reasonOf(tampered(edit, { due: -1 }))).toBe("invalid-field");
-    expect(reasonOf(tampered(edit, { due: 2 ** 32 }))).toBe("invalid-field");
-    expect(() => encodeEditFrame(DOC, new Uint8Array([1]), 1.5)).toThrow(/due/);
+describe("no frame says when its sender speaks again (§4.3)", () => {
+  it("an edit or control frame carrying due is refused: a field without a dot it does not define (FRM-5)", () => {
+    const edit = encodeEditFrame(DOC, new Uint8Array([1]));
+    expect(Object.keys(JSON.parse(edit))).not.toContain("due");
+    expect(reasonOf(tampered(edit, { due: 0 }))).toBe("invalid-field");
     const control = encodeControlFrame({
       documentId: DOC,
       device: "A".repeat(22),
-      counter: 1,
-      target: "close",
-      value: true,
-      seen: {},
-      due: 60_000,
+      targets: {},
+      closed: true,
+      controlClock: null,
+      controlDigest: null,
     });
-    expect(decodeFrame(control)).toMatchObject({ kind: "control", due: 60_000 });
-    expect(reasonOf(tampered(control, { due: undefined }))).toBe("missing-field");
+    expect(Object.keys(JSON.parse(control))).not.toContain("due");
+    expect(reasonOf(tampered(control, { due: 60_000 }))).toBe("invalid-field");
   });
 });

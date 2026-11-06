@@ -94,7 +94,10 @@ describe("splitting an update into pieces (PRF-1)", () => {
     expect(splitUpdate(update, 10_000)).toEqual([update]);
   });
 
-  it("random documents: every piece fits, pieces in any order with a duplicate give the same document", () => {
+  // 300 seeds take seconds, more on a loaded machine than the default 5 s allow: a timeout of its own.
+  it("random documents: every piece fits, pieces in any order with a duplicate give the same document", {
+    timeout: 30_000,
+  }, () => {
     const tally = { documents: 0, pieces: 0, heldAfterOnePass: 0 };
     for (let seed = 1; seed <= 300; seed++) {
       const g = generator(seed);

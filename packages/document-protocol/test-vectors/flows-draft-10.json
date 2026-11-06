@@ -1,0 +1,1706 @@
+{
+  "$comment": "TDSP 2.0 draft flow vectors (draft revision 10): behaviour, not wire — each flow is several devices on one channel, an initial state, a fixed start time, input steps in delivery order and what each device must then show and must have sent, in five case groups (1 answers to all, 2 decisions of two devices of the creator, 3 what bootstraps a device, 4 bounds, Unicode and bytes, 5 healing at the next occasion: the report, a gap that rests and wakes, one request for many, the close sent again). `format` says how to run them; its `version` is that of the format, which a runner checks before it runs any. Checked in src/flow-vectors.test.ts.",
+  "format": {
+    "version": 3,
+    "run": "Each flow runs alone, from `start` (ms since 1970-01-01 UTC) on one clock that only the steps move, on one channel of the document `documentId`, profile `profile`, creator `creator`. Every device is one engine of the implementation under test, of the member it names; the creator's devices are the devices of `creator`. A flow with `prelude` runs that prelude's steps first, with its devices and the flow's own; what the prelude's devices sent is not the flow's.",
+    "config": "Every engine runs with these settings, set as a test configuration: `pacing` is the transport's suggestion and the device's choice alike (latency 5 s: request expiry 10 s, 40 s for a request to all, an answer window of 30 s, a loss-evidence wait of 5 s, so a gap's first request 10 s after it arose and then the device's slot, each further one twice the expiry of a request that does not ask all after the one before (RSY-4; floor + 2 × latency, at least 10 s: 10 s, so 20 s), the wait doubling, and never while the one before is outstanding — LOS-6, Appendix B); `quietMs` the quiet time; `answerThrottleMs` the responder throttle; `transportKeepsMs` how long the transport keeps a message for a device that is away (RSY-21). Every other value is Appendix B's recommendation: among them a report 10 s after the last edit or control frame of a device's own (SND-11), three requests per gap (LOS-6), and 10 minutes for waking a gap again, for a start request and for sending the close again. No `maxIntervalMs`, which bounds no report.",
+    "devices": "`member`: its MemberId. `answerDelayMs`: its delay before its turn on a request to all (RSY-20), fixed instead of derived from the request and its stream. `firstTrySlotMs`: its slot for each gap's first request (LOS-6), for the request of a resting gap a frame woke (LOS-26) and for a gap's further request after one it let go for another's (RSY-22): how long after the gap's wait (from when it arose, or from the wake), or after that other request expired and the doubled wait passed, that request is due, fixed instead of derived from the gap and its stream; at least 0 and less than the answer window. Its control state is persisted before each change goes out (CTL-26); after each poll and as it stops, its application keeps the content, the cursor and the report its engine owes, if any (SND-28).",
+    "transport": "What a device sends is on the channel at once. A device running and online reads, at each poll, everything others sent since its engine started that is not lost for it, in the order sent; a new engine is shown nothing sent before it started, unless the flow has `cursor`: then the transport offers `receiveSince` and keeps everything, and a restarted device reads on from the cursor its application persisted. `maxBytes`: the transport's largest message, in UTF-8 bytes, never less than 4 194 304 (TRN-23); none otherwise. A device's own frames never come back to it.",
+    "steps": {
+      "create": "the device creates the document (its member is the creator); its initial state, which goes out at once, begins no phase of its sending (SND-11).",
+      "join": "the device starts and joins; `control` is the control state its application persisted (device tag and own clock — for a device of the creator —, bootstrapped, closed, targets), `content` the persisted content, a Yjs update (encoding v1) in Base64, read just before it starts (LIF-8).",
+      "wait": "the clock advances by that many ms, in polls of `pollMs`: at each poll every running, online device in the order declared reads what reached it and runs; a frame it sends reaches devices later in the order at the same poll.",
+      "edit": "the device's person edits the first paragraph: `delete` [offset, length], then `insert` [offset, text], offsets in UTF-16 code units of the projection. A text, here and in `expect`, is a string or `{\"repeat\": t, \"times\": n}`: the string t, n times over.",
+      "decide / close": "the device's person decides `target` to `value` (null: revoked, or inherit on a layer), or closes the document, for `reason` where given (CTL-23). `refused: true`: the engine refuses it (CTL-37, CTL-45); otherwise it does not. When it goes out is the scheduler's.",
+      "offline / online": "the device is out of reach: not polled, its sends fail as `unavailable`; online again, its application tells its engine how long ago its last read that reached the messenger began (LIF-12), and it reads what the transport kept for it.",
+      "lose": "the next frame of `kind` from device `from` (with `lastPiece`: the next last piece of an answer) never reaches the devices `for`, everyone where none is named; each such step loses one more.",
+      "inject": "a frame from the member named, sent from no device of the flow: an answer of a member the flow runs no device of, or a broken application. `$request:<device>` stands for that device's latest request id, `$request:<device>#n` its n-th; `$targets` {pattern, from, to, register} for the targets pattern gives for n from `from` to `to`, `{n}` replaced by the decimal n.",
+      "report": "its application tells the engine that the device is about to sleep (LIF-12): the report it owes goes as soon as the floor permits (SND-11).",
+      "syncNow": "its person asks to synchronise now (LIF-12): what waits goes, then a request of its own, to all, which wakes every resting gap (RSY-3, LOS-26).",
+      "stop": "the device's person closes the document: its engine sends what waits, then the report it owes (SND-11) — where the last message of its own in that phase was a control frame of a device of the creator, that frame again first (SND-27) —, and stops; its application keeps what it persisted, the content it held, and the report still owed where it could not go (SND-28).",
+      "restart": "the device starts again from what its application persisted — control state, content (`content: false`: none), cursor, the report owed (SND-28) —, its last read that reached the messenger having begun at its last poll; `returning: true`: longer ago than `transportKeepsMs` (RSY-21).",
+      "clock": "the wall clock of every device jumps by that many ms; the time that steps wait for runs on as before.",
+      "expect": "per device, what its application can observe now, each field as named: text (the projection, a string or a repeat as in `edit`), bootstrapped, standing (none, bootstrapped), closed, closeReason (the reason for the close it presents, null for none; CTL-23), mayEdit, conflict (capacity conflict), rights (per member: write, read, revoked, unknown), controlClock, registers (per target: value, and clock and device where given; null where none is held), targetCount, evidence (the kinds of loss evidence it holds, sorted; [] for none), resting (the kinds of the gaps among them that rest, LOS-26, sorted; [] for none), transfers (answers still lacking a piece), reportOwed (whether a report is owed, SND-28), persisted.bootstrapped (its persisted control state says bootstrapped).",
+      "sent": "per device, the frames it sent since its last `sent` check: a list matches all of them in order, reports left out; an object by kind matches only the frames of each kind it names, `[]` none of that kind, reports as `heartbeat`; a control frame sent again is one more of kind `control`. A matcher names fields of the frame's JSON by dotted path, each with its exact value; `control.targets` and `targets` are compared as the sorted names of their targets; a field the frame lacks reads \"(absent)\", and \"(present)\" matches any value of a field it has. A matcher with `$pieces` (since format 3) stands for one update sent in pieces (SND-17, RSY-18): it matches as many frames in a row as that update took, at least `$pieces.atLeast`, each with the matcher's other fields and no larger than `maxBytes`; their `piece` runs from 1, `pieces` is null on all but the last, which states their number, and so is `control` on an answer's (SND-18); `$pieces.text`, where given, is the projection of their updates applied in order to an empty document. How many pieces an update takes, and where it is cut, is the implementation's (Appendix A): a vector fixes the content and the bound, not the count."
+    },
+    "names": "Kinds of evidence and standings are the reference implementation's names for what the requirements cited make observable; another implementation maps its own."
+  },
+  "version": "de.wappensc.together.tdsp.probe.draft-10",
+  "profile": "yjs-paragraphs/1",
+  "documentId": "doc-flows",
+  "creator": "alice",
+  "start": 1793008800000,
+  "config": {
+    "pollMs": 1000,
+    "pacing": {
+      "minIntervalMs": 0,
+      "maxIntervalMs": null,
+      "minChars": 0,
+      "maxChars": null,
+      "expectedLatencyMs": 5000
+    },
+    "quietMs": 0,
+    "answerThrottleMs": 0,
+    "transportKeepsMs": 3600000
+  },
+  "preludes": {
+    "group": {
+      "devices": {
+        "alice": { "member": "alice", "firstTrySlotMs": 2000 },
+        "carol": { "member": "carol", "answerDelayMs": 5000, "firstTrySlotMs": 9000 },
+        "dave": { "member": "dave", "answerDelayMs": 15000, "firstTrySlotMs": 6000 },
+        "bob": { "member": "bob", "answerDelayMs": 25000, "firstTrySlotMs": 21000 }
+      },
+      "steps": [
+        { "create": "alice" },
+        { "decide": "alice", "target": "member:bob", "value": "write" },
+        { "decide": "alice", "target": "member:carol", "value": "write" },
+        { "decide": "alice", "target": "member:dave", "value": "write" },
+        { "edit": "alice", "insert": [0, "Plan"] },
+        { "join": "carol" },
+        { "join": "dave" },
+        { "wait": 2000 },
+        {
+          "expect": {
+            "carol": { "text": "Plan", "standing": "bootstrapped" },
+            "dave": { "text": "Plan", "standing": "bootstrapped" }
+          }
+        }
+      ]
+    },
+    "two": {
+      "devices": {
+        "alice": { "member": "alice" },
+        "alice2": { "member": "alice" },
+        "carol": { "member": "carol" }
+      },
+      "steps": [
+        {
+          "join": "alice",
+          "control": {
+            "device": "AAAAAAAAAAAAAAAAAAAAAA",
+            "clock": [1793008740000, 1],
+            "closed": false,
+            "targets": {
+              "member:carol": {
+                "value": "write",
+                "clock": [1793008740000, 0],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:bob": {
+                "value": "read",
+                "clock": [1793008740000, 1],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              }
+            },
+            "bootstrapped": true
+          },
+          "content": "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQRQbGFuAA=="
+        },
+        { "join": "carol" },
+        { "wait": 2000 },
+        {
+          "expect": {
+            "alice": { "standing": "bootstrapped", "bootstrapped": true },
+            "carol": { "text": "Plan", "standing": "bootstrapped", "rights": { "bob": "read" } }
+          }
+        }
+      ]
+    }
+  },
+  "flows": [
+    {
+      "name": "the creator offline: the repeat asks all, Carol answers at her turn, Dave holds the same and stays silent",
+      "group": 1,
+      "requirements": ["RSY-21", "RSY-20", "RSY-17", "RSY-8", "RSY-14"],
+      "prelude": "group",
+      "steps": [
+        { "stop": "alice" },
+        { "join": "bob" },
+        { "sent": { "bob": [{ "kind": "resync-request", "all": false, "controlClock": null }] } },
+        { "wait": 10000 },
+        { "sent": { "bob": [{ "kind": "resync-request", "all": true, "controlClock": null }] } },
+        { "wait": 30000 },
+        {
+          "sent": {
+            "carol": {
+              "resync-response": [
+                { "kind": "resync-response", "respondsTo": "$request:bob", "piece": 1, "pieces": 1 }
+              ]
+            },
+            "dave": { "resync-response": [] }
+          }
+        },
+        {
+          "expect": {
+            "bob": {
+              "text": "Plan",
+              "bootstrapped": true,
+              "standing": "bootstrapped",
+              "rights": { "bob": "write", "carol": "write" },
+              "mayEdit": true
+            }
+          }
+        },
+        { "wait": 120000 },
+        { "sent": { "bob": [], "carol": [], "dave": [] } }
+      ]
+    },
+    {
+      "name": "Dave holds a deletion Carol lacks — his edit and the report that carries it again are both lost on the way to her —: her answer does not silence him, and the deletion reaches Bob",
+      "group": 1,
+      "requirements": ["RSY-20", "LOS-24", "RSY-13", "SND-27"],
+      "prelude": "group",
+      "steps": [
+        { "lose": { "from": "dave", "kind": "edit", "for": ["carol"] } },
+        { "lose": { "from": "dave", "kind": "heartbeat", "for": ["carol"] } },
+        { "edit": "dave", "delete": [1, 1] },
+        { "wait": 1000 },
+        { "stop": "alice" },
+        { "expect": { "carol": { "text": "Plan" }, "dave": { "text": "Pan" } } },
+        { "join": "bob" },
+        { "wait": 50000 },
+        {
+          "sent": {
+            "carol": { "resync-response": [{ "respondsTo": "$request:bob" }] },
+            "dave": {
+              "heartbeat": [{ "update": "(present)" }],
+              "resync-response": [{ "respondsTo": "$request:bob" }]
+            }
+          }
+        },
+        { "expect": { "bob": { "text": "Pan", "standing": "bootstrapped" } } }
+      ]
+    },
+    {
+      "name": "Dave holds a later register Carol lacks — the decision was lost on the way to her, and the creator's device went out of reach before its report —: her snapshot does not hold it, so he answers too, and the later register holds",
+      "group": 1,
+      "requirements": ["RSY-20", "CTL-22", "RSY-14", "SND-11"],
+      "prelude": "group",
+      "steps": [
+        { "lose": { "from": "alice", "kind": "control", "for": ["carol"] } },
+        { "decide": "alice", "target": "member:erin", "value": "read" },
+        { "wait": 1000 },
+        { "offline": "alice" },
+        { "join": "bob" },
+        { "wait": 50000 },
+        {
+          "sent": {
+            "alice": { "control": [{ "targets": ["member:erin"] }], "heartbeat": [] },
+            "carol": {
+              "resync-response": [
+                {
+                  "respondsTo": "$request:bob",
+                  "control.targets": ["member:bob", "member:carol", "member:dave"]
+                }
+              ]
+            },
+            "dave": {
+              "resync-response": [
+                {
+                  "respondsTo": "$request:bob",
+                  "control.targets": ["member:bob", "member:carol", "member:dave", "member:erin"]
+                }
+              ]
+            }
+          }
+        },
+        { "expect": { "bob": { "standing": "bootstrapped", "rights": { "erin": "read" } } } }
+      ]
+    },
+    {
+      "name": "an answer in pieces whose last piece Bob alone lost: Dave heard it whole and stays silent; Bob is not bootstrapped by the pieces, and his next request to all is answered whole",
+      "group": 1,
+      "requirements": ["RSY-18", "RSY-20", "LOS-14", "RSY-4", "RSY-5", "CTL-13"],
+      "prelude": "group",
+      "maxBytes": 4194304,
+      "steps": [
+        { "edit": "alice", "insert": [4, { "repeat": "Plan", "times": 1950000 }] },
+        { "wait": 1000 },
+        { "stop": "alice" },
+        {
+          "lose": { "from": "carol", "kind": "resync-response", "lastPiece": true, "for": ["bob"] }
+        },
+        { "join": "bob" },
+        { "wait": 30000 },
+        {
+          "sent": {
+            "carol": {
+              "resync-response": [
+                {
+                  "kind": "resync-response",
+                  "respondsTo": "$request:bob",
+                  "$pieces": { "atLeast": 2, "text": { "repeat": "Plan", "times": 1950001 } }
+                }
+              ]
+            },
+            "dave": { "resync-response": [] }
+          }
+        },
+        { "expect": { "bob": { "bootstrapped": false, "transfers": 1 } } },
+        { "wait": 60000 },
+        {
+          "sent": {
+            "bob": [
+              { "kind": "resync-request", "all": false },
+              { "kind": "resync-request", "all": true },
+              { "kind": "resync-request", "all": true }
+            ],
+            "carol": [
+              { "kind": "resync-response", "respondsTo": "$request:bob", "piece": 1, "pieces": 1 }
+            ],
+            "dave": []
+          }
+        },
+        {
+          "expect": {
+            "bob": {
+              "text": { "repeat": "Plan", "times": 1950001 },
+              "bootstrapped": true,
+              "standing": "bootstrapped",
+              "transfers": 0,
+              "evidence": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "§10.6, an answer only the others heard: the creator's device returns and asks all; Carol's answer is lost on the way to it alone and Dave, who heard it, stays silent; Carol's report after her pause carries her change again, and the return's second request, which states it, needs no answer",
+      "group": 1,
+      "requirements": ["RSY-21", "RSY-20", "RSY-5", "LOS-2", "SND-11", "SND-27"],
+      "prelude": "group",
+      "steps": [
+        { "stop": "alice" },
+        { "edit": "carol", "insert": [4, "!"] },
+        { "wait": 1000 },
+        { "restart": "alice", "returning": true },
+        { "sent": { "alice": { "resync-request": [{ "all": true }] } } },
+        { "lose": { "from": "carol", "kind": "resync-response", "for": ["alice"] } },
+        { "wait": 8000 },
+        {
+          "sent": {
+            "carol": { "resync-response": [{ "respondsTo": "$request:alice" }] },
+            "dave": { "resync-response": [] }
+          }
+        },
+        { "expect": { "alice": { "text": "Plan" } } },
+        { "wait": 3000 },
+        { "sent": { "carol": { "heartbeat": [{ "update": "(present)" }] } } },
+        { "expect": { "alice": { "text": "Plan!", "evidence": [] } } },
+        { "wait": 120000 },
+        {
+          "sent": {
+            "alice": [{ "kind": "resync-request", "all": true }],
+            "carol": { "resync-response": [] },
+            "dave": { "resync-response": [] }
+          }
+        },
+        { "expect": { "alice": { "text": "Plan!", "evidence": [] } } }
+      ]
+    },
+    {
+      "name": "§10.6, an answer heard before a later update: Dave heard Carol's answer while he held what she held; Bob's change reaches him only after it, so he stays silent, and the returning device gets it with Bob's report after his pause",
+      "group": 1,
+      "requirements": ["RSY-20", "RSY-21", "LOS-2", "SND-11", "SND-27"],
+      "prelude": "group",
+      "steps": [
+        { "join": "bob" },
+        { "wait": 2000 },
+        { "stop": "alice" },
+        { "edit": "carol", "insert": [4, "!"] },
+        { "wait": 1000 },
+        { "restart": "alice", "returning": true },
+        { "wait": 6000 },
+        { "sent": { "carol": { "resync-response": [{ "respondsTo": "$request:alice" }] } } },
+        { "lose": { "from": "bob", "kind": "edit", "for": ["alice", "carol"] } },
+        { "edit": "bob", "insert": [5, "?"] },
+        { "wait": 5000 },
+        { "sent": { "dave": { "resync-response": [] } } },
+        {
+          "expect": { "alice": { "text": "Plan!", "evidence": [] }, "dave": { "text": "Plan!?" } }
+        },
+        { "wait": 10000 },
+        {
+          "sent": {
+            "bob": { "heartbeat": [{ "update": "(present)" }] },
+            "dave": { "resync-response": [] }
+          }
+        },
+        {
+          "expect": { "alice": { "text": "Plan!?", "evidence": [] }, "carol": { "text": "Plan!?" } }
+        }
+      ]
+    },
+    {
+      "name": "two devices decide on one target in the same millisecond: equal clocks, and the later device tag holds everywhere, though it grants more",
+      "group": 2,
+      "requirements": ["CTL-22", "CTL-45"],
+      "prelude": "two",
+      "steps": [
+        {
+          "join": "alice2",
+          "control": {
+            "device": "zzzzzzzzzzzzzzzzzzzzzw",
+            "clock": [1793008740000, 1],
+            "closed": false,
+            "targets": {
+              "member:carol": {
+                "value": "write",
+                "clock": [1793008740000, 0],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:bob": {
+                "value": "read",
+                "clock": [1793008740000, 1],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              }
+            },
+            "bootstrapped": true
+          },
+          "content": "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQRQbGFuAA=="
+        },
+        { "wait": 2000 },
+        { "decide": "alice", "target": "member:bob", "value": "read" },
+        { "decide": "alice2", "target": "member:bob", "value": "write" },
+        {
+          "sent": {
+            "alice": {
+              "control": [{ "targets": ["member:bob"], "controlClock": [1793008804000, 0] }]
+            },
+            "alice2": {
+              "control": [{ "targets": ["member:bob"], "controlClock": [1793008804000, 0] }]
+            }
+          }
+        },
+        { "wait": 2000 },
+        {
+          "expect": {
+            "alice": {
+              "registers": {
+                "member:bob": {
+                  "value": "write",
+                  "clock": [1793008804000, 0],
+                  "device": "zzzzzzzzzzzzzzzzzzzzzw"
+                }
+              }
+            },
+            "alice2": {
+              "registers": {
+                "member:bob": {
+                  "value": "write",
+                  "clock": [1793008804000, 0],
+                  "device": "zzzzzzzzzzzzzzzzzzzzzw"
+                }
+              }
+            },
+            "carol": {
+              "registers": {
+                "member:bob": {
+                  "value": "write",
+                  "clock": [1793008804000, 0],
+                  "device": "zzzzzzzzzzzzzzzzzzzzzw"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "one state under one tag on two devices — restored from one backup — decides twice at one clock: the narrower value holds everywhere",
+      "group": 2,
+      "requirements": ["CTL-22", "CTL-23"],
+      "prelude": "two",
+      "steps": [
+        {
+          "join": "alice2",
+          "control": {
+            "device": "AAAAAAAAAAAAAAAAAAAAAA",
+            "clock": [1793008740000, 1],
+            "closed": false,
+            "targets": {
+              "member:carol": {
+                "value": "write",
+                "clock": [1793008740000, 0],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:bob": {
+                "value": "read",
+                "clock": [1793008740000, 1],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              }
+            },
+            "bootstrapped": true
+          },
+          "content": "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQRQbGFuAA=="
+        },
+        { "wait": 2000 },
+        { "decide": "alice", "target": "member:bob", "value": "write" },
+        { "decide": "alice2", "target": "member:bob", "value": null },
+        { "wait": 2000 },
+        {
+          "expect": {
+            "alice": {
+              "rights": { "bob": "revoked" },
+              "registers": {
+                "member:bob": {
+                  "value": null,
+                  "clock": [1793008804000, 0],
+                  "device": "AAAAAAAAAAAAAAAAAAAAAA"
+                }
+              }
+            },
+            "alice2": { "rights": { "bob": "revoked" } },
+            "carol": {
+              "rights": { "bob": "revoked" },
+              "registers": {
+                "member:bob": {
+                  "value": null,
+                  "clock": [1793008804000, 0],
+                  "device": "AAAAAAAAAAAAAAAAAAAAAA"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a decision made in knowledge of another holds over it, though the wall clock jumped back an hour since; and a device's own clock never falls",
+      "group": 2,
+      "requirements": ["CTL-21", "CTL-45", "CTL-22"],
+      "prelude": "two",
+      "steps": [
+        {
+          "join": "alice2",
+          "control": {
+            "device": "zzzzzzzzzzzzzzzzzzzzzw",
+            "clock": [1793008740000, 1],
+            "closed": false,
+            "targets": {
+              "member:carol": {
+                "value": "write",
+                "clock": [1793008740000, 0],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:bob": {
+                "value": "read",
+                "clock": [1793008740000, 1],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              }
+            },
+            "bootstrapped": true
+          },
+          "content": "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQRQbGFuAA=="
+        },
+        { "wait": 2000 },
+        { "decide": "alice", "target": "member:bob", "value": "write" },
+        { "wait": 2000 },
+        { "clock": -3600000 },
+        { "decide": "alice2", "target": "member:bob", "value": null },
+        { "wait": 2000 },
+        {
+          "sent": {
+            "alice2": {
+              "control": [{ "targets": ["member:bob"], "controlClock": [1793008804000, 1] }]
+            }
+          }
+        },
+        {
+          "expect": {
+            "alice": { "rights": { "bob": "revoked" } },
+            "carol": {
+              "rights": { "bob": "revoked" },
+              "registers": {
+                "member:bob": {
+                  "value": null,
+                  "clock": [1793008804000, 1],
+                  "device": "zzzzzzzzzzzzzzzzzzzzzw"
+                }
+              }
+            }
+          }
+        },
+        { "decide": "alice", "target": "member:bob", "value": "read" },
+        { "wait": 2000 },
+        {
+          "expect": {
+            "alice2": { "rights": { "bob": "read" } },
+            "carol": {
+              "registers": {
+                "member:bob": {
+                  "value": "read",
+                  "clock": [1793008804000, 2],
+                  "device": "AAAAAAAAAAAAAAAAAAAAAA"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "two decisions without knowledge of each other: the later by the devices' clocks holds, though it grants more",
+      "group": 2,
+      "requirements": ["CTL-22", "CTL-45"],
+      "prelude": "two",
+      "steps": [
+        {
+          "join": "alice2",
+          "control": {
+            "device": "AAAAAAAAAAAAAAAAAAAAAQ",
+            "clock": [1793008740000, 1],
+            "closed": false,
+            "targets": {
+              "member:carol": {
+                "value": "write",
+                "clock": [1793008740000, 0],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:bob": {
+                "value": "read",
+                "clock": [1793008740000, 1],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              }
+            },
+            "bootstrapped": true
+          },
+          "content": "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQRQbGFuAA=="
+        },
+        { "wait": 2000 },
+        { "offline": "alice2" },
+        { "decide": "alice", "target": "member:bob", "value": "read" },
+        { "wait": 60000 },
+        { "decide": "alice2", "target": "member:bob", "value": "write" },
+        { "online": "alice2" },
+        { "wait": 15000 },
+        {
+          "expect": {
+            "alice": { "rights": { "bob": "write" } },
+            "alice2": { "rights": { "bob": "write" } },
+            "carol": {
+              "registers": { "member:bob": { "value": "write", "clock": [1793008864000, 0] } }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "two decisions without knowledge of each other, the wall clock an hour behind for the later one: the earlier holds, by the clocks",
+      "group": 2,
+      "requirements": ["CTL-22", "CTL-45"],
+      "prelude": "two",
+      "steps": [
+        {
+          "join": "alice2",
+          "control": {
+            "device": "zzzzzzzzzzzzzzzzzzzzzw",
+            "clock": [1793008740000, 1],
+            "closed": false,
+            "targets": {
+              "member:carol": {
+                "value": "write",
+                "clock": [1793008740000, 0],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:bob": {
+                "value": "read",
+                "clock": [1793008740000, 1],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              }
+            },
+            "bootstrapped": true
+          },
+          "content": "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQRQbGFuAA=="
+        },
+        { "wait": 2000 },
+        { "offline": "alice2" },
+        { "decide": "alice", "target": "member:bob", "value": "write" },
+        { "clock": -3600000 },
+        { "wait": 60000 },
+        { "decide": "alice2", "target": "member:bob", "value": null },
+        { "online": "alice2" },
+        { "wait": 15000 },
+        {
+          "expect": {
+            "alice": { "rights": { "bob": "write" } },
+            "alice2": { "rights": { "bob": "write" } },
+            "carol": {
+              "registers": {
+                "member:bob": {
+                  "value": "write",
+                  "clock": [1793008804000, 0],
+                  "device": "AAAAAAAAAAAAAAAAAAAAAA"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a register a year ahead, from a broken application of the creator: the device's own clock stops at the end of the span, and only a decision on that register's target goes beyond it",
+      "group": 2,
+      "requirements": ["CTL-45", "CTL-21", "CTL-26"],
+      "devices": {
+        "alice": { "member": "alice" },
+        "carol": { "member": "carol" }
+      },
+      "steps": [
+        {
+          "join": "alice",
+          "control": {
+            "device": "AAAAAAAAAAAAAAAAAAAAAA",
+            "clock": [1793008740000, 1],
+            "closed": false,
+            "targets": {
+              "member:carol": {
+                "value": "write",
+                "clock": [1793008740000, 0],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:bob": {
+                "value": "read",
+                "clock": [1793008740000, 1],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:erin": {
+                "value": "read",
+                "clock": [1824544800000, 0],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              }
+            },
+            "bootstrapped": true
+          },
+          "content": "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQRQbGFuAA=="
+        },
+        { "join": "carol" },
+        { "wait": 2000 },
+        { "decide": "alice", "target": "member:bob", "value": "write" },
+        { "decide": "alice", "target": "member:erin", "value": "write" },
+        { "decide": "alice", "target": "member:bob", "value": null },
+        { "wait": 2000 },
+        {
+          "sent": {
+            "alice": {
+              "control": [
+                { "targets": ["member:bob"], "controlClock": [1824544800000, 0] },
+                { "targets": ["member:erin"], "controlClock": [1824544800000, 1] },
+                { "targets": ["member:bob"], "controlClock": [1824544800000, 1] }
+              ]
+            }
+          }
+        },
+        {
+          "expect": {
+            "carol": {
+              "registers": {
+                "member:bob": { "value": null, "clock": [1793095202001, 0] },
+                "member:erin": { "value": "write", "clock": [1824544800000, 1] }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "the end of the range: a register at the last clock takes no decision above it, one at the last clock but one takes one more; every other target goes on",
+      "group": 2,
+      "requirements": ["CTL-45", "CTL-21"],
+      "devices": {
+        "alice": { "member": "alice" },
+        "carol": { "member": "carol" }
+      },
+      "steps": [
+        {
+          "join": "alice",
+          "control": {
+            "device": "AAAAAAAAAAAAAAAAAAAAAA",
+            "clock": [1793008740000, 1],
+            "closed": false,
+            "targets": {
+              "member:carol": {
+                "value": "write",
+                "clock": [1793008740000, 0],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:bob": {
+                "value": "read",
+                "clock": [1793008740000, 1],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:erin": {
+                "value": "read",
+                "clock": [281474976710655, 65535],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:frank": {
+                "value": "read",
+                "clock": [281474976710655, 65534],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              }
+            },
+            "bootstrapped": true
+          },
+          "content": "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQRQbGFuAA=="
+        },
+        { "join": "carol" },
+        { "wait": 2000 },
+        { "decide": "alice", "target": "member:erin", "value": "write", "refused": true },
+        { "decide": "alice", "target": "member:frank", "value": "write" },
+        { "decide": "alice", "target": "member:frank", "value": null, "refused": true },
+        { "decide": "alice", "target": "member:bob", "value": "write" },
+        { "wait": 2000 },
+        {
+          "sent": {
+            "alice": { "control": [{ "targets": ["member:frank"] }, { "targets": ["member:bob"] }] }
+          }
+        },
+        {
+          "expect": {
+            "carol": {
+              "registers": {
+                "member:erin": { "value": "read", "clock": [281474976710655, 65535] },
+                "member:frank": { "value": "write", "clock": [281474976710655, 65535] },
+                "member:bob": { "value": "write", "clock": [1793095202001, 0] }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "§10.6, a register only members hold: a device of the creator decides, its frame reaches Carol alone, and the device is lost before its report; Carol's next edit and her report show the other device nothing — a member's states no control clock (SND-11) —, so it holds the older register and asks nothing, until its person asks to synchronise now: Carol's answer brings it the later register",
+      "group": 2,
+      "requirements": ["SND-11", "LOS-10", "LOS-12", "CTL-25", "CTL-22", "LIF-12", "RSY-3"],
+      "prelude": "two",
+      "steps": [
+        {
+          "join": "alice2",
+          "control": {
+            "device": "zzzzzzzzzzzzzzzzzzzzzw",
+            "clock": [1793008740000, 1],
+            "closed": false,
+            "targets": {
+              "member:carol": {
+                "value": "write",
+                "clock": [1793008740000, 0],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:bob": {
+                "value": "read",
+                "clock": [1793008740000, 1],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              }
+            },
+            "bootstrapped": true
+          },
+          "content": "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQRQbGFuAA=="
+        },
+        { "wait": 2000 },
+        { "lose": { "from": "alice2", "kind": "control", "for": ["alice"] } },
+        { "decide": "alice2", "target": "member:bob", "value": "write" },
+        { "wait": 2000 },
+        { "offline": "alice2" },
+        {
+          "expect": {
+            "alice": { "rights": { "bob": "read" }, "evidence": [] },
+            "carol": {
+              "rights": { "bob": "write" },
+              "registers": {
+                "member:bob": { "value": "write", "device": "zzzzzzzzzzzzzzzzzzzzzw" }
+              }
+            }
+          }
+        },
+        { "sent": { "alice": { "resync-request": [] }, "alice2": { "heartbeat": [] } } },
+        { "edit": "carol", "insert": [4, "!"] },
+        { "wait": 120000 },
+        {
+          "sent": {
+            "alice": { "resync-request": [] },
+            "carol": { "resync-request": [], "heartbeat": [{ "controlClock": null }] }
+          }
+        },
+        {
+          "expect": {
+            "alice": {
+              "text": "Plan!",
+              "rights": { "bob": "read" },
+              "registers": {
+                "member:bob": {
+                  "value": "read",
+                  "clock": [1793008740000, 1],
+                  "device": "AAAAAAAAAAAAAAAAAAAAAA"
+                }
+              },
+              "evidence": []
+            },
+            "carol": { "text": "Plan!", "rights": { "bob": "write" } }
+          }
+        },
+        { "syncNow": "alice" },
+        { "wait": 40000 },
+        {
+          "sent": {
+            "alice": [{ "kind": "resync-request", "all": true }],
+            "carol": { "resync-response": [{ "respondsTo": "$request:alice" }] }
+          }
+        },
+        {
+          "expect": {
+            "alice": {
+              "rights": { "bob": "write" },
+              "registers": {
+                "member:bob": { "value": "write", "device": "zzzzzzzzzzzzzzzzzzzzzw" }
+              },
+              "evidence": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a new device of the creator asks without all: the creator's other device answers at once, and its snapshot bootstraps it; no member answers",
+      "group": 3,
+      "requirements": ["RSY-14", "CTL-25", "RSY-6", "RSY-16", "RSY-21"],
+      "prelude": "group",
+      "devices": {
+        "alice2": { "member": "alice" }
+      },
+      "steps": [
+        { "join": "alice2" },
+        {
+          "sent": {
+            "alice2": [
+              {
+                "kind": "resync-request",
+                "all": false,
+                "controlClock": null,
+                "controlDigest": null
+              }
+            ]
+          }
+        },
+        { "expect": { "alice2": { "standing": "none", "bootstrapped": false } } },
+        { "wait": 30000 },
+        {
+          "sent": {
+            "alice": {
+              "resync-response": [{ "kind": "resync-response", "respondsTo": "$request:alice2" }]
+            },
+            "carol": { "resync-response": [] },
+            "dave": { "resync-response": [] }
+          }
+        },
+        {
+          "expect": {
+            "alice2": {
+              "text": "Plan",
+              "standing": "bootstrapped",
+              "bootstrapped": true,
+              "rights": { "bob": "write" }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a member's answer bootstraps Bob; the creator's device, back within ten minutes, asks nothing; back after longer, its one start request asks all, stating the same control clock and digest, and nothing needs to travel",
+      "group": 3,
+      "requirements": ["RSY-1", "RSY-14", "RSY-16", "LOS-13", "CTL-13"],
+      "prelude": "group",
+      "steps": [
+        { "stop": "alice" },
+        { "join": "bob" },
+        { "wait": 30000 },
+        {
+          "sent": {
+            "bob": [
+              { "kind": "resync-request", "all": false, "controlClock": null },
+              { "kind": "resync-request", "all": true, "controlClock": null, "controlDigest": null }
+            ],
+            "carol": { "resync-response": [{ "respondsTo": "$request:bob" }] },
+            "dave": { "resync-response": [] }
+          }
+        },
+        { "expect": { "bob": { "standing": "bootstrapped", "mayEdit": true } } },
+        { "restart": "alice" },
+        { "wait": 2000 },
+        { "sent": { "bob": [], "alice": { "resync-request": [] } } },
+        { "stop": "alice" },
+        { "wait": 660000 },
+        { "restart": "alice" },
+        {
+          "sent": {
+            "alice": { "resync-request": [{ "all": true, "controlClock": [1793008800000, 2] }] }
+          }
+        },
+        { "wait": 60000 },
+        { "sent": { "alice": { "resync-request": [] }, "bob": [], "carol": [], "dave": [] } },
+        {
+          "expect": {
+            "bob": { "standing": "bootstrapped", "rights": { "bob": "write" }, "evidence": [] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a member's answer lacks a later decision: the creator's device lost its network before its report and was closed, the report owed; back after ten minutes, it sends that report, its decision again before it, and a start request, and the decision reaches Bob with no request of his",
+      "group": 3,
+      "requirements": ["RSY-14", "SND-28", "SND-27", "SND-11", "RSY-1"],
+      "prelude": "group",
+      "steps": [
+        { "offline": "dave" },
+        { "lose": { "from": "alice", "kind": "control", "for": ["carol"] } },
+        { "decide": "alice", "target": "member:erin", "value": "read" },
+        { "wait": 1000 },
+        { "offline": "alice" },
+        { "stop": "alice" },
+        { "sent": { "alice": { "control": [{ "targets": ["member:erin"] }], "heartbeat": [] } } },
+        { "join": "bob" },
+        { "wait": 30000 },
+        { "expect": { "bob": { "standing": "bootstrapped", "rights": { "erin": "unknown" } } } },
+        {
+          "sent": {
+            "bob": [
+              { "kind": "resync-request", "all": false },
+              { "kind": "resync-request", "all": true }
+            ],
+            "carol": { "resync-response": [{ "respondsTo": "$request:bob" }] }
+          }
+        },
+        { "wait": 660000 },
+        { "online": "alice" },
+        { "restart": "alice" },
+        { "wait": 2000 },
+        {
+          "sent": {
+            "alice": {
+              "control": [{ "targets": ["member:erin"], "controlClock": [1793008802000, 0] }],
+              "heartbeat": [{ "controlClock": [1793008802000, 0], "update": "(absent)" }],
+              "resync-request": [{ "all": true, "controlClock": [1793008802000, 0] }]
+            },
+            "bob": { "resync-request": [] }
+          }
+        },
+        {
+          "expect": {
+            "bob": { "standing": "bootstrapped", "rights": { "erin": "read" }, "evidence": [] },
+            "carol": { "rights": { "erin": "read" } }
+          }
+        }
+      ]
+    },
+    {
+      "name": "every device of the creator lost: a new one asks, then asks all; the first member's answer is merged but bootstraps it not: it decides nothing but the close and its reason, hands on no control state, and its close holds, stating no control clock, sent again before its report; a member holding the same stays silent",
+      "group": 3,
+      "requirements": ["CTL-25", "CTL-27", "RSY-14", "RSY-21", "RSY-20", "CTL-23", "SND-27"],
+      "prelude": "group",
+      "devices": {
+        "alice2": { "member": "alice" }
+      },
+      "steps": [
+        { "stop": "alice" },
+        { "join": "alice2" },
+        { "wait": 30000 },
+        {
+          "sent": {
+            "alice2": {
+              "resync-request": [
+                { "kind": "resync-request", "all": false, "controlClock": null },
+                { "kind": "resync-request", "all": true, "controlClock": null }
+              ]
+            },
+            "carol": {
+              "resync-response": [{ "kind": "resync-response", "respondsTo": "$request:alice2" }]
+            },
+            "dave": { "resync-response": [] }
+          }
+        },
+        {
+          "expect": {
+            "alice2": {
+              "text": "Plan",
+              "standing": "none",
+              "registers": { "member:bob": { "value": "write", "clock": [1793008800000, 0] } },
+              "persisted": { "bootstrapped": false }
+            }
+          }
+        },
+        { "decide": "alice2", "target": "member:erin", "value": "read", "refused": true },
+        { "join": "bob" },
+        { "wait": 2000 },
+        {
+          "sent": {
+            "alice2": {
+              "resync-response": [
+                { "kind": "resync-response", "respondsTo": "$request:bob", "control": null }
+              ]
+            }
+          }
+        },
+        { "expect": { "bob": { "standing": "none" } } },
+        { "close": "alice2", "reason": "creator-state-lost" },
+        {
+          "sent": {
+            "alice2": {
+              "control": [
+                {
+                  "closed": true,
+                  "targets": ["close-reason"],
+                  "controlClock": null,
+                  "controlDigest": null
+                }
+              ]
+            }
+          }
+        },
+        { "wait": 2000 },
+        {
+          "expect": {
+            "alice2": { "closed": true, "closeReason": "creator-state-lost" },
+            "carol": { "closed": true, "closeReason": "creator-state-lost" },
+            "dave": { "closed": true, "closeReason": "creator-state-lost" }
+          }
+        },
+        { "wait": 10000 },
+        {
+          "sent": {
+            "alice2": {
+              "control": [{ "closed": true, "targets": ["close-reason"], "controlClock": null }],
+              "heartbeat": [{ "controlClock": null, "controlDigest": null, "update": "(absent)" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "the cursor is never ahead of the control state persisted with it: a member restarted from what its application persisted holds the revocation it had read",
+      "group": 4,
+      "requirements": ["CTL-40", "CTL-39", "CTL-41", "LIF-8"],
+      "prelude": "group",
+      "cursor": true,
+      "steps": [
+        { "join": "bob" },
+        { "wait": 2000 },
+        { "expect": { "bob": { "bootstrapped": true, "mayEdit": true } } },
+        { "decide": "alice", "target": "member:bob", "value": null },
+        { "wait": 1000 },
+        { "restart": "bob" },
+        { "wait": 1000 },
+        {
+          "expect": {
+            "bob": {
+              "bootstrapped": true,
+              "rights": { "bob": "revoked" },
+              "mayEdit": false,
+              "text": "Plan"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "over the bound of 5 000 targets: the frame is refused whole, a capacity conflict, its close taken all the same; registers on targets held are still taken, new ones not, and answers carry no control state",
+      "group": 4,
+      "requirements": ["CTL-30", "CTL-32", "CTL-36", "RSY-8", "CTL-13"],
+      "prelude": "group",
+      "steps": [
+        { "offline": "dave" },
+        { "stop": "alice" },
+        {
+          "inject": "alice",
+          "frame": {
+            "tdsp": "de.wappensc.together.tdsp.probe.draft-10",
+            "kind": "control",
+            "documentId": "doc-flows",
+            "device": "QnJva2VuLWFwcGxpY2F0aW",
+            "targets": {
+              "$targets": {
+                "pattern": "member:m{n}",
+                "from": 1,
+                "to": 4998,
+                "register": {
+                  "value": "read",
+                  "clock": [1793008810000, 0],
+                  "device": "QnJva2VuLWFwcGxpY2F0aW"
+                }
+              }
+            },
+            "closed": true,
+            "controlClock": [1793008810000, 0],
+            "controlDigest": "85c1133abecf0977"
+          }
+        },
+        { "wait": 1000 },
+        {
+          "expect": {
+            "carol": { "conflict": true, "closed": true, "mayEdit": false, "targetCount": 3 }
+          }
+        },
+        {
+          "inject": "alice",
+          "frame": {
+            "tdsp": "de.wappensc.together.tdsp.probe.draft-10",
+            "kind": "control",
+            "documentId": "doc-flows",
+            "device": "QnJva2VuLWFwcGxpY2F0aW",
+            "targets": {
+              "member:dave": {
+                "value": null,
+                "clock": [1793008820000, 0],
+                "device": "QnJva2VuLWFwcGxpY2F0aW"
+              },
+              "member:erin": {
+                "value": "write",
+                "clock": [1793008820000, 1],
+                "device": "QnJva2VuLWFwcGxpY2F0aW"
+              }
+            },
+            "closed": true,
+            "controlClock": [1793008820000, 1],
+            "controlDigest": "017d6b5e0b378abc"
+          }
+        },
+        { "wait": 1000 },
+        {
+          "expect": {
+            "carol": {
+              "conflict": true,
+              "rights": { "dave": "revoked", "erin": "unknown" },
+              "targetCount": 3
+            }
+          }
+        },
+        { "join": "bob" },
+        { "wait": 30000 },
+        {
+          "sent": {
+            "carol": {
+              "resync-response": [
+                { "kind": "resync-response", "respondsTo": "$request:bob", "control": null }
+              ]
+            }
+          }
+        },
+        { "expect": { "bob": { "bootstrapped": false, "text": "Plan" } } }
+      ]
+    },
+    {
+      "name": "the bound of 1 MiB for a decision that adds a target, measured as CTL-34 does, each target its name as RFC 8785 writes it and a fixed width for its register: names of control characters count six bytes each; the new target is refused, a change of one held is not",
+      "group": 4,
+      "requirements": ["CTL-37", "CTL-34", "CTL-30"],
+      "devices": {
+        "alice": { "member": "alice" },
+        "carol": { "member": "carol" }
+      },
+      "steps": [
+        {
+          "join": "alice",
+          "control": {
+            "device": "AAAAAAAAAAAAAAAAAAAAAA",
+            "clock": [1793008740000, 1],
+            "closed": false,
+            "targets": {
+              "$targets": {
+                "pattern": "member:\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001{n}",
+                "from": 1,
+                "to": 3077,
+                "register": {
+                  "value": "read",
+                  "clock": [1793008740000, 2],
+                  "device": "AAAAAAAAAAAAAAAAAAAAAA"
+                }
+              },
+              "member:ééééééééééééééééééééé": {
+                "value": "read",
+                "clock": [1793008740000, 2],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:carol": {
+                "value": "write",
+                "clock": [1793008740000, 0],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:bob": {
+                "value": "read",
+                "clock": [1793008740000, 1],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              }
+            },
+            "bootstrapped": true
+          },
+          "content": "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQRQbGFuAA=="
+        },
+        { "join": "carol" },
+        { "wait": 2000 },
+        { "decide": "alice", "target": "member:zed", "value": "read", "refused": true },
+        { "decide": "alice", "target": "member:bob", "value": "write" },
+        { "wait": 2000 },
+        { "sent": { "alice": { "control": [{ "targets": ["member:bob"] }] } } },
+        {
+          "expect": {
+            "carol": {
+              "rights": { "bob": "write", "zed": "unknown" },
+              "targetCount": 3080,
+              "conflict": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "the bound of 1 MiB, both sides: from the same state a new target that brings control state to exactly 1 048 576 bytes as CTL-34 measures it is decided, and one whose name is a byte longer is refused",
+      "group": 4,
+      "requirements": ["CTL-37", "CTL-34"],
+      "devices": {
+        "alice": { "member": "alice" },
+        "carol": { "member": "carol" }
+      },
+      "steps": [
+        {
+          "join": "alice",
+          "control": {
+            "device": "AAAAAAAAAAAAAAAAAAAAAA",
+            "clock": [1793008740000, 1],
+            "closed": false,
+            "targets": {
+              "$targets": {
+                "pattern": "member:\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001{n}",
+                "from": 1,
+                "to": 3076,
+                "register": {
+                  "value": "read",
+                  "clock": [1793008740000, 2],
+                  "device": "AAAAAAAAAAAAAAAAAAAAAA"
+                }
+              },
+              "member:ééééééééééééééééééééé": {
+                "value": "read",
+                "clock": [1793008740000, 2],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:carol": {
+                "value": "write",
+                "clock": [1793008740000, 0],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              },
+              "member:bob": {
+                "value": "read",
+                "clock": [1793008740000, 1],
+                "device": "AAAAAAAAAAAAAAAAAAAAAA"
+              }
+            },
+            "bootstrapped": true
+          },
+          "content": "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQRQbGFuAA=="
+        },
+        { "join": "carol" },
+        { "wait": 2000 },
+        {
+          "decide": "alice",
+          "target": "member:\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001zzzzz",
+          "value": "read",
+          "refused": true
+        },
+        {
+          "decide": "alice",
+          "target": "member:\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001zzzz",
+          "value": "read"
+        },
+        { "wait": 2000 },
+        {
+          "sent": {
+            "alice": {
+              "control": [
+                {
+                  "targets": [
+                    "member:\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001zzzz"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "expect": {
+            "carol": {
+              "rights": {
+                "\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001zzzz": "read",
+                "\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001zzzzz": "unknown"
+              },
+              "targetCount": 3080,
+              "conflict": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Unicode: members named beyond ASCII, and text edited by UTF-16 offsets — an emoji is two units, never cut",
+      "group": 4,
+      "requirements": ["YJS-3", "CTL-20", "LOS-24"],
+      "prelude": "group",
+      "devices": {
+        "zoe": { "member": "zoë" }
+      },
+      "steps": [
+        { "decide": "alice", "target": "member:zoë", "value": "write" },
+        { "decide": "alice", "target": "member:𝄞", "value": "read" },
+        { "edit": "alice", "delete": [0, 4], "insert": [0, "Zoë 🙂 plan"] },
+        { "join": "zoe" },
+        { "wait": 2000 },
+        {
+          "expect": {
+            "zoe": {
+              "text": "Zoë 🙂 plan",
+              "rights": { "zoë": "write", "𝄞": "read" },
+              "mayEdit": true
+            }
+          }
+        },
+        { "edit": "zoe", "delete": [4, 2], "insert": [4, "𝄞"] },
+        { "wait": 2000 },
+        {
+          "expect": {
+            "alice": { "text": "Zoë 𝄞 plan", "evidence": [] },
+            "carol": { "text": "Zoë 𝄞 plan", "evidence": [] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "an update with a byte after it is no update: Mallory's answer carrying one is rejected whole, snapshot included, and silences no one; an edit carrying one applies nothing",
+      "group": 4,
+      "requirements": ["FRM-6", "CTL-15", "RSY-20", "§4.4"],
+      "prelude": "group",
+      "steps": [
+        { "stop": "alice" },
+        { "join": "bob" },
+        { "wait": 11000 },
+        {
+          "inject": "mallory",
+          "frame": {
+            "tdsp": "de.wappensc.together.tdsp.probe.draft-10",
+            "kind": "resync-response",
+            "documentId": "doc-flows",
+            "respondsTo": "$request:bob",
+            "update": "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQRQbGFuAAA=",
+            "control": {
+              "profile": "yjs-paragraphs/1",
+              "closed": false,
+              "targets": {
+                "member:bob": {
+                  "value": "write",
+                  "clock": [1793008800000, 0],
+                  "device": "TWFsbG9yeS1mb3JnZWQtMQ"
+                }
+              }
+            },
+            "attribution": null,
+            "stateVector": "AA==",
+            "stateDigest": "96a296d224f285c6",
+            "stream": "6d616c6c6f727931",
+            "sequence": 1,
+            "piece": 1,
+            "pieces": 1
+          }
+        },
+        {
+          "inject": "mallory",
+          "frame": {
+            "tdsp": "de.wappensc.together.tdsp.probe.draft-10",
+            "kind": "edit",
+            "documentId": "doc-flows",
+            "update": "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQRQbGFuAAA="
+          }
+        },
+        { "wait": 1000 },
+        { "expect": { "bob": { "bootstrapped": false, "text": "", "standing": "none" } } },
+        { "wait": 30000 },
+        {
+          "sent": {
+            "carol": {
+              "resync-response": [{ "kind": "resync-response", "respondsTo": "$request:bob" }]
+            }
+          }
+        },
+        {
+          "expect": { "bob": { "bootstrapped": true, "text": "Plan", "standing": "bootstrapped" } }
+        }
+      ]
+    },
+    {
+      "name": "a lost last change heals by the report: Carol's about ten seconds after her pause, with no request; Bob's at once, as his device is about to sleep; Dave's at once, as he closes the document right after it",
+      "group": 5,
+      "requirements": ["SND-11", "SND-27", "SND-28", "LIF-12", "LOS-4"],
+      "prelude": "group",
+      "steps": [
+        { "lose": { "from": "carol", "kind": "edit", "for": ["alice"] } },
+        { "edit": "carol", "insert": [4, "!"] },
+        { "wait": 9000 },
+        {
+          "expect": {
+            "alice": { "text": "Plan", "evidence": [] },
+            "carol": { "text": "Plan!", "reportOwed": true }
+          }
+        },
+        { "wait": 2000 },
+        {
+          "sent": {
+            "carol": { "heartbeat": [{ "controlClock": null, "update": "(present)" }] },
+            "alice": { "resync-request": [] }
+          }
+        },
+        {
+          "expect": {
+            "alice": { "text": "Plan!", "evidence": [] },
+            "carol": { "reportOwed": false }
+          }
+        },
+        { "join": "bob" },
+        { "wait": 2000 },
+        { "sent": { "bob": [{ "kind": "resync-request", "all": false }] } },
+        { "lose": { "from": "bob", "kind": "edit", "for": ["alice", "carol", "dave"] } },
+        { "edit": "bob", "insert": [5, "?"] },
+        { "report": "bob" },
+        {
+          "sent": {
+            "bob": { "edit": [{}], "heartbeat": [{ "controlClock": null, "update": "(present)" }] }
+          }
+        },
+        { "expect": { "bob": { "reportOwed": false } } },
+        { "wait": 1000 },
+        {
+          "expect": {
+            "alice": { "text": "Plan!?", "evidence": [] },
+            "carol": { "text": "Plan!?" },
+            "dave": { "text": "Plan!?" }
+          }
+        },
+        { "lose": { "from": "dave", "kind": "edit", "for": ["alice", "carol"] } },
+        { "edit": "dave", "insert": [0, "> "] },
+        { "stop": "dave" },
+        { "sent": { "dave": { "edit": [{}], "heartbeat": [{ "update": "(present)" }] } } },
+        { "wait": 1000 },
+        {
+          "expect": {
+            "alice": { "text": "> Plan!?", "evidence": [] },
+            "carol": { "text": "> Plan!?", "evidence": [] }
+          }
+        },
+        { "wait": 60000 },
+        {
+          "sent": {
+            "alice": { "resync-request": [] },
+            "carol": { "resync-request": [] },
+            "bob": { "resync-request": [], "heartbeat": [] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a resting gap is woken by its author's next change: Carol's change reached no one and her next builds on it; the three requests for it, each to all, are lost on the way to her, and the gap rests, asking nothing for twenty minutes; her next change raises its position: one request, which she answers",
+      "group": 5,
+      "requirements": ["LOS-25", "LOS-6", "LOS-26", "LOS-2", "RSY-22"],
+      "prelude": "group",
+      "steps": [
+        { "lose": { "from": "carol", "kind": "edit" } },
+        { "edit": "carol", "insert": [4, "!"] },
+        { "edit": "carol", "insert": [5, "?"] },
+        { "lose": { "from": "alice", "kind": "resync-request", "for": ["carol"] } },
+        { "lose": { "from": "alice", "kind": "resync-request", "for": ["carol"] } },
+        { "lose": { "from": "alice", "kind": "resync-request", "for": ["carol"] } },
+        { "wait": 8000 },
+        {
+          "expect": {
+            "alice": { "text": "Plan", "evidence": ["pending-gap"], "resting": [] },
+            "dave": { "text": "Plan", "evidence": ["pending-gap"] }
+          }
+        },
+        { "wait": 120000 },
+        {
+          "sent": {
+            "alice": { "resync-request": [{ "all": true }, { "all": true }, { "all": true }] },
+            "dave": { "resync-request": [] },
+            "carol": { "resync-response": [] }
+          }
+        },
+        {
+          "expect": {
+            "alice": { "text": "Plan", "resting": ["pending-gap"] },
+            "dave": { "text": "Plan", "resting": ["pending-gap"] }
+          }
+        },
+        { "wait": 1200000 },
+        { "sent": { "alice": { "resync-request": [] }, "dave": { "resync-request": [] } } },
+        { "expect": { "alice": { "text": "Plan", "resting": ["pending-gap"] } } },
+        { "edit": "carol", "insert": [6, "#"] },
+        { "wait": 10000 },
+        {
+          "sent": {
+            "alice": { "resync-request": [] },
+            "dave": { "resync-request": [] },
+            "carol": { "resync-response": [] }
+          }
+        },
+        { "wait": 15000 },
+        {
+          "sent": {
+            "alice": { "resync-request": [{ "all": true }] },
+            "dave": { "resync-request": [] },
+            "carol": { "resync-response": [{ "respondsTo": "$request:alice" }] }
+          }
+        },
+        {
+          "expect": {
+            "alice": { "text": "Plan!?#", "evidence": [] },
+            "dave": { "text": "Plan!?#", "evidence": [] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "five devices with one gap, the creator away: the first that asks asks all, and the four others, hearing a request that reaches no further, let theirs go and take its answer as their own; one request, one answer, from the member who holds the change",
+      "group": 5,
+      "requirements": ["RSY-22", "RSY-12", "LOS-6", "LOS-25", "RSY-21", "RSY-20"],
+      "prelude": "group",
+      "devices": {
+        "erin": { "member": "erin", "firstTrySlotMs": 14000 },
+        "frank": { "member": "frank", "firstTrySlotMs": 18000 },
+        "gina": { "member": "gina", "firstTrySlotMs": 26000 }
+      },
+      "steps": [
+        { "decide": "alice", "target": "member:erin", "value": "write" },
+        { "decide": "alice", "target": "member:frank", "value": "write" },
+        { "decide": "alice", "target": "member:gina", "value": "write" },
+        { "join": "bob" },
+        { "join": "erin" },
+        { "join": "frank" },
+        { "join": "gina" },
+        { "wait": 2000 },
+        {
+          "expect": {
+            "bob": { "standing": "bootstrapped" },
+            "erin": { "standing": "bootstrapped" },
+            "frank": { "standing": "bootstrapped" },
+            "gina": { "standing": "bootstrapped" }
+          }
+        },
+        { "stop": "alice" },
+        {
+          "sent": {
+            "carol": { "resync-request": [] },
+            "dave": { "resync-request": [] },
+            "bob": { "resync-request": [{ "all": false }] },
+            "erin": { "resync-request": [{ "all": false }] },
+            "frank": { "resync-request": [{ "all": false }] },
+            "gina": { "resync-request": [{ "all": false }] }
+          }
+        },
+        {
+          "lose": {
+            "from": "carol",
+            "kind": "edit",
+            "for": ["dave", "bob", "erin", "frank", "gina"]
+          }
+        },
+        { "edit": "carol", "insert": [4, " C"] },
+        { "edit": "carol", "insert": [6, " D"] },
+        { "wait": 25000 },
+        {
+          "sent": {
+            "dave": { "resync-request": [{ "all": true }] },
+            "bob": { "resync-request": [] },
+            "erin": { "resync-request": [] },
+            "frank": { "resync-request": [] },
+            "gina": { "resync-request": [] },
+            "carol": { "resync-response": [{ "respondsTo": "$request:dave" }] }
+          }
+        },
+        {
+          "expect": {
+            "dave": { "text": "Plan C D", "evidence": [] },
+            "bob": { "text": "Plan C D", "evidence": [] },
+            "erin": { "text": "Plan C D", "evidence": [] },
+            "frank": { "text": "Plan C D", "evidence": [] },
+            "gina": { "text": "Plan C D", "evidence": [] }
+          }
+        },
+        { "wait": 60000 },
+        {
+          "sent": {
+            "carol": { "resync-response": [] },
+            "dave": { "resync-request": [], "resync-response": [] },
+            "bob": { "resync-request": [], "resync-response": [] },
+            "erin": { "resync-request": [], "resync-response": [] },
+            "frank": { "resync-request": [], "resync-response": [] },
+            "gina": { "resync-request": [], "resync-response": [] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a member that missed the close gets it again: the close, the repeat before the creator's report and the report are all lost on the way to Carol, who writes on; the creator's device sends its close again, once, with its reason, and her engine would refuse her next edit; everyone took what she wrote",
+      "group": 5,
+      "requirements": ["LIF-11", "LIF-6", "SND-27", "CTL-13", "CTL-23"],
+      "prelude": "group",
+      "steps": [
+        { "lose": { "from": "alice", "kind": "control", "for": ["carol"] } },
+        { "lose": { "from": "alice", "kind": "control", "for": ["carol"] } },
+        { "lose": { "from": "alice", "kind": "heartbeat", "for": ["carol"] } },
+        { "close": "alice", "reason": "continued" },
+        { "wait": 12000 },
+        {
+          "sent": {
+            "alice": {
+              "control": [
+                { "closed": true, "targets": ["close-reason"] },
+                { "closed": true, "targets": ["close-reason"] }
+              ],
+              "heartbeat": [{ "update": "(absent)" }]
+            }
+          }
+        },
+        {
+          "expect": {
+            "alice": { "closed": true, "closeReason": "continued" },
+            "dave": { "closed": true, "closeReason": "continued" },
+            "carol": { "closed": false, "mayEdit": true }
+          }
+        },
+        { "edit": "carol", "insert": [4, "!"] },
+        { "edit": "carol", "insert": [5, "?"] },
+        { "wait": 2000 },
+        {
+          "sent": {
+            "alice": {
+              "control": [
+                { "closed": true, "targets": ["close-reason"], "controlClock": [1793008802000, 0] }
+              ]
+            },
+            "carol": { "edit": [{}, {}] }
+          }
+        },
+        {
+          "expect": {
+            "carol": { "closed": true, "closeReason": "continued", "mayEdit": false },
+            "alice": { "text": "Plan!?" },
+            "dave": { "text": "Plan!?" }
+          }
+        },
+        { "wait": 60000 },
+        { "sent": { "alice": { "control": [] }, "carol": { "edit": [] } } },
+        {
+          "expect": {
+            "alice": { "text": "Plan!?", "evidence": [] },
+            "carol": { "text": "Plan!?", "evidence": [] },
+            "dave": { "text": "Plan!?", "evidence": [] }
+          }
+        }
+      ]
+    }
+  ]
+}

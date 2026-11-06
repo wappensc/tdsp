@@ -7,11 +7,13 @@ import {
   encodeUpdateSince,
   getFragment,
   getPlainText,
+  giveUpPending,
   hasUpdatesSince,
   insertPlainText,
   isEmptyStateVector,
   lacksUpdatesOf,
   type PlainTextChange,
+  pendingBytes,
   pendingGapClients,
   type ReconciledDocument,
   updateClientIds,
@@ -50,6 +52,8 @@ const yjsBasics = {
   lacksUpdatesOf: (document: ReconciledDocument, stateVector: Uint8Array) =>
     lacksUpdatesOf(document, stateVector),
   pendingGapClients: (document: ReconciledDocument) => pendingGapClients(document),
+  pendingBytes: (document: ReconciledDocument) => pendingBytes(document),
+  giveUpPending: (document: ReconciledDocument) => giveUpPending(document),
   updateClientIds: (update: Uint8Array) => updateClientIds(update),
 };
 
@@ -189,6 +193,27 @@ describe("document profiles an application supplies (SPECIFICATION.md §5.5)", (
     await expect(create([{ ...NOTES, id: "Not A Profile" }])).rejects.toThrow(
       /no valid profile id/,
     );
+    await expect(port.receive(DOCUMENT_ID, "x")).rejects.toThrow(); // never even registered
+  });
+
+  it("refuses a supplied profile that does not measure or give up what it holds for missing predecessors (PRF-1, item 2; LOS-23)", async () => {
+    // Without them an engine could not bound what anyone in the channel makes it hold (LOS-23).
+    const port = new InMemoryMessengerPort();
+    const { pendingBytes: _bytes, ...withoutBytes } = NOTES;
+    const { giveUpPending: _giveUp, ...withoutGiveUp } = NOTES;
+    // @ts-expect-error: pendingBytes is required (PRF-1, item 2).
+    const noBytes: DocumentProfile = withoutBytes;
+    // @ts-expect-error: giveUpPending is required (PRF-1, item 2).
+    const noGiveUp: DocumentProfile = withoutGiveUp;
+    for (const profile of [noBytes, noGiveUp]) {
+      await expect(
+        DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, {
+          ...OPTIONS,
+          profile: profile.id,
+          profiles: [profile],
+        }),
+      ).rejects.toThrow(/missing predecessors.*PRF-1, item 2/);
+    }
     await expect(port.receive(DOCUMENT_ID, "x")).rejects.toThrow(); // never even registered
   });
 });

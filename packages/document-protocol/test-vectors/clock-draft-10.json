@@ -1,0 +1,325 @@
+{
+  "$comment": "TDSP 2.0 draft clock test vectors (draft revision 10): CTL-45's algorithm as pure functions, every clock a pair [ms, counter] of JSON integers. `next`: next(clock), or \"none\" at the end of the range. `wall`: the wall clock `now` (ms, any number) as a clock. `cap`: the end of the span from `now`. `raise`: own after raise(clock) at `now`, `clock` the control clock after a restore or a merge. `decide`: a decision on one target at `now` by a device whose own clock is `own`, with the clocks of the registers it holds on that target (`held`): the decision's clock, or \"refused\", and `ownAfter`. `sequence`: one device's own clock through `steps` in order, each a raise or a decision, with `ownAfter` after each. Checked in src/test-vectors.test.ts.",
+  "version": "de.wappensc.together.tdsp.probe.draft-10",
+  "constants": { "MAX_MS": 281474976710655, "MAX_COUNTER": 65535, "SPAN": 86400000 },
+  "vectors": [
+    {
+      "name": "the counter counts on",
+      "op": "next",
+      "clock": [1793008800000, 4],
+      "next": [1793008800000, 5]
+    },
+    { "name": "from the least clock", "op": "next", "clock": [0, 0], "next": [0, 1] },
+    {
+      "name": "past 65 535 the counter carries into the ms",
+      "op": "next",
+      "clock": [1793008800000, 65535],
+      "next": [1793008800001, 0]
+    },
+    {
+      "name": "the last clock but one",
+      "op": "next",
+      "clock": [281474976710655, 65534],
+      "next": [281474976710655, 65535]
+    },
+    {
+      "name": "the end of the range: none",
+      "op": "next",
+      "clock": [281474976710655, 65535],
+      "next": "none"
+    },
+    {
+      "name": "whole milliseconds",
+      "op": "wall",
+      "now": 1793008800000,
+      "wall": [1793008800000, 0]
+    },
+    {
+      "name": "a fraction is floored",
+      "op": "wall",
+      "now": 1793008800000.75,
+      "wall": [1793008800000, 0]
+    },
+    { "name": "before 1970: 0", "op": "wall", "now": -5000, "wall": [0, 0] },
+    {
+      "name": "a negative fraction floors below 0, then 0",
+      "op": "wall",
+      "now": -0.5,
+      "wall": [0, 0]
+    },
+    {
+      "name": "after the end of the range: MAX_MS",
+      "op": "wall",
+      "now": 281474976710666,
+      "wall": [281474976710655, 0]
+    },
+    {
+      "name": "a day after the wall clock, the counter at its end",
+      "op": "cap",
+      "now": 1793008800000,
+      "cap": [1793095200000, 65535]
+    },
+    {
+      "name": "never past MAX_MS",
+      "op": "cap",
+      "now": 281474890310656,
+      "cap": [281474976710655, 65535]
+    },
+    {
+      "name": "from a wall clock before 1970: the span itself",
+      "op": "cap",
+      "now": -1000,
+      "cap": [86400000, 65535]
+    },
+    {
+      "name": "to a merged clock within the span",
+      "op": "raise",
+      "own": [1793008800000, 3],
+      "clock": [1793008805000, 0],
+      "now": 1793008800000,
+      "ownAfter": [1793008805000, 0]
+    },
+    {
+      "name": "never lower",
+      "op": "raise",
+      "own": [1793008805000, 0],
+      "clock": [1793008800000, 3],
+      "now": 1793008800000,
+      "ownAfter": [1793008805000, 0]
+    },
+    {
+      "name": "a register a year ahead raises it only to the end of the span",
+      "op": "raise",
+      "own": [1793008800000, 0],
+      "clock": [1824544800000, 0],
+      "now": 1793008800000,
+      "ownAfter": [1793095200000, 65535]
+    },
+    {
+      "name": "an own clock already beyond the span stays where it is",
+      "op": "raise",
+      "own": [1793095200010, 0],
+      "clock": [1824544800000, 0],
+      "now": 1793008800000,
+      "ownAfter": [1793095200010, 0]
+    },
+    {
+      "name": "the wall clock jumped back an hour: own does not fall",
+      "op": "raise",
+      "own": [1793008800000, 7],
+      "clock": [1793005200000, 0],
+      "now": 1793001600000,
+      "ownAfter": [1793008800000, 7]
+    },
+    {
+      "name": "a device that holds nothing: the wall clock",
+      "op": "decide",
+      "own": [0, 0],
+      "now": 1793008800000,
+      "held": [],
+      "clock": [1793008800000, 0],
+      "ownAfter": [1793008800000, 0]
+    },
+    {
+      "name": "a second decision in the same ms: the counter",
+      "op": "decide",
+      "own": [1793008800000, 0],
+      "now": 1793008800000,
+      "held": [],
+      "clock": [1793008800000, 1],
+      "ownAfter": [1793008800000, 1]
+    },
+    {
+      "name": "the counter at its end: the next ms",
+      "op": "decide",
+      "own": [1793008800000, 65535],
+      "now": 1793008800000,
+      "held": [],
+      "clock": [1793008800001, 0],
+      "ownAfter": [1793008800001, 0]
+    },
+    {
+      "name": "above a register it holds on the target, a minute ahead",
+      "op": "decide",
+      "own": [1793008800000, 0],
+      "now": 1793008800000,
+      "held": [[1793008860000, 2]],
+      "clock": [1793008860000, 3],
+      "ownAfter": [1793008860000, 3]
+    },
+    {
+      "name": "above a register it holds a year ahead; own stops at the end of the span",
+      "op": "decide",
+      "own": [1793008800000, 0],
+      "now": 1793008800000,
+      "held": [[1824544800000, 0]],
+      "clock": [1824544800000, 1],
+      "ownAfter": [1793095200000, 65535]
+    },
+    {
+      "name": "registers below its own clock add nothing",
+      "op": "decide",
+      "own": [1793008800010, 3],
+      "now": 1793008800000,
+      "held": [[1793008800000, 1], [1793008800005, 0]],
+      "clock": [1793008800010, 4],
+      "ownAfter": [1793008800010, 4]
+    },
+    {
+      "name": "the greatest of several held",
+      "op": "decide",
+      "own": [1793008800000, 0],
+      "now": 1793008800000,
+      "held": [[1793008800100, 0], [1793008800050, 9], [1793008800200, 1], [1793008800150, 0]],
+      "clock": [1793008800200, 2],
+      "ownAfter": [1793008800200, 2]
+    },
+    {
+      "name": "a held register at MAX_MS − SPAN",
+      "op": "decide",
+      "own": [0, 0],
+      "now": 1793008800000,
+      "held": [[281474890310655, 5]],
+      "clock": [281474890310655, 6],
+      "ownAfter": [1793095200000, 65535]
+    },
+    {
+      "name": "a held register at the last clock but one: the end of the range",
+      "op": "decide",
+      "own": [1793008800000, 0],
+      "now": 1793008800000,
+      "held": [[281474976710655, 65534]],
+      "clock": [281474976710655, 65535],
+      "ownAfter": [1793095200000, 65535]
+    },
+    {
+      "name": "a held register at the end of the range: refused",
+      "op": "decide",
+      "own": [1793008800000, 0],
+      "now": 1793008800000,
+      "held": [[281474976710655, 65535]],
+      "clock": "refused",
+      "ownAfter": [1793008800000, 0]
+    },
+    {
+      "name": "its own clock at the end of the range: refused",
+      "op": "decide",
+      "own": [281474976710655, 65535],
+      "now": 1793008800000,
+      "held": [],
+      "clock": "refused",
+      "ownAfter": [281474976710655, 65535]
+    },
+    {
+      "name": "the wall clock jumped back an hour: above its own clock all the same",
+      "op": "decide",
+      "own": [1793008800000, 5],
+      "now": 1793005200000,
+      "held": [],
+      "clock": [1793008800000, 6],
+      "ownAfter": [1793008800000, 6]
+    },
+    {
+      "name": "a wall clock past the range: MAX_MS",
+      "op": "decide",
+      "own": [0, 0],
+      "now": 281474976710661,
+      "held": [],
+      "clock": [281474976710655, 0],
+      "ownAfter": [281474976710655, 0]
+    },
+    {
+      "name": "a wall clock before 1970",
+      "op": "decide",
+      "own": [0, 0],
+      "now": -1,
+      "held": [],
+      "clock": [0, 1],
+      "ownAfter": [0, 1]
+    },
+    {
+      "name": "a register a year ahead: own stops at the end of the span; then only next(own) goes beyond it, one step per decision; a wall clock jumping back changes nothing; a day later the wall clock leads again",
+      "op": "sequence",
+      "own": [0, 0],
+      "steps": [
+        {
+          "now": 1793008800000,
+          "decide": { "held": [] },
+          "clock": [1793008800000, 0],
+          "ownAfter": [1793008800000, 0]
+        },
+        { "now": 1793008800000, "raise": [1824544800000, 0], "ownAfter": [1793095200000, 65535] },
+        {
+          "now": 1793008800000,
+          "decide": { "held": [] },
+          "clock": [1793095200001, 0],
+          "ownAfter": [1793095200001, 0]
+        },
+        {
+          "now": 1793008801000,
+          "decide": { "held": [] },
+          "clock": [1793095200001, 1],
+          "ownAfter": [1793095200001, 1]
+        },
+        {
+          "now": 1793005200000,
+          "decide": { "held": [] },
+          "clock": [1793095200001, 2],
+          "ownAfter": [1793095200001, 2]
+        },
+        {
+          "now": 1793181600000,
+          "decide": { "held": [] },
+          "clock": [1793181600000, 0],
+          "ownAfter": [1793181600000, 0]
+        }
+      ]
+    },
+    {
+      "name": "a decision on the register's own target lies beyond the span, made in knowledge of it; the next decision elsewhere does not follow it",
+      "op": "sequence",
+      "own": [1793008800000, 0],
+      "steps": [
+        {
+          "now": 1793008800000,
+          "decide": { "held": [[1824544800000, 0]] },
+          "clock": [1824544800000, 1],
+          "ownAfter": [1793095200000, 65535]
+        },
+        {
+          "now": 1793008800000,
+          "decide": { "held": [] },
+          "clock": [1793095200001, 0],
+          "ownAfter": [1793095200001, 0]
+        },
+        {
+          "now": 1793008800000,
+          "decide": { "held": [[1824544800000, 1]] },
+          "clock": [1824544800000, 2],
+          "ownAfter": [1793095200001, 1]
+        }
+      ]
+    },
+    {
+      "name": "restoring and merging raise own to the control clock, never above the span",
+      "op": "sequence",
+      "own": [0, 0],
+      "steps": [
+        { "now": 1793008800000, "raise": [1793005200000, 4], "ownAfter": [1793005200000, 4] },
+        {
+          "now": 1793008800000,
+          "decide": { "held": [] },
+          "clock": [1793008800000, 0],
+          "ownAfter": [1793008800000, 0]
+        },
+        { "now": 1793008800000, "raise": [1793012400000, 0], "ownAfter": [1793012400000, 0] },
+        {
+          "now": 1793008800000,
+          "decide": { "held": [] },
+          "clock": [1793012400000, 1],
+          "ownAfter": [1793012400000, 1]
+        }
+      ]
+    }
+  ]
+}

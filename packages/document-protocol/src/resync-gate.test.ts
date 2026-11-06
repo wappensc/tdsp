@@ -96,3 +96,30 @@ describe("ResyncGate", () => {
     });
   });
 });
+
+describe("ResyncGate: a wall clock that jumps back (§1.6, RSY-3, RSY-4)", () => {
+  const HOUR = 3_600_000;
+
+  it("expires an outstanding request after its time as measured, not as long again as the wall clock went back", () => {
+    const gate = new ResyncGate();
+    gate.begin(ASK);
+    vi.advanceTimersByTime(10_000);
+    vi.setSystemTime(Date.now() - HOUR); // as a time service may set it
+    vi.advanceTimersByTime(49_999);
+    expect(gate.status().state).toBe("requested");
+    vi.advanceTimersByTime(1);
+    expect(gate.status()).toMatchObject({ state: "idle", lastOutcome: "unanswered" });
+  });
+
+  it("holds the floor for its time as measured", () => {
+    const gate = new ResyncGate();
+    const paced = { ...ASK, floorMs: 30_000 };
+    gate.begin(paced);
+    gate.answered();
+    vi.setSystemTime(Date.now() - HOUR);
+    vi.advanceTimersByTime(29_999);
+    expect(gate.begin(paced)).toEqual({ sent: false, reason: "rate-floor" });
+    vi.advanceTimersByTime(1);
+    expect(gate.begin(paced)).toEqual({ sent: true });
+  });
+});

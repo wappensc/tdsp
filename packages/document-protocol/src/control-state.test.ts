@@ -1,22 +1,32 @@
 import { describe, expect, it } from "vitest";
+import { type Clock, compareClocks, MAX_CLOCK_COUNTER, MAX_CLOCK_MS, ZERO_CLOCK } from "./clock";
 import {
   ACCEPTED_CONTROL_BYTES,
-  type ControlOperation,
   ControlState,
-  type ControlStateSnapshot,
   type ControlTarget,
-  type ControlValue,
   DEVICE_TAG,
   isControlTarget,
-  issuingVector,
   layerTargetOf,
   MAX_ISSUE_BYTES,
-  type MemberRight,
+  MAX_RIGHT_TARGETS,
   memberOf,
-  narrowestRight,
   newDeviceTag,
+  REGISTER_WIDTH,
+  type Register,
+  type RegisterState,
+  registerStateFrom,
+  rightIn,
 } from "./control-state";
 import { canonicalJson } from "./digest";
+import { compareRegisters, registerStateDigest } from "./registers";
+
+/**
+ * Control state as registers (SPECIFICATION.md §7): one register per target, the latest decision
+ * on it (CTL-20), merged as CTL-22 says — the greater clock, then the later device tag in Unicode
+ * code point order, then the narrower value (CTL-23) — and the close as a flag (LIF-7); within the
+ * bounds of CTL-30, measured as CTL-34 says, and beyond them a capacity conflict (CTL-32) that still
+ * takes the close (CTL-36); and what a device of the creator may decide on top of it (CTL-37).
+ */
 
 /** A seeded generator, so a failure replays from its seed. */
 function generator(seed: number) {
@@ -39,1178 +49,647 @@ function generator(seed: number) {
   };
 }
 
-const RIGHTS: readonly MemberRight[] = [null, "read", "write"];
-const TARGETS: readonly ControlTarget[] = ["member:bob", "member:carol"];
+const T = 1_793_008_800_000;
+const at = (ms: number, counter = 0): Clock => [T + ms, counter];
+const LAPTOP = "QUFBQUFBQUFBQUFBQUFBQQ";
+const TABLET = "QkJCQkJCQkJCQkJCQkJCQg";
+const PHONE = "Ms3dRk0ZyS7cH1qkM8fWNA";
+const LAYER = "com.example.comments/1";
+const utf8 = (text: string) => new TextEncoder().encode(text).length;
 
-/** One creator device: its own state, what it has seen (any order), and its counter. */
-interface Device {
-  readonly tag: string;
-  readonly state: ControlState;
-  readonly seenIds: Set<number>;
-  counter: number;
-}
+const reg = (value: Register["value"], clock: Clock, device = LAPTOP): Register => ({
+  value,
+  clock,
+  device,
+});
+const one = (target: string, register: Register, closed = false): RegisterState => ({
+  closed,
+  targets: { [target]: register },
+});
 
-interface Issued {
-  readonly id: number;
-  readonly op: ControlOperation;
-  /** The ids of every operation its device held when issuing, holes or not (what `truth` reads). */
-  readonly knew: ReadonlySet<number>;
-  /** For variant (c): the operations on its target nothing superseded in its device's view. */
-  readonly pred: readonly number[];
-}
+describe("targets (§7.1, LAY-5)", () => {
+  it("are members, rights on layers with a layer id, and the pace; the close is no target", () => {
+    expect(isControlTarget("member:bob")).toBe(true);
+    expect(isControlTarget("pace")).toBe(true);
+    expect(isControlTarget(`layer:${LAYER}:member:bob`)).toBe(true);
+    for (const target of [
+      "close",
+      "layer:Comments/1:member:bob",
+      "layer::member:bob",
+      `layer:${LAYER}:bob`,
+      `layer:${LAYER}`,
+      "bob",
+    ]) {
+      expect(isControlTarget(target), target).toBe(false);
+    }
+  });
 
-function issue(
-  device: Device,
-  issued: Issued[],
-  target: ControlTarget,
-  value: MemberRight,
-): Issued {
-  device.counter += 1;
-  const op: ControlOperation = {
-    device: device.tag,
-    counter: device.counter,
-    target,
-    value,
-    seen: issuingVector(device.tag, device.state.vector, {}),
-  };
-  const known = [...device.seenIds]
-    .map((id) => issued[id] as Issued)
-    .filter((x) => x.op.target === target);
-  const replaced = new Set(known.flatMap((x) => x.pred));
-  const entry: Issued = {
-    id: issued.length,
-    op,
-    knew: new Set(device.seenIds),
-    pred: known.filter((x) => !replaced.has(x.id)).map((x) => x.id),
-  };
-  issued.push(entry);
-  device.state.add(op);
-  device.seenIds.add(entry.id);
-  return entry;
-}
-
-function deliver(device: Device, entry: Issued): void {
-  device.state.add(entry.op);
-  device.seenIds.add(entry.id);
-}
-
-/** The oracle: superseded is what a device had seen — in any order — before deciding the same target. */
-function truth(ops: readonly Issued[], target: ControlTarget): MemberRight | undefined {
-  const on = ops.filter((x) => x.op.target === target);
-  return narrowestRight(
-    on.filter((x) => !on.some((p) => p.knew.has(x.id))).map((x) => x.op.value as MemberRight),
-  );
-}
-
-/** The draft's rule on the whole set: superseded is what the vector of a later decision covers. */
-function byVector(ops: readonly Issued[], target: ControlTarget): MemberRight | undefined {
-  const on = ops.filter((x) => x.op.target === target);
-  const covers = (p: ControlOperation, o: ControlOperation) =>
-    (p.device === o.device && p.counter > o.counter) || (p.seen[o.device] ?? 0) >= o.counter;
-  return narrowestRight(
-    on.filter((x) => !on.some((p) => covers(p.op, x.op))).map((x) => x.op.value as MemberRight),
-  );
-}
-
-/** Variant (c) on the whole set: superseded is what a later decision names as replaced. */
-function byPredecessors(ops: readonly Issued[], target: ControlTarget): MemberRight | undefined {
-  const on = ops.filter((x) => x.op.target === target);
-  return narrowestRight(
-    on.filter((x) => !on.some((p) => p.pred.includes(x.id))).map((x) => x.op.value as MemberRight),
-  );
-}
-
-function rightOf(state: ControlState, target: ControlTarget): MemberRight | undefined {
-  const member = target.slice("member:".length);
-  return state.members.get(member) ?? (state.isEmpty ? undefined : null);
-}
-
-const order = (right: MemberRight | undefined) =>
-  right === undefined ? -1 : RIGHTS.indexOf(right);
-
-describe("rights on layers as targets (§7.1, LAY-5)", () => {
-  const LAYER = "com.example.comments/1";
-
-  it("reads a layer right's target by its first :member:, and only with a layer id", () => {
+  it("reads a layer right's target by its first :member:", () => {
     expect(layerTargetOf(`layer:${LAYER}:member:bob`)).toEqual({ layer: LAYER, member: "bob" });
     expect(layerTargetOf(`layer:${LAYER}:member:@bob:example.org`)).toEqual({
       layer: LAYER,
       member: "@bob:example.org",
     });
     expect(memberOf(`layer:${LAYER}:member:bob`)).toBe("bob");
-    for (const target of [
-      "layer:Comments/1:member:bob",
-      "layer::member:bob",
-      `layer:${LAYER}:bob`,
-      `layer:${LAYER}`,
-    ]) {
-      expect(isControlTarget(target), target).toBe(false);
-    }
-    expect(isControlTarget(`layer:${LAYER}:member:bob`)).toBe(true);
-  });
-
-  it("holds the narrowest of concurrent rights on a layer, apart from the permission, and drops a revoked one", () => {
-    const state = new ControlState();
-    const laptop = "QUFBQUFBQUFBQUFBQUFBQQ";
-    const tablet = "QkJCQkJCQkJCQkJCQkJCQg";
-    state.add({ device: laptop, counter: 1, target: "member:bob", value: "read", seen: {} });
-    state.add({
-      device: laptop,
-      counter: 2,
-      target: `layer:${LAYER}:member:bob`,
-      value: "write",
-      seen: {},
-    });
-    state.add({
-      device: tablet,
-      counter: 1,
-      target: `layer:${LAYER}:member:bob`,
-      value: "read",
-      seen: {},
-    });
-    expect(state.members.get("bob")).toBe("read");
-    expect(state.layerRights.get(LAYER)?.get("bob")).toBe("read");
-    state.add({
-      device: laptop,
-      counter: 3,
-      target: `layer:${LAYER}:member:bob`,
-      value: null,
-      seen: { [tablet]: 1 },
-    });
-    expect(state.layerRights.get(LAYER)).toBeUndefined();
-    expect(state.members.get("bob")).toBe("read");
-  });
-});
-
-describe("control state as a set of operations (CTL-22 to CTL-25)", () => {
-  it("decides 0031's cases: concurrent → narrower, informed → the later decision, even wider", () => {
-    const laptop: Device = {
-      tag: "L".repeat(22),
-      state: new ControlState(),
-      seenIds: new Set(),
-      counter: 0,
-    };
-    const tablet: Device = {
-      tag: "T".repeat(22),
-      state: new ControlState(),
-      seenIds: new Set(),
-      counter: 0,
-    };
-    const issued: Issued[] = [];
-    const first = issue(laptop, issued, "member:carol", "write");
-    deliver(tablet, first);
-    // The laptop decides another member, then Carol; the tablet, without either, decides Carol.
-    issue(laptop, issued, "member:bob", "read");
-    const wide = issue(laptop, issued, "member:carol", "write");
-    const narrow = issue(tablet, issued, "member:carol", "read");
-    const bob = new ControlState();
-    for (const entry of issued) {
-      bob.add(entry.op);
-    }
-    expect(bob.members.get("carol")).toBe("read");
-    // Once the tablet has seen the laptop's decision, its wider choice stands everywhere.
-    deliver(tablet, wide);
-    const informed = issue(tablet, issued, "member:carol", "write");
-    bob.add(informed.op);
-    expect(bob.members.get("carol")).toBe("write");
-    expect(narrow.op.seen).toEqual({ [laptop.tag]: 1 });
-  });
-
-  it("keeps the close for good and the pace as the longest interval among concurrent ones", () => {
-    const state = new ControlState();
-    state.add({ device: "A".repeat(22), counter: 1, target: "pace", value: 2000, seen: {} });
-    state.add({ device: "B".repeat(22), counter: 1, target: "pace", value: 5000, seen: {} });
-    expect(state.pace).toBe(5000);
-    state.add({
-      device: "A".repeat(22),
-      counter: 2,
-      target: "pace",
-      value: 1000,
-      seen: { ["B".repeat(22)]: 1 },
-    });
-    expect(state.pace).toBe(1000);
-    state.add({ device: "B".repeat(22), counter: 2, target: "close", value: true, seen: {} });
-    expect(state.closed).toBe(true);
-    expect(ControlState.from(state.snapshot()).closed).toBe(true);
-  });
-
-  it("random histories: order, duplicates, partial snapshots and late operations give the same state; never wider than the oracle", () => {
-    const tally = {
-      histories: 0,
-      concurrent: 0,
-      narrowerThanTruth: 0,
-      predecessorsMiss: 0,
-      maxHeads: 0,
-      maxPredecessorIds: 0,
-    };
-    for (const count of [2, 3]) {
-      for (let seed = 1; seed <= 1500; seed++) {
-        const g = generator(seed * 7 + count);
-        const devices: Device[] = Array.from({ length: count }, (_, i) => ({
-          tag: String.fromCharCode(65 + i).repeat(22),
-          state: new ControlState(),
-          seenIds: new Set<number>(),
-          counter: 0,
-        }));
-        const issued: Issued[] = [];
-        const snapshots: ReturnType<ControlState["snapshot"]>[] = [];
-        for (let step = 0; step < 4 + Math.floor(g.random() * 16); step++) {
-          const device = g.pick(devices);
-          const roll = g.random();
-          if (roll < 0.45) {
-            issue(device, issued, g.pick(TARGETS), g.pick(RIGHTS));
-          } else if (roll < 0.9) {
-            const missing = issued.filter((x) => !device.seenIds.has(x.id));
-            if (missing.length > 0) {
-              deliver(device, g.pick(missing));
-            }
-          } else {
-            snapshots.push(device.state.snapshot());
-          }
-        }
-        if (issued.length === 0) {
-          continue;
-        }
-        tally.histories++;
-        // A member hears some operations and snapshots in any order, with duplicates, then the rest.
-        const member = new ControlState();
-        const first = g
-          .shuffle([...issued, ...issued.slice(0, 2)])
-          .slice(0, Math.floor(g.random() * issued.length));
-        const items: (Issued | ReturnType<ControlState["snapshot"]>)[] = g.shuffle([
-          ...first,
-          ...snapshots,
-        ]);
-        for (const item of items) {
-          if ("op" in item) {
-            member.add(item.op);
-          } else {
-            member.merge(item);
-          }
-        }
-        for (const entry of g.shuffle(issued)) {
-          member.add(entry.op);
-        }
-        // Another member gets everything through one device's final snapshot plus the rest.
-        const relayed = ControlState.from(g.pick(devices).state.snapshot());
-        for (const entry of g.shuffle(issued)) {
-          relayed.add(entry.op);
-        }
-        for (const target of TARGETS) {
-          const expected = byVector(issued, target);
-          if (!issued.some((x) => x.op.target === target)) {
-            continue;
-          }
-          expect(rightOf(member, target), `seed ${seed}, ${count} devices, ${target}`).toBe(
-            expected ?? null,
-          );
-          expect(rightOf(relayed, target), `seed ${seed}, relayed, ${target}`).toBe(
-            expected ?? null,
-          );
-          const real = truth(issued, target);
-          expect(order(expected)).toBeLessThanOrEqual(order(real));
-          const on = issued.filter((x) => x.op.target === target);
-          if (on.filter((x) => !on.some((p) => p.knew.has(x.id))).length > 1) {
-            tally.concurrent++;
-            if (order(expected) < order(real)) {
-              tally.narrowerThanTruth++;
-            }
-          }
-          if (byPredecessors(issued, target) !== real) {
-            tally.predecessorsMiss++;
-          }
-          // What (c) must keep to judge a late operation: every id some decision named as replaced.
-          tally.maxPredecessorIds = Math.max(
-            tally.maxPredecessorIds,
-            new Set(on.flatMap((x) => x.pred)).size,
-          );
-        }
-        for (const target of Object.values(member.snapshot().targets)) {
-          tally.maxHeads = Math.max(tally.maxHeads, target.heads.length);
-          expect(target.heads.length).toBeLessThanOrEqual(count);
-        }
-      }
-    }
-    console.log("control-state property test", tally);
-    expect(tally.predecessorsMiss).toBe(0);
-  });
-
-  it("reports two different operations under one (device, counter) and merges them into one, the narrowest (CTL-24)", () => {
-    const state = new ControlState();
-    const tag = "R".repeat(22);
-    const other = "S".repeat(22);
-    state.add({ device: tag, counter: 1, target: "member:bob", value: "write", seen: {} });
-    state.add({ device: tag, counter: 1, target: "member:bob", value: "write", seen: {} });
-    expect(state.anomalies).toEqual([]);
-    state.add({
-      device: tag,
-      counter: 1,
-      target: "member:bob",
-      value: "read",
-      seen: { [other]: 2 },
-    });
-    expect(state.anomalies).toEqual([{ device: tag, counter: 1 }]);
-    expect(state.members.get("bob")).toBe("read");
-    expect(state.snapshot().targets["member:bob"]?.heads).toEqual([
-      { device: tag, counter: 1, value: "read", seen: { [other]: 2 } },
-    ]);
-  });
-
-  it("keeps one head per device and counter however many variants arrive, in any order (CTL-24, §7.5)", () => {
-    const tag = "P".repeat(22);
-    const variants = Array.from({ length: 70 }, (_, n) => ({
-      device: tag,
-      counter: 1,
-      target: "pace" as ControlTarget,
-      value: n,
-      seen: {},
-    }));
-    const forward = new ControlState();
-    for (const variant of variants) forward.add(variant);
-    const backward = new ControlState();
-    for (const variant of [...variants].reverse()) backward.add(variant);
-    expect(forward.snapshot().targets.pace?.heads).toHaveLength(1);
-    expect(forward.pace).toBe(69); // the longest interval, as keeping all would give
-    expect(backward.snapshot()).toEqual(forward.snapshot());
-    // A snapshot that still carries both merges into one as well.
-    const fromSnapshot = new ControlState();
-    fromSnapshot.merge({
-      vector: { [tag]: 1 },
-      targets: {
-        "member:bob": {
-          seen: {},
-          heads: [
-            { device: tag, counter: 1, value: "write", seen: {} },
-            { device: tag, counter: 1, value: null, seen: {} },
-          ],
-        },
-      },
-    });
-    expect(fromSnapshot.snapshot().targets["member:bob"]?.heads).toEqual([
-      { device: tag, counter: 1, value: null, seen: {} },
-    ]);
-  });
-
-  it("takes the operation that fills a hole even with 1 024 counters above it, and still bounds the rest (CTL-30)", () => {
-    const tag = "A".repeat(22);
-    const op = (counter: number) => ({
-      device: tag,
-      counter,
-      target: "member:bob" as ControlTarget,
-      value: "write" as const,
-      seen: {},
-    });
-    const state = new ControlState();
-    for (let counter = 2; counter <= 1025; counter++) expect(state.add(op(counter))).toBe("added");
-    expect(state.add(op(1027))).toBe("refused"); // the bound still holds above the hole
-    expect(state.add(op(1))).toBe("added"); // the one that fills it
-    expect(state.vector).toEqual({ [tag]: 1025 });
-    expect(state.hasHoles).toBe(false);
-  });
-
-  it("at the bound on devices keeps the first 64 tags in code point order, whatever the order of arrival (CTL-30, CTL-35)", () => {
-    const tags = Array.from({ length: 70 }, (_, i) => `T${String(i).padStart(21, "0")}`);
-    const op = (device: string) => ({
-      device,
-      counter: 1,
-      target: `member:${device}` as ControlTarget,
-      value: "read" as const,
-      seen: {},
-    });
-    const g = generator(7);
-    const orders = [tags, [...tags].reverse(), g.shuffle(tags), g.shuffle(tags)];
-    const states = orders.map((order) => {
-      const state = new ControlState();
-      for (const tag of order) state.add(op(tag));
-      return state;
-    });
-    for (const state of states) {
-      expect(Object.keys(state.vector).sort()).toEqual(tags.slice(0, 64));
-      expect(state.snapshot()).toEqual(states[0]?.snapshot());
-    }
-    // Snapshots merged in either order agree too.
-    const a = new ControlState();
-    for (const tag of tags.slice(0, 40)) a.add(op(tag));
-    const b = new ControlState();
-    for (const tag of tags.slice(30)) b.add(op(tag));
-    const ab = ControlState.from(a.snapshot());
-    expect(ab.merge(b.snapshot())).toBeGreaterThan(0);
-    const ba = ControlState.from(b.snapshot());
-    ba.merge(a.snapshot());
-    expect(ab.snapshot()).toEqual(ba.snapshot());
-    expect(Object.keys(ab.vector).sort()).toEqual(tags.slice(0, 64));
-  });
-
-  it("beyond the bound on targets is in a capacity conflict, whatever the order; the close and the pace always hold (CTL-30, CTL-32)", () => {
-    const tag = "M".repeat(22);
-    const names = Array.from(
-      { length: 5_001 },
-      (_, i) => `member:m${String(i).padStart(5, "0")}` as ControlTarget,
-    );
-    const run = (order: readonly ControlTarget[]) => {
-      const state = new ControlState();
-      let counter = 0;
-      for (const target of order)
-        state.add({ device: tag, counter: ++counter, target, value: "read", seen: {} });
-      state.add({ device: tag, counter: ++counter, target: "pace", value: 1000, seen: {} });
-      state.add({ device: tag, counter: ++counter, target: "close", value: true, seen: {} });
-      return state;
-    };
-    // 5 000 members, the pace and the close: within the bound.
-    const full = run(names.slice(0, 5_000));
-    expect(full.capacityConflict).toBe(false);
-    expect(Object.keys(full.snapshot().targets)).toHaveLength(5_002);
-    expect(full.closed).toBe(true);
-    expect(full.pace).toBe(1000);
-    // One member more, in whatever order: refused, and a conflict — no member given up for it.
-    for (const order of [names, [...names].reverse()]) {
-      const state = run(order);
-      expect(state.capacityConflict).toBe(true);
-      expect(state.members.size).toBe(5_000);
-      expect(state.closed).toBe(true);
-      expect(state.pace).toBe(1000);
-    }
-  });
-
-  it("a device of the creator issues no member beyond the bound on targets, and is in no conflict for refusing (CTL-37)", () => {
-    const tag = "I".repeat(22);
-    const state = new ControlState();
-    for (let i = 0; i < 5_000; i++)
-      state.add({
-        device: tag,
-        counter: i + 1,
-        target: `member:m${String(i).padStart(5, "0")}` as ControlTarget,
-        value: "read",
-        seen: {},
-      });
-    const next = (counter: number, target: ControlTarget, value: ControlValue) =>
-      state.issue({ device: tag, counter, target, value, seen: {} });
-    expect(next(5_001, "member:one-too-many", "read")).toEqual({ refused: "too-large" });
-    expect(state.capacityConflict).toBe(false);
-    // A target it holds, the pace and the close it still issues.
-    expect("next" in next(5_001, "member:m00000", null)).toBe(true);
-    expect("next" in next(5_001, "pace", 1000)).toBe(true);
-    expect("next" in next(5_001, "close", true)).toBe(true);
-  });
-
-  it("refuses a snapshot whose union goes over the bound on targets as a whole, a capacity conflict, and takes its close (CTL-30, CTL-32, CTL-36)", () => {
-    const device = (letter: string) => letter.repeat(22);
-    const members = (state: ControlState, tag: string, from: number, count: number) => {
-      for (let i = 0; i < count; i++)
-        state.add({
-          device: tag,
-          counter: i + 1,
-          target: `member:m${String(from + i).padStart(5, "0")}` as ControlTarget,
-          value: "read",
-          seen: {},
-        });
-    };
-    // Two devices of the creator that each added 2 600 members: honest, and together too many.
-    const a = new ControlState();
-    members(a, device("A"), 0, 2_600);
-    const b = new ControlState();
-    members(b, device("B"), 2_600, 2_600);
-    b.add({ device: device("B"), counter: 2_601, target: "close", value: true, seen: {} });
-    expect(a.capacityConflict || b.capacityConflict).toBe(false);
-    const before = a.snapshot();
-    const { refused } = a.mergeOrRefuse(b.snapshot());
-    expect(refused).toBe(true);
-    expect(a.capacityConflict).toBe(true);
-    expect(a.closed).toBe(true);
-    expect(a.snapshot().targets).toEqual({ ...before.targets, close: b.snapshot().targets.close });
-    // The other way round alike.
-    const ba = ControlState.from(b.snapshot());
-    expect(ba.mergeOrRefuse(a.snapshot()).refused).toBe(true);
-    expect(ba.capacityConflict).toBe(true);
-  });
-
-  it("holds at most the bytes it is given as a snapshot carries them, and refuses a snapshot that would go over as a whole (CTL-30)", () => {
-    const tag = "B".repeat(22);
-    const op = (n: number) => ({
-      device: tag,
-      counter: n,
-      target: `member:@${String(n).padStart(250, "x")}` as ControlTarget,
-      value: "read" as const,
-      seen: {},
-    });
-    // 1 MiB here, which the bound on targets does not reach first with ids of 255 bytes.
-    const state = new ControlState({ maxBytes: MAX_ISSUE_BYTES });
-    let counter = 0;
-    while (state.add(op(counter + 1)) === "added") counter += 1;
-    expect(counter).toBeGreaterThan(2_000); // hundreds of members even with ids of 255 bytes
-    expect(state.bytes).toBeLessThanOrEqual(MAX_ISSUE_BYTES);
-    expect(new TextEncoder().encode(JSON.stringify(state.snapshot())).length).toBe(state.bytes);
-    // A snapshot that would bring another state over the bound changes nothing in it.
-    const third = new ControlState({ maxBytes: MAX_ISSUE_BYTES });
-    for (let n = 1; n <= 40; n++)
-      third.add({
-        device: "D".repeat(22),
-        counter: n,
-        target: `member:@${String(n).padStart(250, "y")}` as ControlTarget,
-        value: "read",
-        seen: {},
-      });
-    expect(third.merge(state.snapshot())).toBeGreaterThan(0);
-    expect(third.bytes).toBeLessThanOrEqual(MAX_ISSUE_BYTES);
-    expect(Object.keys(third.snapshot().targets)).toHaveLength(40);
-  });
-
-  it("names holes and what another vector holds beyond this one (LOS-10, RSY-16)", () => {
-    const state = new ControlState();
-    const tag = "H".repeat(22);
-    state.add({ device: tag, counter: 2, target: "member:bob", value: "read", seen: {} });
-    expect(state.hasHoles).toBe(true);
-    expect(state.vector).toEqual({});
-    state.add({ device: tag, counter: 1, target: "member:carol", value: "read", seen: {} });
-    expect(state.hasHoles).toBe(false);
-    expect(state.vector).toEqual({ [tag]: 2 });
-    expect(state.lacksAnyOf({ [tag]: 3 })).toBe(true);
-    expect(state.hasAnyBeyond({ [tag]: 1 })).toBe(true);
-    expect(state.hasAnyBeyond(null)).toBe(true);
-    expect(state.hasAnyBeyond({ [tag]: 2 })).toBe(false);
+    expect(memberOf("member:@carol:example.org")).toBe("@carol:example.org");
+    expect(memberOf("pace")).toBeUndefined();
   });
 
   it("makes device tags of 22 base64url characters", () => {
-    const tags = new Set(Array.from({ length: 50 }, () => newDeviceTag()));
-    expect(tags.size).toBe(50);
-    for (const tag of tags) {
-      expect(tag).toMatch(DEVICE_TAG);
+    const tags = new Set(Array.from({ length: 200 }, () => newDeviceTag()));
+    expect(tags.size).toBe(200);
+    for (const tag of tags) expect(tag).toMatch(DEVICE_TAG);
+  });
+});
+
+describe("merging registers (CTL-22, CTL-23)", () => {
+  it("keeps the register with the greater clock, wider or narrower, in either order", () => {
+    for (const [earlier, later] of [
+      ["write", "read"],
+      ["read", "write"],
+      [null, "write"],
+      ["write", null],
+    ] as const) {
+      const first = reg(earlier, at(0), TABLET);
+      const second = reg(later, at(1), LAPTOP);
+      for (const order of [
+        [first, second],
+        [second, first],
+      ]) {
+        const state = new ControlState();
+        for (const register of order) state.take(one("member:bob", register));
+        expect(state.valueOf("member:bob"), `${String(earlier)} → ${String(later)}`).toBe(later);
+      }
+    }
+  });
+
+  it("orders clocks by milliseconds and then by counter, the counter carrying no weight of its own", () => {
+    const state = new ControlState();
+    state.take(one("member:bob", reg("write", at(0, 65_535))));
+    state.take(one("member:bob", reg("read", at(1, 0), TABLET)));
+    expect(state.valueOf("member:bob")).toBe("read");
+    state.take(one("member:bob", reg("write", at(1, 1), TABLET)));
+    expect(state.valueOf("member:bob")).toBe("write");
+  });
+
+  it("at equal clocks keeps the device that comes later in code point order", () => {
+    // In base64url: '-' < digits < 'A'–'Z' < '_' < 'a'–'z'.
+    const devices = [
+      "-".repeat(22),
+      "0".repeat(22),
+      "Z".repeat(22),
+      "_".repeat(22),
+      "a".repeat(22),
+    ];
+    const g = generator(7);
+    for (let round = 0; round < 20; round++) {
+      const state = new ControlState();
+      for (const device of g.shuffle(devices)) {
+        state.take(
+          one("member:bob", reg(device === "a".repeat(22) ? "read" : "write", at(0), device)),
+        );
+      }
+      expect(state.registerOf("member:bob")?.device).toBe("a".repeat(22));
+      expect(state.valueOf("member:bob")).toBe("read");
+    }
+  });
+
+  it("at equal clock and device keeps the narrower value, by the order of the target's kind", () => {
+    const tie = (target: string, values: readonly Register["value"][]) => {
+      const results = new Set<Register["value"] | undefined>();
+      for (const order of [values, [...values].reverse()]) {
+        const state = new ControlState();
+        for (const value of order) state.take(one(target, reg(value, at(0))));
+        results.add(state.valueOf(target));
+      }
+      expect(results.size, `${target} ${JSON.stringify(values)}`).toBe(1);
+      return [...results][0];
+    };
+    // A member: revoked before read before write.
+    expect(tie("member:bob", ["write", "read"])).toBe("read");
+    expect(tie("member:bob", ["read", null])).toBeNull();
+    expect(tie("member:bob", ["write", null, "read"])).toBeNull();
+    // A right on a layer: read before inherit before write (LAY-5).
+    expect(tie(`layer:${LAYER}:member:bob`, ["write", null])).toBeNull();
+    expect(tie(`layer:${LAYER}:member:bob`, [null, "read"])).toBe("read");
+    // The pace: the longer interval.
+    expect(tie("pace", [10_000, 30_000, 20_000])).toBe(30_000);
+  });
+
+  it("keeps a register far ahead of any wall clock: no receiver sets one aside by its own time (CTL-45)", () => {
+    const state = new ControlState();
+    state.take(one("member:bob", reg("write", at(0))));
+    const ahead: Clock = [MAX_CLOCK_MS, MAX_CLOCK_COUNTER];
+    state.take(one("member:bob", reg("read", ahead, TABLET)));
+    expect(state.valueOf("member:bob")).toBe("read");
+    expect(state.clock).toEqual(ahead);
+  });
+
+  it("changes nothing for a register it holds, or one that does not hold over it (CTL-6)", () => {
+    const state = new ControlState();
+    state.take(one("member:bob", reg("write", at(5))));
+    const digest = state.digest;
+    const revision = state.revision;
+    for (const register of [reg("write", at(5)), reg("read", at(4), TABLET)]) {
+      expect(state.take(one("member:bob", register))).toEqual({ refused: false, leftOut: 0 });
+    }
+    expect(state.digest).toBe(digest);
+    expect(state.valueOf("member:bob")).toBe("write");
+    expect(state.revision).toBeGreaterThan(revision);
+  });
+
+  it("random histories: any order, duplicates and grouping into frames and snapshots give one state, the oracle's", () => {
+    const targets: readonly ControlTarget[] = [
+      "member:bob",
+      "member:carol",
+      "member:@dave:example.org",
+      `layer:${LAYER}:member:bob`,
+      `layer:${LAYER}:member:carol`,
+      "pace",
+    ];
+    const devices = [LAPTOP, TABLET, PHONE];
+    for (let seed = 1; seed <= 200; seed++) {
+      const g = generator(seed);
+      const registers: [string, Register][] = [];
+      for (let n = 0; n < 30; n++) {
+        const target = g.pick(targets);
+        const value =
+          target === "pace"
+            ? g.pick([0, 10_000, 30_000])
+            : g.pick(["read", "write", null] as const);
+        // Few clocks, so that ties of clock, and of clock and device, occur.
+        const clock = at(Math.floor(g.random() * 4), Math.floor(g.random() * 2));
+        registers.push([target, reg(value, clock, g.pick(devices))]);
+      }
+      const closedAt = g.random() < 0.3 ? Math.floor(g.random() * registers.length) : -1;
+      // The oracle: per target the register that holds over every other (CTL-22).
+      const oracle = new Map<string, Register>();
+      for (const [target, register] of registers) {
+        const held = oracle.get(target);
+        if (held === undefined || compareRegisters(target, register, held) > 0)
+          oracle.set(target, register);
+      }
+      const states: ControlState[] = [];
+      for (let receiver = 0; receiver < 4; receiver++) {
+        const state = new ControlState();
+        const order = g.shuffle(registers.map((_, i) => i));
+        // Some arrive twice; some arrive grouped in one frame or in a snapshot of another receiver.
+        for (let i = 0; i < order.length; ) {
+          const size = 1 + Math.floor(g.random() * 4);
+          const group = order.slice(i, i + size);
+          const frame: RegisterState = {
+            closed: group.includes(closedAt),
+            targets: {},
+          };
+          const groupTargets: Record<string, Register> = {};
+          for (const index of group) {
+            const [target, register] = registers[index] as [string, Register];
+            // Within one frame a target appears once: the one that holds of the group.
+            const held = groupTargets[target];
+            if (held === undefined || compareRegisters(target, register, held) > 0) {
+              groupTargets[target] = register;
+            }
+          }
+          state.take({ ...frame, targets: groupTargets });
+          if (g.random() < 0.3) state.take({ ...frame, targets: groupTargets });
+          if (g.random() < 0.2 && states.length > 0) state.take(g.pick(states).state());
+          i += size;
+        }
+        states.push(state);
+      }
+      const expectedTargets = Object.fromEntries(
+        [...oracle].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+      );
+      for (const state of states) {
+        expect(state.state().targets, `seed ${seed}`).toEqual(expectedTargets);
+        expect(state.closed, `seed ${seed}`).toBe(closedAt >= 0);
+        expect(state.digest).toBe((states[0] as ControlState).digest);
+      }
+    }
+  });
+
+  it("is associative: snapshots taken in any grouping give one state", () => {
+    const g = generator(99);
+    const piece = (n: number) => {
+      const state = new ControlState();
+      for (let k = 0; k < 6; k++) {
+        const target = g.random() < 0.25 ? "pace" : `member:m${k % 3}`;
+        const value =
+          target === "pace" ? g.pick([0, 5_000]) : g.pick(["read", "write", null] as const);
+        state.take(
+          one(target, reg(value, at(Math.floor(g.random() * 3)), g.pick([LAPTOP, TABLET]))),
+        );
+      }
+      if (n === 2) state.close();
+      return state;
+    };
+    const [a, b, c] = [piece(0), piece(1), piece(2)];
+    const left = ControlState.from(a.state());
+    left.take(b.state());
+    left.take(c.state());
+    const bc = ControlState.from(b.state());
+    bc.take(c.state());
+    const right = ControlState.from(a.state());
+    right.take(bc.state());
+    expect(right.state()).toEqual(left.state());
+    expect(right.digest).toBe(left.digest);
+  });
+});
+
+describe("the close (CTL-23, LIF-7)", () => {
+  it("holds once a frame or a snapshot carries it, and nothing reopens the document", () => {
+    const state = new ControlState();
+    expect(state.isEmpty).toBe(true);
+    state.take({ closed: false, targets: {} });
+    expect(state.closed).toBe(false);
+    state.take({ closed: true, targets: {} });
+    expect(state.closed).toBe(true);
+    expect(state.isEmpty).toBe(false);
+    state.take({ closed: false, targets: { "member:bob": reg("write", at(9)) } });
+    expect(state.closed).toBe(true);
+    state.take(ControlState.from({ closed: false, targets: {} }).state());
+    expect(state.closed).toBe(true);
+  });
+
+  it("is a flag, no register: it changes no clock, but the digest", () => {
+    const state = ControlState.from(one("member:bob", reg("write", at(0))));
+    const { clock, digest } = state;
+    const closed = state.copy();
+    closed.close();
+    closed.close();
+    expect(closed.clock).toEqual(clock);
+    expect(closed.digest).not.toBe(digest);
+    expect(state.closed).toBe(false); // the copy closed, not the original
+  });
+});
+
+describe("reading control state", () => {
+  it("names members, the revoked, rights on layers and the pace, as their registers say", () => {
+    const state = ControlState.from({
+      closed: false,
+      targets: {
+        "member:bob": reg("read", at(0)),
+        "member:carol": reg("write", at(0)),
+        "member:dave": reg(null, at(0)),
+        [`layer:${LAYER}:member:bob`]: reg("write", at(1)),
+        [`layer:${LAYER}:member:carol`]: reg(null, at(1)),
+        [`layer:${LAYER}:member:dave`]: reg("write", at(1)),
+        pace: reg(30_000, at(2)),
+      },
+    });
+    expect(state.members).toEqual(
+      new Map([
+        ["bob", "read"],
+        ["carol", "write"],
+      ]),
+    );
+    expect(state.revoked).toEqual(new Set(["dave"]));
+    // Inherit (`null`) is no right of its own: carol's layer right is her permission.
+    expect(state.layerRights).toEqual(
+      new Map([
+        [
+          LAYER,
+          new Map([
+            ["bob", "write"],
+            ["dave", "write"],
+          ]),
+        ],
+      ]),
+    );
+    expect(state.pace).toBe(30_000);
+    expect(state.valueOf("member:dave")).toBeNull();
+    expect(state.valueOf("member:erin")).toBeUndefined();
+    expect(state.holds("member:dave")).toBe(true);
+    expect(state.holds("member:erin")).toBe(false);
+    expect(state.rightTargets).toBe(6);
+    // CTL-13 as rightIn applies it: a layer right is an exception to a permission; a revoked
+    // member has none, on any layer; unknown stays unknown.
+    expect(rightIn(state, "bob", LAYER)).toBe("write");
+    expect(rightIn(state, "carol", LAYER)).toBe("write");
+    expect(rightIn(state, "dave", LAYER)).toBe("revoked");
+    expect(rightIn(state, "dave")).toBe("revoked");
+    expect(rightIn(state, "erin")).toBeUndefined();
+  });
+
+  it("gives its state sorted by target, each register exactly value, clock and device, as a copy", () => {
+    const state = new ControlState();
+    state.take({
+      closed: false,
+      targets: {
+        pace: reg(5_000, at(0)),
+        "member:zoe": reg("read", at(0)),
+        "member:Zoe": { ...reg("write", at(0)), "com.example.note": "x" } as Register,
+      },
+    });
+    const snapshot = state.state();
+    expect(Object.keys(snapshot.targets)).toEqual(["member:Zoe", "member:zoe", "pace"]);
+    expect(snapshot.targets["member:Zoe"]).toEqual(reg("write", at(0)));
+    (snapshot.targets as Record<string, Register>)["member:new"] = reg("write", at(1));
+    expect(state.holds("member:new")).toBe(false);
+  });
+
+  it("has the greatest clock among its registers as its control clock, [0, 0] without any", () => {
+    const state = new ControlState();
+    expect(state.clock).toEqual(ZERO_CLOCK);
+    state.take(one("member:bob", reg("write", at(5, 2))));
+    state.take(one("pace", reg(1_000, at(5, 7))));
+    state.take(one("member:carol", reg("read", at(3))));
+    expect(state.clock).toEqual(at(5, 7));
+  });
+});
+
+describe("the control digest (LOS-24)", () => {
+  it("is registers.ts's digest of the state, of exactly closed and targets", () => {
+    const state = ControlState.from({
+      closed: true,
+      targets: { "member:bob": reg("write", at(0)) },
+    });
+    expect(state.digest).toBe(registerStateDigest(state.state()));
+  });
+
+  it("gives the specification's example digests", () => {
+    const bob = reg("write", [1_793_008_800_000, 0], PHONE);
+    const pace = reg(30_000, [1_793_008_800_000, 1], PHONE);
+    const carol = reg("read", [1_793_008_860_000, 0], PHONE);
+    const state = new ControlState();
+    expect(state.digest).toBe("dc2300e4cc3f671f");
+    state.take(one("member:bob", bob));
+    expect(state.digest).toBe("106166478695c222");
+    state.take(one("pace", pace));
+    expect(state.digest).toBe("f1bd21d9458955ff");
+    state.take(one("member:carol", carol));
+    expect(state.digest).toBe("8d243bc3f8bf3126");
+    expect(state.clock).toEqual([1_793_008_860_000, 0]);
+    state.close();
+    expect(state.digest).toBe("c3d2af7d419e5c5a");
+  });
+});
+
+describe("the bytes of control state (CTL-34)", () => {
+  it("random states, members beyond ASCII among them: always each target's name as RFC 8785 writes it, at the fixed width, the pace left out", () => {
+    const names = ["bob", "Zoë", "😀 smile", 'q"uote', "back\\slash", "\u0001ctl", "日本語", " "];
+    for (let seed = 1; seed <= 50; seed++) {
+      const g = generator(seed);
+      const state = new ControlState();
+      for (let n = 0; n < 40; n++) {
+        const name = `${g.pick(names)}${Math.floor(g.random() * 5)}`;
+        const target = g.pick([`member:${name}`, `layer:${LAYER}:member:${name}`, "pace"]);
+        const value =
+          target === "pace"
+            ? Math.floor(g.random() * 100_000)
+            : g.pick(["read", "write", null] as const);
+        const clock = at(Math.floor(g.random() * 1_000_000), Math.floor(g.random() * 3));
+        state.take(one(target, reg(value, clock, g.pick([LAPTOP, TABLET]))));
+        if (g.random() < 0.1) state.close();
+        const held = Object.keys(state.state().targets).filter((target) => target !== "pace");
+        const measured =
+          utf8('{"targets":{}}') +
+          held.reduce((sum, target) => sum + utf8(canonicalJson(target)) + 1 + REGISTER_WIDTH, 0) +
+          Math.max(0, held.length - 1);
+        expect(state.bytes, `seed ${seed}`).toBe(measured);
+      }
     }
   });
 });
 
-describe("a snapshot merges as a union of operations, whatever its vector names (CTL-23, CTL-25)", () => {
-  const A = "A".repeat(22);
-  const B = "B".repeat(22);
-  const X = "X".repeat(22);
+/** `count` members with ids of 255 characters: about 340 bytes of control state each. */
+function wide(count: number, from = 0, device = LAPTOP): RegisterState {
+  const targets: Record<string, Register> = {};
+  for (let n = from; n < from + count; n++) {
+    targets[`member:${String(n).padStart(8, "0")}${"x".repeat(247)}`] = reg("read", at(n), device);
+  }
+  return { closed: false, targets };
+}
 
-  it("keeps what a target had seen of a device the vector does not name: a late operation stays superseded", () => {
-    // B granted carol `write` having seen X:1, which revoked her; B never held X:1 itself (a report, CTL-27).
-    const x1: ControlOperation = {
-      device: X,
-      counter: 1,
-      target: "member:carol",
-      value: null,
-      seen: {},
-    };
-    const b1: ControlOperation = {
-      device: B,
-      counter: 1,
-      target: "member:carol",
-      value: "write",
-      seen: { [X]: 1 },
-    };
-    const frames = new ControlState();
-    frames.add(b1);
-    frames.add(x1);
-    const responder = new ControlState();
-    responder.add(b1);
-    const joiner = ControlState.from(responder.snapshot());
-    joiner.add(x1);
-    expect(frames.members.get("carol")).toBe("write");
-    expect(joiner.members.get("carol")).toBe("write");
-    expect(joiner.snapshot()).toEqual(frames.snapshot());
-  });
-
-  it("keeps a head of a device held only above a hole, counts it as held there, and reports nothing as refused", () => {
-    const a1: ControlOperation = {
-      device: A,
-      counter: 1,
-      target: "member:carol",
-      value: "write",
-      seen: {},
-    };
-    const x2: ControlOperation = {
-      device: X,
-      counter: 2,
-      target: "member:carol",
-      value: null,
-      seen: {},
-    };
-    const responder = new ControlState();
-    responder.add(a1);
-    responder.add(x2); // X:1 never arrived: X has a hole, and the vector names X not at all
-    expect(responder.vector).toEqual({ [A]: 1 });
-    const receiver = new ControlState();
-    receiver.add(a1);
-    expect(receiver.merge(responder.snapshot())).toBe(0);
-    expect(receiver.members.has("carol")).toBe(false); // the narrower of two concurrent decisions
-    expect(receiver.hasHoles).toBe(true);
-    expect(receiver.vector).toEqual(responder.vector);
-    expect(receiver.snapshot()).toEqual(responder.snapshot());
-  });
-
-  it("a restored state still has the holes it had (CTL-41, LOS-10)", () => {
+describe("the bounds of control state (CTL-30, CTL-32, CTL-36)", () => {
+  it("holds 5 000 targets on members and rights on layers, and the pace beside them", () => {
     const state = new ControlState();
-    state.add({ device: A, counter: 1, target: "member:bob", value: "write", seen: {} });
-    state.add({ device: A, counter: 3, target: "member:carol", value: "write", seen: {} }); // A:2 lost
-    expect(state.hasHoles).toBe(true);
-    const restored = ControlState.from(state.snapshot());
-    expect(restored.hasHoles).toBe(true);
-    expect(restored.vector).toEqual(state.vector);
-    restored.add({ device: A, counter: 2, target: "member:dave", value: "read", seen: {} });
-    expect(restored.hasHoles).toBe(false);
-    expect(restored.vector).toEqual({ [A]: 3 });
+    const targets: Record<string, Register> = {};
+    for (let n = 0; n < MAX_RIGHT_TARGETS; n++) {
+      targets[n % 2 === 0 ? `member:m${n}` : `layer:${LAYER}:member:m${n}`] = reg("read", at(n));
+    }
+    expect(state.take({ closed: false, targets })).toEqual({ refused: false, leftOut: 0 });
+    expect(state.rightTargets).toBe(MAX_RIGHT_TARGETS);
+    expect(state.take(one("pace", reg(1_000, at(0))))).toEqual({ refused: false, leftOut: 0 });
+    expect(state.capacityConflict).toBe(false);
   });
 
-  it("restores a device held only by a late operation above its hole: the target, its right and the hole", () => {
-    // Only counter 2 of a device arrived, Bob=read; its predecessor is late.
+  it("refuses a frame that brings it over 5 000 targets as a whole, enters the conflict, and takes its close", () => {
     const state = new ControlState();
-    state.add({ device: X, counter: 2, target: "member:bob", value: "read", seen: {} });
-    const snapshot = state.snapshot();
-    expect(snapshot.vector).toEqual({});
-    expect(snapshot.targets["member:bob"]?.heads).toHaveLength(1);
-    const restored = ControlState.from(snapshot);
-    expect(restored.members.get("bob")).toBe("read");
-    expect(restored.hasHoles).toBe(true);
-    expect(restored.snapshot()).toEqual(snapshot);
-    const other = new ControlState();
-    other.add({ device: A, counter: 1, target: "member:carol", value: "write", seen: {} });
-    const merged = ControlState.from(other.snapshot());
-    expect(merged.merge(snapshot)).toBe(0);
-    const applied = ControlState.from(other.snapshot());
-    applied.add({ device: X, counter: 2, target: "member:bob", value: "read", seen: {} });
-    expect(merged.snapshot()).toEqual(applied.snapshot());
-    expect(merged.hasHoles).toBe(true);
-    // The late predecessor fills the hole the same way everywhere.
-    for (const s of [state, restored, merged]) {
-      s.add({ device: X, counter: 1, target: "member:dave", value: "read", seen: {} });
-      expect(s.hasHoles).toBe(false);
-      expect(s.vector[X]).toBe(2);
+    state.take(wide(MAX_RIGHT_TARGETS - 1));
+    const digest = state.digest;
+    const result = state.take({
+      closed: true,
+      targets: {
+        "member:x": reg("read", at(0)),
+        "member:y": reg("read", at(0)),
+        pace: reg(1, at(0)),
+      },
+    });
+    expect(result).toEqual({ refused: true, leftOut: 3 });
+    expect(state.capacityConflict).toBe(true);
+    expect(state.closed).toBe(true);
+    expect(state.holds("pace")).toBe(false); // nothing of a refused frame is held but its close
+    expect(state.rightTargets).toBe(MAX_RIGHT_TARGETS - 1);
+    state.close();
+    expect(registerStateDigest({ closed: false, targets: state.state().targets })).toBe(digest);
+  });
+
+  it("refuses what would bring it over its bytes as a whole, and takes the close", () => {
+    const state = new ControlState({ maxBytes: 2_000 });
+    expect(state.take(wide(4)).refused).toBe(false);
+    const bytes = state.bytes;
+    const result = state.take({ ...wide(3, 4), closed: true });
+    expect(result).toEqual({ refused: true, leftOut: 3 });
+    expect(state.bytes).toBe(bytes);
+    expect(state.closed).toBe(true);
+    expect(state.capacityConflict).toBe(true);
+  });
+
+  it("in a conflict takes no new member or layer right, and still the pace and changes of what it holds", () => {
+    const state = new ControlState({ maxBytes: 2_000 });
+    state.take(wide(4));
+    state.take(wide(10, 4));
+    expect(state.capacityConflict).toBe(true);
+    const held = Object.keys(wide(1).targets)[0] as string;
+    const result = state.take({
+      closed: false,
+      targets: {
+        "member:new": reg("write", at(50)),
+        [`layer:${LAYER}:member:new`]: reg("write", at(50)),
+        [held]: reg("write", at(50)),
+        pace: reg(5_000, at(50)),
+      },
+    });
+    expect(result).toEqual({ refused: false, leftOut: 2 });
+    expect(state.holds("member:new")).toBe(false);
+    expect(state.valueOf(held)).toBe("write");
+    expect(state.pace).toBe(5_000);
+  });
+
+  it("reaches the conflict over the union in whatever order the two halves arrive", () => {
+    const a = wide(1_300, 0, LAPTOP);
+    const b = wide(1_300, 1_300, TABLET);
+    for (const order of [
+      [a, b],
+      [b, a],
+    ]) {
+      const state = new ControlState({ maxBytes: 800_000 });
+      const results = order.map((half) => state.take(half));
+      expect(results.map((result) => result.refused)).toEqual([false, true]);
+      expect(state.capacityConflict).toBe(true);
     }
   });
 
-  it("random histories: applying, restoring the snapshot and merging it into another state give one state", () => {
-    const tally = { states: 0, merges: 0, supersededAboveHole: 0 };
-    for (const count of [2, 3]) {
-      for (let seed = 1; seed <= 1500; seed++) {
-        const g = generator(seed * 17 + count);
-        const devices: Device[] = Array.from({ length: count }, (_, i) => ({
-          tag: String.fromCharCode(65 + i).repeat(22),
-          state: new ControlState(),
-          seenIds: new Set<number>(),
-          counter: 0,
-        }));
-        const issued: Issued[] = [];
-        for (let step = 0; step < 4 + Math.floor(g.random() * 16); step++) {
-          const device = g.pick(devices);
-          if (g.random() < 0.5) {
-            issue(device, issued, g.pick(TARGETS), g.pick(RIGHTS));
-          } else {
-            const missing = issued.filter((x) => !device.seenIds.has(x.id));
-            if (missing.length > 0) deliver(device, g.pick(missing));
-          }
-        }
-        // A receiver that heard some of the operations, in any order: holes are likely.
-        const applied = new ControlState();
-        const heard = g.shuffle(issued).slice(0, Math.floor(g.random() * (issued.length + 1)));
-        for (const entry of heard) applied.add(entry.op);
-        const snapshot = applied.snapshot();
-        // The case no head carries: an operation held above a hole that something superseded. The
-        // snapshot's counters above holes carry it (§7.5).
-        const heads = new Set(
-          Object.values(snapshot.targets).flatMap((t) =>
-            t.heads.map((h) => `${h.device}:${h.counter}`),
-          ),
-        );
-        const onlyAboveHoles = heard.some(
-          (x) =>
-            x.op.counter > (snapshot.vector[x.op.device] ?? 0) &&
-            !heads.has(`${x.op.device}:${x.op.counter}`),
-        );
-        tally.states += 1;
-        if (onlyAboveHoles) tally.supersededAboveHole += 1;
-        const restored = ControlState.from(snapshot);
-        expect(restored.snapshot(), `seed ${seed}`).toEqual(snapshot);
-        expect(restored.hasHoles, `seed ${seed}`).toBe(applied.hasHoles);
-        expect(restored.vector, `seed ${seed}`).toEqual(applied.vector);
-        // Merged into another device's state, and the same operations applied to it.
-        const other = g.pick(devices).state;
-        const merged = ControlState.from(other.snapshot());
-        expect(merged.merge(snapshot), `seed ${seed}`).toBe(0);
-        const both = ControlState.from(other.snapshot());
-        for (const entry of heard) both.add(entry.op);
-        tally.merges += 1;
-        expect(merged.snapshot(), `seed ${seed}`).toEqual(both.snapshot());
-        for (const target of TARGETS) {
-          expect(rightOf(merged, target), `seed ${seed}, ${target}`).toBe(rightOf(both, target));
-        }
-        expect(merged.vector, `seed ${seed}`).toEqual(both.vector);
-        expect(merged.hasHoles, `seed ${seed}`).toBe(both.hasHoles);
-        // The late predecessors fill the holes the same way, restored or not.
-        const late = heard.length === issued.length ? [] : issued.filter((x) => !heard.includes(x));
-        for (const entry of late) {
-          applied.add(entry.op);
-          restored.add(entry.op);
-        }
-        expect(restored.snapshot(), `seed ${seed}`).toEqual(applied.snapshot());
-      }
-    }
-    // The generated histories include the case only the counters above holes carry.
-    expect(tally.supersededAboveHole).toBeGreaterThan(0);
+  it("keeps a conflict a restart marks again (CTL-32)", () => {
+    const state = ControlState.from(wide(2));
+    expect(state.capacityConflict).toBe(false);
+    state.markCapacityConflict();
+    expect(state.capacityConflict).toBe(true);
+    expect(state.copy().capacityConflict).toBe(true);
   });
 
-  it("counts its counters above holes in its bytes, in RFC 8785 form beside vector and targets (CTL-34)", () => {
-    const state = new ControlState();
-    state.add({ device: X, counter: 3, target: "member:bob", value: "write", seen: {} });
-    const expected = `{"aboveHoles":{"${X}":[3]},"targets":{"member:bob":{"heads":[{"counter":3,"device":"${X}","seen":{},"value":"write"}],"seen":{"${X}":2}}},"vector":{}}`;
-    expect(canonicalJson(state.snapshot())).toBe(expected);
-    expect(state.bytes).toBe(new TextEncoder().encode(expected).length);
-    // A device known only above a hole is absent from the vector, never named with 0 (FRM-14), and
-    // a snapshot naming it with 0 merges as one that does not.
-    const zero = ControlState.from({ ...state.snapshot(), vector: { [X]: 0 } });
-    expect(zero.snapshot()).toEqual(state.snapshot());
-  });
-
-  it("restores a counter held above a hole that something superseded, and with it the hole (§7.5)", () => {
-    // X:1 never arrived; X:3 was superseded by Y:1, which had seen it; the snapshot's heads carry
-    // Y:1 only, so only its counters above holes say X:3 is held.
-    const Y = "Y".repeat(22);
-    const state = new ControlState();
-    state.add({ device: X, counter: 2, target: "member:dave", value: "read", seen: {} });
-    state.add({ device: X, counter: 3, target: "member:bob", value: "write", seen: {} });
-    state.add({ device: Y, counter: 1, target: "member:bob", value: "read", seen: { [X]: 3 } });
-    const snapshot = state.snapshot();
-    expect(snapshot.targets["member:bob"]?.heads.map((head) => head.device)).toEqual([Y]);
-    expect(snapshot.aboveHoles).toEqual({ [X]: [2, 3] });
-    const restored = ControlState.from(snapshot);
-    expect(restored.hasHoles).toBe(true);
-    for (const s of [state, restored]) {
-      s.add({ device: X, counter: 1, target: "member:carol", value: "read", seen: {} });
-      expect(s.hasHoles).toBe(false);
-      expect(s.vector[X]).toBe(3);
-    }
-    expect(restored.snapshot()).toEqual(state.snapshot());
-    expect(state.snapshot().aboveHoles).toBeUndefined();
-  });
-
-  it("random histories: a device's snapshot plus only what that device lacked gives what every operation as a frame gives", () => {
-    for (const count of [2, 3]) {
-      for (let seed = 1; seed <= 1500; seed++) {
-        const g = generator(seed * 13 + count);
-        const devices: Device[] = Array.from({ length: count }, (_, i) => ({
-          tag: String.fromCharCode(65 + i).repeat(22),
-          state: new ControlState(),
-          seenIds: new Set<number>(),
-          counter: 0,
-        }));
-        const issued: Issued[] = [];
-        for (let step = 0; step < 4 + Math.floor(g.random() * 16); step++) {
-          const device = g.pick(devices);
-          if (g.random() < 0.5) {
-            issue(device, issued, g.pick(TARGETS), g.pick(RIGHTS));
-          } else {
-            const missing = issued.filter((x) => !device.seenIds.has(x.id));
-            if (missing.length > 0) deliver(device, g.pick(missing));
-          }
-        }
-        if (issued.length === 0) continue;
-        const frames = new ControlState();
-        for (const entry of g.shuffle(issued)) frames.add(entry.op);
-        // A history-less joiner: the snapshot of one device, then only the operations it lacked.
-        const responder = g.pick(devices);
-        const joiner = ControlState.from(responder.state.snapshot());
-        for (const entry of g.shuffle(issued.filter((x) => !responder.seenIds.has(x.id))))
-          joiner.add(entry.op);
-        for (const target of TARGETS) {
-          expect(rightOf(joiner, target), `seed ${seed}, ${count} devices, ${target}`).toBe(
-            rightOf(frames, target),
-          );
-        }
-        // A snapshot leaves out superseded operations, so the joiner may count fewer without a gap —
-        // never more than it holds.
-        for (const [device, counter] of Object.entries(joiner.vector)) {
-          expect(counter, `seed ${seed}, ${device}`).toBeLessThanOrEqual(
-            frames.vector[device] ?? 0,
-          );
-        }
-      }
-    }
+  it("holds 3 MiB by default (CTL-30)", () => {
+    expect(new ControlState().maxBytes).toBe(ACCEPTED_CONTROL_BYTES);
+    expect(ACCEPTED_CONTROL_BYTES).toBe(3_145_728);
   });
 });
 
-describe("collisions among operations a snapshot or a restore brought (CTL-24, CTL-31)", () => {
-  const D = "D".repeat(22);
-  const write: ControlOperation = {
-    device: D,
-    counter: 1,
-    target: "member:bob",
-    value: "write",
-    seen: {},
-  };
-  const revoke: ControlOperation = {
-    device: D,
-    counter: 1,
-    target: "member:bob",
-    value: null,
-    seen: {},
-  };
-  const holding = (...ops: ControlOperation[]) => {
+describe("what a device of the creator may decide (CTL-37, CTL-32)", () => {
+  /** A state just over 1 MiB: about 3 100 wide members. */
+  const overIssue = () => {
     const state = new ControlState();
-    for (const op of ops) state.add(op);
+    let n = 0;
+    while (state.bytes <= MAX_ISSUE_BYTES) {
+      const before = state.bytes;
+      state.take(wide(100, n));
+      n += 100;
+      // A state that takes no more — its own bound reached first — ends here, and the test fails on
+      // what it then holds rather than looping.
+      if (state.bytes === before) break;
+    }
     return state;
   };
 
-  it("notes one between an operation taken from a snapshot and one that arrives as a frame", () => {
-    const state = ControlState.from(holding(write).snapshot());
-    expect(state.add(revoke)).toBe("added");
-    expect(state.anomalies).toEqual([{ device: D, counter: 1 }]);
-    expect(state.members.has("bob")).toBe(false); // the narrowest of the two
-  });
-
-  it("notes one that a snapshot brings against an operation already held", () => {
-    const state = holding(write);
-    state.merge(holding(revoke).snapshot());
-    expect(state.anomalies).toEqual([{ device: D, counter: 1 }]);
-    expect(state.members.has("bob")).toBe(false);
-  });
-
-  it("finds one in a member's report against a restored state", () => {
-    const restored = ControlState.from(holding(write).snapshot());
-    expect(restored.noteCollisionsIn(holding(revoke).snapshot())).toEqual([
-      { device: D, counter: 1 },
-    ]);
-  });
-
-  it("takes an operation already held through a snapshot again as a duplicate (TRN-8)", () => {
-    const state = ControlState.from(holding(write).snapshot());
-    expect(state.add(write)).toBe("duplicate");
-    expect(state.anomalies).toEqual([]);
-  });
-});
-
-describe("the close at the bound on creator devices (CTL-36, LIF-7)", () => {
-  const tags = Array.from({ length: 64 }, (_, i) => `T${String(i).padStart(21, "0")}`);
-  const last = "z".repeat(22); // after every tag above in code point order
-  const close: ControlOperation = {
-    device: last,
-    counter: 3,
-    target: "close",
-    value: true,
-    seen: {},
-  };
-  const pace = (device: string): ControlOperation => ({
-    device,
-    counter: 1,
-    target: "pace",
-    value: 0,
-    seen: {},
-  });
-
-  it("keeps the close of a device the bound gives up, and every joiner of that state learns it is closed", () => {
-    const state = new ControlState();
-    state.add(close);
-    for (const tag of tags) state.add(pace(tag)); // pushes the closing device out
-    expect(state.vector[last]).toBeUndefined();
-    expect(state.closed).toBe(true);
-    expect(state.snapshot().targets.close?.heads).toEqual([
-      { device: last, counter: 3, value: true, seen: {} },
-    ]);
-    expect(ControlState.from(state.snapshot()).closed).toBe(true);
-  });
-
-  it("holds the close of a device the bound refuses, the same in either order of arrival", () => {
-    const first = new ControlState();
-    first.add(close);
-    for (const tag of tags) first.add(pace(tag));
-    const later = new ControlState();
-    for (const tag of tags) later.add(pace(tag));
-    expect(later.add(close)).toBe("added");
-    expect(later.closed).toBe(true);
-    expect(later.snapshot()).toEqual(first.snapshot());
-  });
-
-  it("reads a close entry as closed, whatever its heads", () => {
-    const state = new ControlState();
-    state.merge({ vector: {}, targets: { close: { seen: {}, heads: [] } } });
-    expect(state.closed).toBe(true);
-    expect(ControlState.from(state.snapshot()).closed).toBe(true);
-  });
-});
-
-describe("capacity: a union within the bytes converges, one beyond them is a named conflict (CTL-30, CTL-32)", () => {
-  const A = "A".repeat(22);
-  const B = "B".repeat(22);
-  const C = "C".repeat(22);
-  /** A snapshot near the bound: 1 600 targets of one device, each valid alone, 609 011 bytes. */
-  const nearBound = (prefix: string, device: string): ControlStateSnapshot => ({
-    vector: { [device]: 1600 },
-    targets: Object.fromEntries(
-      Array.from({ length: 1600 }, (_, i) => [
-        `member:${prefix}${String(i).padStart(4, "0")}${"x".repeat(240)}`,
-        {
-          seen: { [device]: i },
-          heads: [{ device, counter: i + 1, value: "read" as const, seen: {} }],
-        },
-      ]),
-    ),
-  });
-  /**
-   * A snapshot of one device of about `bytes`, with targets made large by what their operations had
-   * seen of 40 other devices — so that three of them pass the bytes before the bound on targets.
-   */
-  const fat = (prefix: string, device: string, bytes: number): ControlStateSnapshot => {
-    const padding = Object.fromEntries(
-      Array.from({ length: 40 }, (_, k) => [`P${String(k).padStart(21, "0")}`, 7]),
-    );
-    const target = (i: number) => [
-      `member:${prefix}${String(i).padStart(5, "0")}${"x".repeat(240)}`,
-      {
-        seen: { ...padding, [device]: i },
-        heads: [{ device, counter: i + 1, value: "read" as const, seen: padding }],
-      },
-    ];
-    const one = new ControlState({ maxBytes: ACCEPTED_CONTROL_BYTES });
-    one.merge({ vector: { [device]: 1 }, targets: Object.fromEntries([target(0)]) });
-    const count = Math.floor(bytes / one.bytes);
-    return {
-      vector: { [device]: count },
-      targets: Object.fromEntries(Array.from({ length: count }, (_, i) => target(i))),
-    };
-  };
-  const permutations = <T>(xs: readonly T[]): T[][] =>
-    xs.length <= 1
-      ? [[...xs]]
-      : xs.flatMap((x, i) =>
-          permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map((rest) => [x, ...rest]),
-        );
-
-  it("two snapshots of 609 011 bytes, each valid alone, converge in every order within the 3 MiB CTL-30 holds", {
-    timeout: 60_000,
-  }, () => {
-    const [a, b] = [nearBound("a", A), nearBound("b", B)];
-    const alone = (snapshot: ControlStateSnapshot) =>
-      ControlState.from(snapshot, { maxBytes: ACCEPTED_CONTROL_BYTES });
-    expect(alone(a).bytes).toBe(609_011);
-    expect(alone(b).bytes).toBe(609_011);
-    const ab = alone(a);
-    expect(ab.merge(b)).toBe(0);
-    const ba = alone(b);
-    expect(ba.merge(a)).toBe(0);
-    expect(ab.bytes).toBeGreaterThan(MAX_ISSUE_BYTES);
-    expect(ab.bytes).toBeLessThan(ACCEPTED_CONTROL_BYTES);
-    expect(ab.snapshot()).toEqual(ba.snapshot());
-    expect(Object.keys(ab.snapshot().targets)).toHaveLength(3_200);
-    // Exchanged again, and as the operations themselves in any order: the same union.
-    expect(ab.merge(a) + ab.merge(b)).toBe(0);
-    const opsOf = (snapshot: ControlStateSnapshot) =>
-      Object.entries(snapshot.targets).flatMap(([target, state]) =>
-        state.heads.map((head) => ({ ...head, target: target as ControlTarget })),
-      );
-    const [fromA, fromB] = [opsOf(a), opsOf(b)];
-    const frames = new ControlState({ maxBytes: ACCEPTED_CONTROL_BYTES });
-    // The two devices' operations interleaved, each device's in its own order.
-    for (let i = 0; i < 1600; i++) {
-      frames.add(fromB[i] as ControlOperation);
-      frames.add(fromA[i] as ControlOperation);
+  it("adds no target that brings the state over 1 MiB — a member, a layer right —, but the pace, which is not measured, always has room", () => {
+    const state = overIssue();
+    for (const target of ["member:new", `layer:${LAYER}:member:new`] as const) {
+      expect(state.issue(target, reg("read", at(99_999))), target).toEqual({
+        refused: "too-large",
+      });
     }
-    expect(frames.snapshot()).toEqual(ab.snapshot());
-    for (const state of [ab, ba, frames]) expect(state.capacityConflict).toBe(false);
+    expect(state.holds("member:new")).toBe(false);
+    const paced = state.issue("pace", reg(1_000, at(99_999)));
+    expect("next" in paced && paced.next.pace).toBe(1_000);
   });
 
-  it.each([
-    ["the 3 MiB CTL-30 sets", ACCEPTED_CONTROL_BYTES],
-    ["1 MiB", MAX_ISSUE_BYTES],
-  ])(
-    "beyond %s, three snapshots each valid alone: any two converge, all three are a conflict in every order",
-    { timeout: 60_000 },
-    (_name, maxBytes) => {
-      const snapshots = [
-        fat("a", A, maxBytes * 0.4),
-        fat("b", B, maxBytes * 0.4),
-        fat("c", C, maxBytes * 0.4),
-      ];
-      for (const [x, y] of [
-        [0, 1],
-        [1, 2],
-        [0, 2],
-      ] as const) {
-        const xy = ControlState.from(snapshots[x] as ControlStateSnapshot, { maxBytes });
-        expect(xy.merge(snapshots[y] as ControlStateSnapshot)).toBe(0);
-        const yx = ControlState.from(snapshots[y] as ControlStateSnapshot, { maxBytes });
-        expect(yx.merge(snapshots[x] as ControlStateSnapshot)).toBe(0);
-        expect(xy.snapshot()).toEqual(yx.snapshot());
-        expect(xy.capacityConflict).toBe(false);
-      }
-      for (const order of permutations(snapshots)) {
-        const state = new ControlState({ maxBytes });
-        for (const snapshot of order) state.merge(snapshot);
-        expect(state.capacityConflict).toBe(true);
-        expect(state.bytes).toBeLessThanOrEqual(maxBytes);
-      }
-    },
-  );
+  it("changes a target it holds above 1 MiB, up to the bytes it holds, and leaves the state it decides on as it was", () => {
+    const state = overIssue();
+    const held = Object.keys(wide(1).targets)[0] as ControlTarget;
+    const before = state.digest;
+    const issued = state.issue(held, reg("write", at(99_999)));
+    if (!("next" in issued)) throw new Error("refused");
+    expect(issued.next.valueOf(held)).toBe("write");
+    expect(state.digest).toBe(before);
+    expect(state.valueOf(held)).toBe("read");
+  });
 
-  it("enters the conflict by an operation over its bytes, and keeps it", () => {
-    const state = new ControlState({ maxBytes: 4_000 });
-    let counter = 0;
-    while (
-      state.add({
-        device: A,
-        counter: counter + 1,
-        target: `member:m${String(counter + 1).padStart(40, "0")}` as ControlTarget,
-        value: "write",
-        seen: {},
-      }) === "added"
-    ) {
-      counter += 1;
-    }
-    expect(counter).toBeGreaterThan(10);
+  it("decides nothing a receiver would refuse: beyond 5 000 targets, or beyond the bytes", () => {
+    const full = new ControlState();
+    const targets: Record<string, Register> = {};
+    for (let n = 0; n < MAX_RIGHT_TARGETS; n++) targets[`member:m${n}`] = reg("read", at(n));
+    full.take({ closed: false, targets });
+    expect(full.issue("member:one-more", reg("read", at(1)))).toEqual({ refused: "too-large" });
+    expect(full.capacityConflict).toBe(false); // refusing is no conflict of its own
+    const small = new ControlState({ maxBytes: 1_000 });
+    small.take(wide(2));
+    const held = Object.keys(wide(1).targets)[0] as ControlTarget;
+    expect("next" in small.issue(held, reg("write", at(5)))).toBe(true);
+  });
+
+  it("in a conflict adds no member or layer right, and still the pace and changes of what it holds", () => {
+    const state = new ControlState({ maxBytes: 2_000 });
+    state.take(wide(4));
+    state.take(wide(10, 4));
     expect(state.capacityConflict).toBe(true);
-    expect(state.bytes).toBeLessThanOrEqual(4_000);
-    expect(ControlState.from(state.snapshot()).capacityConflict).toBe(false); // a snapshot carries rights, not a conflict
-  });
-
-  it("in a conflict takes no new member or layer right, and still the close, the pace and changes of what it holds", () => {
-    const state = new ControlState();
-    const op = (counter: number, target: string, value: unknown): ControlOperation => ({
-      device: A,
-      counter,
-      target: target as ControlTarget,
-      value: value as "read",
-      seen: {},
+    expect(state.issue("member:new", reg("read", at(9)))).toEqual({ refused: "capacity-conflict" });
+    expect(state.issue(`layer:${LAYER}:member:new`, reg("read", at(9)))).toEqual({
+      refused: "capacity-conflict",
     });
-    const held = "member:bob";
-    state.add(op(1, held, "write"));
-    state.markCapacityConflict();
-    expect(state.add(op(2, "member:new", "read"))).toBe("refused");
-    expect(state.add(op(2, "layer:com.example.comments/1:member:new", "read"))).toBe("refused");
-    expect(state.add(op(2, held, null))).toBe("added");
-    expect(state.revoked.has("bob")).toBe(true);
-    expect(state.add(op(3, "pace", 30_000))).toBe("added");
-    expect(state.add(op(4, "close", true))).toBe("added");
-    expect(state.closed).toBe(true);
-    // Merging a snapshot takes what it holds, and leaves new targets out.
-    const other = new ControlState();
-    other.add({ device: B, counter: 1, target: held as ControlTarget, value: "read", seen: {} });
-    other.add({ device: B, counter: 2, target: "member:another", value: "read", seen: {} });
-    expect(state.merge(other.snapshot())).toBe(1);
-    expect(state.holds("member:another")).toBe(false);
-    expect(
-      state
-        .snapshot()
-        .targets[held]?.heads.map((head) => head.device)
-        .sort(),
-    ).toEqual([A, B]);
-  });
-
-  it("issues a new target only up to 1 MiB, and the close and changes of held targets up to the bytes it holds (CTL-37)", {
-    timeout: 60_000,
-  }, () => {
-    const op = (counter: number, target: string, value: unknown): ControlOperation => ({
-      device: A,
-      counter,
-      target: target as ControlTarget,
-      value: value as "read",
-      seen: {},
-    });
-    let state = new ControlState({ maxBytes: ACCEPTED_CONTROL_BYTES });
-    let counter = 0;
-    // Near 1 MiB by adding, then issuing up to the bound.
-    while (counter % 100 !== 0 || state.bytes < MAX_ISSUE_BYTES - 5_000) {
-      counter += 1;
-      state.add(op(counter, `member:@${String(counter).padStart(250, "x")}`, "read"));
-    }
-    for (;;) {
-      const issued = state.issue(
-        op(counter + 1, `member:@${String(counter + 1).padStart(250, "x")}`, "read"),
-      );
-      if ("refused" in issued) {
-        expect(issued.refused).toBe("too-large");
-        break;
-      }
-      state = issued.next;
-      counter += 1;
-    }
-    expect(state.bytes).toBeLessThanOrEqual(MAX_ISSUE_BYTES);
-    expect(state.bytes).toBeGreaterThan(MAX_ISSUE_BYTES - 1_000);
-    // Another device's operations bring it over 1 MiB, within what it holds.
-    const other = new ControlState({ maxBytes: ACCEPTED_CONTROL_BYTES });
-    for (let n = 1; n <= 1_000; n++)
-      other.add({
-        device: B,
-        counter: n,
-        target: `member:@${String(n).padStart(250, "y")}` as ControlTarget,
-        value: "write",
-        seen: {},
-      });
-    expect(state.merge(other.snapshot())).toBe(0);
-    expect(state.bytes).toBeGreaterThan(MAX_ISSUE_BYTES);
-    // Over 1 MiB: no new member, but a revocation of a held one, and the close.
-    expect("refused" in state.issue(op(counter + 1, "member:newcomer", "read"))).toBe(true);
-    const revoked = state.issue(op(counter + 1, `member:@${String(1).padStart(250, "y")}`, null));
-    expect("next" in revoked).toBe(true);
-    const closed = state.issue(op(counter + 1, "close", true));
-    expect("next" in closed && closed.next.closed).toBe(true);
-  });
-
-  it("issues no new member or layer right in a conflict, and says so", () => {
-    const state = new ControlState();
-    state.add({ device: A, counter: 1, target: "member:bob", value: "write", seen: {} });
-    state.markCapacityConflict();
-    expect(
-      state.issue({ device: A, counter: 2, target: "member:carol", value: "read", seen: {} }),
-    ).toEqual({ refused: "capacity-conflict" });
-    expect(
-      state.issue({
-        device: A,
-        counter: 2,
-        target: "layer:com.example.comments/1:member:bob",
-        value: "read",
-        seen: {},
-      }),
-    ).toEqual({ refused: "capacity-conflict" });
-    expect(
-      "next" in state.issue({ device: A, counter: 2, target: "member:bob", value: null, seen: {} }),
-    ).toBe(true);
+    expect("next" in state.issue("pace", reg(1_000, at(9)))).toBe(true);
+    const held = Object.keys(wide(1).targets)[0] as ControlTarget;
+    expect("next" in state.issue(held, reg(null, at(9)))).toBe(true);
   });
 });
 
-describe("what a state keeps of collisions over its life (CTL-24, CTL-31)", () => {
-  const D = "D".repeat(22);
-  const E = "E".repeat(22);
+describe("persisted control state read back (CTL-26, CTL-39)", () => {
+  const valid: RegisterState = {
+    closed: true,
+    targets: {
+      "member:bob": reg("write", at(0)),
+      [`layer:${LAYER}:member:bob`]: reg(null, at(1)),
+      pace: reg(30_000, at(2)),
+    },
+  };
 
-  it("notes a collision only against operations it holds as heads, the same live and restored", () => {
-    const live = new ControlState();
-    live.add({ device: D, counter: 1, target: "member:bob", value: "write", seen: {} });
-    live.add({ device: E, counter: 1, target: "member:bob", value: "read", seen: { [D]: 1 } }); // supersedes D:1
-    const restored = ControlState.from(live.snapshot());
-    // Another operation under D:1 now changes nothing on its target: superseded there, as D:1 is.
-    const other = {
-      device: D,
-      counter: 1,
-      target: "member:bob" as ControlTarget,
-      value: null,
-      seen: {},
-    };
-    for (const state of [live, restored]) {
-      expect(state.add(other)).toBe("duplicate");
-      expect(state.anomalies).toEqual([]);
-    }
-    expect(live.snapshot()).toEqual(restored.snapshot());
+  it("takes this draft's form", () => {
+    expect(registerStateFrom(JSON.parse(JSON.stringify(valid)))).toEqual(valid);
+    expect(registerStateFrom({ closed: false, targets: {} })).toEqual({
+      closed: false,
+      targets: {},
+    });
   });
 
-  it("forgets a collision once a later decision supersedes its place, so the record stays bounded", () => {
-    const state = new ControlState();
-    state.add({ device: D, counter: 1, target: "member:bob", value: "write", seen: {} });
-    state.add({ device: D, counter: 1, target: "member:bob", value: "read", seen: {} });
-    expect(state.anomalies).toEqual([{ device: D, counter: 1 }]);
-    state.add({ device: E, counter: 1, target: "member:bob", value: "write", seen: { [D]: 1 } });
-    expect(state.anomalies).toEqual([]);
-    expect(state.members.get("bob")).toBe("write");
-    // Deciding one target again and again leaves one head, and one place recorded.
-    for (let n = 2; n <= 2_000; n++)
-      state.add({
-        device: E,
-        counter: n,
-        target: "member:bob",
-        value: n % 2 === 0 ? "read" : "write",
-        seen: { [D]: 1 },
-      });
-    expect(state.snapshot().targets["member:bob"]?.heads).toHaveLength(1);
-    const restored = ControlState.from(state.snapshot());
+  it("reads an earlier draft's form, operations with a control vector, as none", () => {
     expect(
-      restored.add({ device: E, counter: 1_000, target: "member:bob", value: null, seen: {} }),
-    ).toBe("duplicate");
+      registerStateFrom({
+        vector: { [LAPTOP]: 1 },
+        targets: {
+          "member:bob": {
+            seen: {},
+            heads: [{ device: LAPTOP, counter: 1, value: "write", seen: {} }],
+          },
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("reads anything else that is no state of registers as none", () => {
+    const broken: unknown[] = [
+      undefined,
+      null,
+      [],
+      "state",
+      { targets: valid.targets },
+      { closed: "yes", targets: valid.targets },
+      { closed: false, targets: [] },
+      { closed: false, targets: null },
+      { closed: false, targets: { close: reg("write", at(0)) } },
+      { closed: false, targets: { "layer:Bad/1:member:bob": reg("write", at(0)) } },
+      { closed: false, targets: { "member:bob": { ...reg("write", at(0)), extra: 1 } } },
+      { closed: false, targets: { "member:bob": { value: "write", clock: at(0) } } },
+      { closed: false, targets: { "member:bob": reg("admin" as never, at(0)) } },
+      { closed: false, targets: { pace: reg("write", at(0)) } },
+      { closed: false, targets: { pace: reg(-1, at(0)) } },
+      { closed: false, targets: { "member:bob": reg("write", [T, 0, 0] as unknown as Clock) } },
+      { closed: false, targets: { "member:bob": reg("write", [MAX_CLOCK_MS + 1, 0]) } },
+      { closed: false, targets: { "member:bob": reg("write", [T, MAX_CLOCK_COUNTER + 1]) } },
+      { closed: false, targets: { "member:bob": reg("write", [T + 0.5, 0]) } },
+      { closed: false, targets: { "member:bob": reg("write", [-1, 0]) } },
+      { closed: false, targets: { "member:bob": reg("write", at(0), "short") } },
+    ];
+    for (const value of broken) {
+      expect(registerStateFrom(value), JSON.stringify(value)).toBeUndefined();
+    }
+  });
+
+  it("restores what it reads into a state with the same registers, clock and digest", () => {
+    const original = ControlState.from(valid);
+    const read = registerStateFrom(JSON.parse(JSON.stringify(original.state())));
+    const restored = ControlState.from(read as RegisterState);
+    expect(restored.state()).toEqual(original.state());
+    expect(restored.digest).toBe(original.digest);
+    expect(compareClocks(restored.clock, original.clock)).toBe(0);
+    expect(restored.bytes).toBe(original.bytes);
   });
 });

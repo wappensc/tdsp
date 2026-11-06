@@ -1,6 +1,6 @@
 # TDSP bindings — Bridges and the common envelope
 
-**Specification · TDSP bindings 2.0 (draft) · 24 October 2026**
+**Specification · TDSP bindings 2.0 (draft) · 4 November 2026**
 
 Part of TDSP 2.0, whose core is [SPECIFICATION.md](../SPECIFICATION.md). This
 document holds what TDSP 1.4 had in §12.1 to §12.5, §13 up to §13.1 and Appendix C of its specification, unchanged in
@@ -84,8 +84,8 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
 - **BRG-9** · *bridge* — A bridge that supports attachments MUST choose between the
   message body and an attachment by size alone (the frame's, or that of what it
   writes around the frame, as its binding says, MTX-7), MUST state the largest
-  frame it carries either way as `bounds.maxBytes`, and MUST refuse a larger frame
-  as `too-large`.
+  frame it carries either way as `bounds.maxBytes` — at least 4 MiB (TRN-23) —, and
+  MUST refuse a larger frame as `too-large`.
   *Rationale:* how a payload travels is the bridge's business; the engine sees only
   one number, and a refusal it can classify.
 
@@ -249,29 +249,47 @@ to the messenger, and each binding says how ([§13](#13-messenger-bindings)).
 
 ### 12.5 What a bridge does not do
 
-A bridge implements no membership, closing, deletion or resync of its own:
-those are frames, and a bridge that acted on them would be a second place where
-application policy is enforced — one that must be kept in step with the engine
-forever.
+A bridge implements no membership, closing, deletion or resync of its own as a
+rule about a document: those are frames, and a bridge that acted on them would be
+a second place where application policy is enforced — one that must be kept in
+step with the engine forever. It may offer its application operations on the
+channel itself — creating one, adding or removing a member —, which no frame ever
+triggers ([§6.6](../SPECIFICATION.md#66-who-takes-part), LIF-9).
 
 ## 13. Messenger bindings
 
 A binding says how a frame travels on one messenger: the envelope, the carrier,
 the delivery id, the sender, how the account is provisioned, and what the bridge
 must refuse. Two implementations of the same binding interoperate; two bindings
-never do.
+never do. A binding of this version carries frames of at least 4 MiB, in the
+message body or as an attachment (BND-4), and states the largest it carries
+(TRN-23, BRG-9); a messenger that cannot carry as much has no binding of this
+version ([§15.1](../SPECIFICATION.md#151-what-a-messenger-must-provide)).
 
 - **BND-1** · *bridge* — A binding MUST state how it meets each requirement of
   [§15.1](../SPECIFICATION.md#151-what-a-messenger-must-provide) (sender
   authentication, integrity, confidentiality), against whom (the provider of the
   messenger's servers included), and whether it inherits each from the messenger
-  or adds it itself, and MUST say plainly where it meets one not at all.
+  or adds it itself, and MUST say plainly where it meets one not at all. Where its
+  messenger ties a member's devices or keys to an identity of that member, it MUST
+  also say what holds on first contact, when a member's identity changes, and for
+  messages it takes without that tie, and its bridges SHOULD remember the identity
+  they first saw for each member and, until a person agrees to a changed one,
+  neither give a key to a device of it — where the messenger encrypts to each
+  recipient, send it nothing — nor deliver a message from one.
   *Rationale:* this is where "TDSP inherits its security" becomes checkable per
   messenger; email shows why it must be explicit, since without PGP it meets none
   of them. A property that holds against other people but not against the
   provider is a different property: an encrypted Matrix room protects against
   the homeserver only while bridges trust a device by its owner's signature
-  (MTX-4), not by the homeserver's word.
+  (MTX-4), not by the homeserver's word. A signature, or a key, binds a device to
+  an identity, not that identity to the person: on first contact the identity is
+  the provider's word, and a provider that can reset an account can put another
+  one in its place. Remembering the first one turns such a change into something
+  a person sees and decides on, where a key handed out at once would reach the new
+  devices before anyone noticed. A withheld key limits reading only; a message the
+  bridge does not deliver is what keeps the new identity from writing in the
+  member's name. What stays unprotected is the first contact.
 
 ### 13.1 The common envelope
 

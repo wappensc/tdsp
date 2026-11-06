@@ -11,16 +11,16 @@ import {
   observeUpdates,
   transact,
 } from "@tdsp/reconciliation";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DocumentEngine, type PersistedControlState, SendRefusedError } from "./index";
 
 /**
  * What a person types while the engine would refuse the edit (SPECIFICATION.md CTL-13, CTL-42).
  * Typed into the engine's document, it can leave the device although the engine never sends
- * it as an edit: a non-creator answers a creator that restarts with its state since the
- * creator's (RSY-6, RSY-8), whatever its own permission and before its own bootstrap
- * (RSY-10). Held outside that document, as CTL-42 lets an application do, it leaves only once
- * the engine may edit, as a local edit the CRDT merges.
+ * it as an edit: a member answers a request to all — a creator's that restarts, or a new device's
+ * — with its state since the requester's (RSY-6, RSY-8, RSY-20), whatever its own permission and
+ * before its own bootstrap (RSY-10). Held outside that document, as CTL-42 lets an application do,
+ * it leaves only once the engine may edit, as a local edit the CRDT merges.
  * Security tests: only the CI role may change this file (.github/CODEOWNERS, CONTRIBUTING.md).
  */
 
@@ -35,6 +35,28 @@ async function settle(...engines: DocumentEngine[]): Promise<void> {
     }
   }
 }
+
+/**
+ * Polls every engine once a second for up to two minutes, or until `done`: long enough for a
+ * request to expire unanswered and the next one, to all, to be answered at a member's turn (RSY-4,
+ * RSY-20, RSY-21).
+ */
+async function settleOver(
+  engines: DocumentEngine[],
+  done: () => boolean = () => false,
+): Promise<void> {
+  for (let second = 0; second < 120 && !done(); second++) {
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle(...engines);
+  }
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 /** What an application persists of a document's content to show it after a restart (§6.3). */
 function persisted(engine: DocumentEngine) {
@@ -65,11 +87,11 @@ function hold(engine: DocumentEngine) {
 }
 
 /**
- * Alice creates the document with "Plan" in it; Bob may write, Carol may read. Bob and Carol
- * stop, their applications keeping the content, and start again while Alice is away: neither
- * can be bootstrapped (RSY-6). `meanwhile` is what Alice did before she went away. Carol joins
- * first each time, so a creator that answers one request at a time answers hers first (RSY-9,
- * RSY-19).
+ * Alice creates the document with "Plan" in it; Bob may write, Carol may read; Gina may write
+ * and has not joined yet. Bob and Carol stop, their applications keeping the content, and start
+ * again while Alice is away: neither can be bootstrapped (CTL-13). `meanwhile` is what Alice did
+ * before she went away. Carol joins first each time, so a creator that answers one request at a
+ * time answers hers first (RSY-9, RSY-19).
  */
 async function membersResumeWhileTheCreatorIsAway(
   meanwhile?: (alice: DocumentEngine) => Promise<void>,
@@ -90,6 +112,7 @@ async function membersResumeWhileTheCreatorIsAway(
   });
   await alice.setMembership("bob", "write");
   await alice.setMembership("carol", "read");
+  await alice.setMembership("gina", "write");
   const carolBefore = await DocumentEngine.join(DOCUMENT_ID, "carol", port, undefined, AS_ALICE);
   const bobBefore = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
   await settle(alice, bobBefore, carolBefore);
@@ -122,32 +145,53 @@ async function membersResumeWhileTheCreatorIsAway(
     bob,
     carol,
     refusals,
-    /** Alice starts again with her persisted control state (CTL-26), and her content if kept. */
+    /** Gina's first device joins, on a transport that shows it nothing sent before (Signal's). */
+    newDeviceJoins(): Promise<DocumentEngine> {
+      return DocumentEngine.join(
+        DOCUMENT_ID,
+        "gina",
+        noHistoryFor(port, "gina"),
+        undefined,
+        AS_ALICE,
+      );
+    },
+    /**
+     * Alice starts again with her persisted control state (CTL-26), and her content if kept;
+     * `withoutHistory`, on a transport that shows her nothing sent before (Signal's) — otherwise
+     * her earlier answers there bring her the content and bootstrap her (RSY-14).
+     */
     creatorRestarts(
       withContent: boolean,
-      options: { resyncResponseThrottleMs?: number } = {},
+      options: { resyncResponseThrottleMs?: number; withoutHistory?: boolean } = {},
     ): Promise<DocumentEngine> {
       port.reconnect("alice");
-      return DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, {
-        ...AS_ALICE,
-        ...options,
-        controlState: aliceControl,
-        ...(withContent ? { restore: aliceContent } : {}),
-      });
+      const { withoutHistory = false, ...engineOptions } = options;
+      return DocumentEngine.join(
+        DOCUMENT_ID,
+        "alice",
+        withoutHistory ? noHistoryFor(port, "alice") : port,
+        undefined,
+        {
+          ...AS_ALICE,
+          ...engineOptions,
+          controlState: aliceControl,
+          ...(withContent ? { restore: aliceContent } : {}),
+        },
+      );
     },
   };
 }
 
 describe("a change the engine refuses (CTL-13, CTL-42)", () => {
-  describe("typed into the engine's document, it leaves the device in an answer to a creator that restarts (RSY-8, RSY-10)", () => {
+  describe("typed into the engine's document, it leaves the device in an answer to a request to all, a creator's that restarts (RSY-8, RSY-10, RSY-20)", () => {
     it("a reader's change", async () => {
       const { carol, refusals, creatorRestarts } = await membersResumeWhileTheCreatorIsAway();
       carol.edit((fragment) => insertPlainText(fragment, 4, " (Carol)"));
       await settle(carol);
       expect(refusals.carol).not.toStrictEqual([]); // never sent as an edit
 
-      const alice = await creatorRestarts(false);
-      await settle(carol, alice);
+      const alice = await creatorRestarts(false, { withoutHistory: true });
+      await settleOver([carol, alice], () => !["", "Plan"].includes(getPlainText(alice.fragment)));
 
       expect(carol.permissionOf("carol")).toBe("read");
       expect(getPlainText(alice.fragment)).toBe("Plan (Carol)");
@@ -161,8 +205,9 @@ describe("a change the engine refuses (CTL-13, CTL-42)", () => {
       await settle(bob);
       expect(refusals.bob).not.toStrictEqual([]);
 
-      const alice = await creatorRestarts(true);
-      await settle(bob, alice);
+      // Alice restarts without her content: her repeat asks all (RSY-21), and Bob answers it.
+      const alice = await creatorRestarts(false, { withoutHistory: true });
+      await settleOver([bob, alice], () => !["", "Plan"].includes(getPlainText(alice.fragment)));
 
       expect(alice.closed).toBe(true);
       expect(getPlainText(alice.fragment)).toBe("Plan am Freitag"); // changed after the close (LIF-6)
@@ -179,11 +224,24 @@ describe("a change the engine refuses (CTL-13, CTL-42)", () => {
 
       // Alice answers one request a minute, Carol's first: Bob waits for his bootstrap.
       const alice = await creatorRestarts(false, { resyncResponseThrottleMs: 60_000 });
-      await settle(bob, alice);
+      await settleOver([bob, alice], () => getPlainText(alice.fragment) !== "Plan");
 
       expect(bob.hasCompletedBootstrap).toBe(false);
       expect(alice.permissionOf("bob")).toBe("read");
       expect(getPlainText(alice.fragment)).toBe("Plan am Freitag");
+    });
+
+    it("a writer's change, before its own bootstrap, in its answer to another member's new device", async () => {
+      const { bob, refusals, newDeviceJoins } = await membersResumeWhileTheCreatorIsAway();
+      bob.edit((fragment) => insertPlainText(fragment, 4, " am Freitag"));
+      await settle(bob);
+      expect(refusals.bob).toStrictEqual(["awaiting-bootstrap"]);
+
+      const gina = await newDeviceJoins();
+      await settleOver([bob, gina], () => getPlainText(gina.fragment) !== "");
+
+      expect(bob.hasCompletedBootstrap).toBe(false);
+      expect(getPlainText(gina.fragment)).toBe("Plan am Freitag");
     });
   });
 
@@ -194,7 +252,7 @@ describe("a change the engine refuses (CTL-13, CTL-42)", () => {
       held.type(4, " (Carol)");
 
       const alice = await creatorRestarts(false);
-      await settle(carol, alice);
+      await settleOver([carol, alice], () => carol.hasCompletedBootstrap);
 
       expect(carol.hasCompletedBootstrap).toBe(true);
       expect(carol.mayEdit).toBe(false);
@@ -211,7 +269,7 @@ describe("a change the engine refuses (CTL-13, CTL-42)", () => {
       held.type(4, " am Freitag");
 
       const alice = await creatorRestarts(true);
-      await settle(bob, alice);
+      await settleOver([bob, alice]);
 
       expect(bob.closed).toBe(true);
       expect(bob.mayEdit).toBe(false);
@@ -227,11 +285,24 @@ describe("a change the engine refuses (CTL-13, CTL-42)", () => {
       held.type(4, " am Freitag");
 
       const alice = await creatorRestarts(false);
-      await settle(bob, alice);
+      await settleOver([bob, alice]);
 
       expect(bob.permissionOf("bob")).toBe("read");
       expect(bob.mayEdit).toBe(false);
       expect(getPlainText(alice.fragment)).toBe("Plan");
+    });
+
+    it("a writer's held change stays on the device when it answers another member's new device, which asks all", async () => {
+      const { bob, newDeviceJoins } = await membersResumeWhileTheCreatorIsAway();
+      const held = hold(bob);
+      held.type(4, " am Freitag");
+
+      const gina = await newDeviceJoins();
+      await settleOver([bob, gina], () => getPlainText(gina.fragment) !== "");
+
+      expect(getPlainText(gina.fragment)).toBe("Plan"); // Bob's answer to all, without what he holds
+      expect(getPlainText(bob.fragment)).toBe("Plan");
+      expect(held.text).toBe("Plan am Freitag");
     });
 
     it("a writer's held change, applied once its engine may edit, merges with the creator's concurrent edit and is the writer's", async () => {
@@ -254,3 +325,26 @@ describe("a change the engine refuses (CTL-13, CTL-42)", () => {
     });
   });
 });
+
+/**
+ * `port` as a device that joins now sees it: nothing sent before (Signal's), everything after — so
+ * only an answer brings it the document. Read without a cursor.
+ */
+function noHistoryFor(port: InMemoryMessengerPort, member: string): InMemoryMessengerPort {
+  let seen: number | undefined;
+  return new Proxy(port, {
+    get(target, property, receiver) {
+      if (property === "receiveSince" || property === "instance") return undefined;
+      if (property === "receive") {
+        return async (documentId: string, who: string) => {
+          const all = await target.receive(documentId, who);
+          if (who !== member) return all;
+          seen ??= all.length;
+          return all.slice(seen);
+        };
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}

@@ -1,6 +1,6 @@
 # TDSP bindings — Email
 
-**Specification · TDSP bindings 2.0 (draft) · 24 October 2026**
+**Specification · TDSP bindings 2.0 (draft) · 3 November 2026**
 
 Part of TDSP 2.0, whose core is [SPECIFICATION.md](../SPECIFICATION.md). This
 document holds what TDSP 1.4 had in §13.4 of its specification, unchanged in
@@ -9,6 +9,15 @@ of the core lists: its requirements keep their IDs, and its sections their numbe
 reference to either stays unambiguous. The requirement language and the
 conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-language),
 [§1.4](../SPECIFICATION.md#14-conformance-classes)).
+
+**Maturity: draft in part.** The exact layout of a mail — its MIME structure, the
+OpenPGP message and the invitation's block, with their algorithms (the rows *Carrier*,
+*Body* and *Invitation*) — is what the reference email bridge writes: not specified for a
+second implementation, not part of TDSP 2.0's stable set
+([§14](../SPECIFICATION.md#14-versioning-and-extensibility)), and free to change without a
+new version of the core. An incompatible change of the layout increments this binding's
+version; until the layout is specified, email bridges interoperate only within one release
+of this repository. Every requirement of this binding, EML-1 to EML-13, stands as written.
 
 ### 13.4 Email
 
@@ -31,6 +40,7 @@ thread starts and checks every message against them.
 | Message-ID | `<local@domain>`, at most 200 characters, local part and domain from `[A-Za-z0-9._~+-]` and `[A-Za-z0-9.-]` |
 | Invitation | The thread's first message: human-readable text with the invitation link; with PGP, followed by exactly one armoured block, signed by the creator and encrypted to each participant, whose plaintext is `{"tdsp":1, "kind":"invite", documentId, creator, profile, participants: [{address, fingerprint}], keys, policy?}` — `policy` is TDSP 1.x's, which a bridge or application of TDSP 2.0 neither writes nor reads |
 | Immutability | A second message under an already-seen `Message-ID` with different content is an integrity violation; one with identical content is a harmless re-read |
+| Retention (LIF-8) | Unknown: as long as the mailboxes keep the thread's mails, which the provider or the person may limit; an application that knows it tells its engine |
 | Transport profile | To a provider — bounds: floor 15 s, 4 MiB; suggested pacing 35 s / 120 s / 60 s, of which only the 35 s are a decision, the rest estimates. To a server on the same machine — no bounds; the engine's defaults as pacing ([Appendix B](../SPECIFICATION.md#appendix-b-recommended-values)) |
 | Frames carried | TDSP 2.0's, and 1.x's, unchanged ([§2.2](../SPECIFICATION.md#22-two-wrappers-two-readers)) |
 

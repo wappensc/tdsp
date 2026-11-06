@@ -41,9 +41,9 @@ This repository contains
 > own `gpg`. Choose the messenger and the channel by the protection your document
 > needs: an unencrypted Matrix room, or email without PGP, protects nothing.
 >
-> What TDSP does enforce itself — who may write, and that only a document's creator
-> changes its membership — is stated in
-> [SPECIFICATION.md §15](SPECIFICATION.md#15-security-considerations). The
+> TDSP synchronises a document among cooperating participants: who may write is what the
+> creator decides and every participant's own engine keeps to; who takes part is the
+> messenger's ([SPECIFICATION.md §1.1 and §15](SPECIFICATION.md#15-security-considerations)). The
 > specification and the reference implementation have been reviewed externally;
 > what is verified against real messengers, and the known limits, are listed in
 > [CONFORMANCE.md](CONFORMANCE.md). Please report security issues as described in

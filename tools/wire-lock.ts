@@ -44,11 +44,11 @@ export const WIRE_FILES = [
   "packages/document-protocol/test-vectors/frames-v1.json",
   "packages/document-protocol/test-vectors/invitations-v1.json",
   "bridges/email-bridge/test-vectors/member-ids-v1.json",
-  "wire/frames-draft-5.json",
-  "wire/invitations-draft-5.json",
-  "packages/document-protocol/test-vectors/frames-draft-5.json",
-  "packages/document-protocol/test-vectors/invitations-draft-5.json",
-  "packages/document-protocol/test-vectors/control-draft-5.json",
+  "wire/frames-draft-10.json",
+  "wire/invitations-draft-10.json",
+  "packages/document-protocol/test-vectors/frames-draft-10.json",
+  "packages/document-protocol/test-vectors/invitations-draft-10.json",
+  "packages/document-protocol/test-vectors/control-draft-10.json",
 ] as const;
 
 /** The specification's normative wire sections, by heading: frame, profiles, control state, invitations, values. */
@@ -74,7 +74,7 @@ export const WIRE_DOCUMENTS: readonly string[] = [
 ];
 
 /** The file whose `version` is the draft marker frames and invitations carry, while there is one (VER-3). */
-const MARKER_FILE = "wire/frames-draft-5.json";
+const MARKER_FILE = "wire/frames-draft-10.json";
 
 export const LOCK_FILE = "wire/wire-lock.json";
 

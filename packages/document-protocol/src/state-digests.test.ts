@@ -1,20 +1,14 @@
 import { InMemoryMessengerPort } from "@tdsp/messenger-mock";
-import type {
-  Delivery,
-  DeliveryId,
-  DocumentId,
-  MemberId,
-  MessengerPort,
-} from "@tdsp/messenger-port";
+import type { DocumentId, MemberId } from "@tdsp/messenger-port";
 import { deletePlainText, getPlainText, insertPlainText } from "@tdsp/reconciliation";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeFrame } from "./framing";
-import { ControlFrameRejectedError, DocumentEngine, type PersistedControlState } from "./index";
+import { DocumentEngine } from "./index";
 
 /**
- * State digests (SPECIFICATION.md §10, LOS-12, CTL-31): what a vector cannot show — a lost
- * deletion, two operations under one device and counter — shows as different digests at equal
- * vectors, is evidence, and is answered.
+ * Digests (SPECIFICATION.md §10, LOS-12, LOS-24): what a state vector or a control clock cannot show —
+ * a lost deletion, a lost close — shows as different digests at equal vectors or clocks, is evidence,
+ * and is answered.
  */
 
 const DOCUMENT_ID: DocumentId = "doc-1";
@@ -34,29 +28,12 @@ async function run(engines: readonly DocumentEngine[], ms: number, step = 1_000)
   }
 }
 
-/** `port` as one device sees it: the deliveries in `hidden` never reach it. */
-function hiding(port: InMemoryMessengerPort, hidden: Set<DeliveryId>): MessengerPort {
-  const visible = (deliveries: readonly Delivery[]) =>
-    deliveries.filter((delivery) => !hidden.has(delivery.id));
-  return {
-    transportProfile: () => port.transportProfile(),
-    createDocument: (documentId, creator) => port.createDocument(documentId, creator),
-    send: (documentId, sender, payload) => port.send(documentId, sender, payload),
-    receive: async (documentId, member) => visible(await port.receive(documentId, member)),
-    receiveSince: async (documentId, member, after) => {
-      const answer = await port.receiveSince(documentId, member, after);
-      return { ...answer, deliveries: visible(answer.deliveries) };
-    },
-    listChannels: (member: MemberId) => port.listChannels(member),
-  };
-}
-
-/** The next `edit` frame `member` sends is accepted and never delivered; everything else goes. */
-function dropNextEdit(port: InMemoryMessengerPort, member: MemberId): void {
+/** The next frame of `kind` `member` sends is accepted and never delivered; everything else goes. */
+function dropNextEdit(port: InMemoryMessengerPort, member: MemberId, kind = "edit"): void {
   const original = port.send.bind(port);
   let dropped = false;
   port.send = async (documentId, sender, payload) => {
-    if (!dropped && sender === member && decodeFrame(payload).kind === "edit") {
+    if (!dropped && sender === member && decodeFrame(payload).kind === kind) {
       dropped = true;
       return "lost";
     }
@@ -127,63 +104,39 @@ describe("an answer's last piece (RSY-18)", () => {
   });
 });
 
-describe("two operations under one device and counter (CTL-24, CTL-31)", () => {
-  it("are found by the creator's device in a member's report, which gives it nothing else, and end once decided again", async () => {
+describe("a lost close (LOS-12, RSY-17)", () => {
+  it("shows a member another control digest at an equal control clock, and the answer it asks for closes it", async () => {
     const port = new InMemoryMessengerPort();
-    let persisted: PersistedControlState | undefined;
-    const hidden = new Set<DeliveryId>();
-    const laptopErrors: unknown[] = [];
-    const laptop = await DocumentEngine.create(
-      DOCUMENT_ID,
-      "alice",
-      hiding(port, hidden),
-      (error) => laptopErrors.push(error),
-      {
-        ...AS_ALICE,
-        onControlStateChange: (state) => {
-          persisted = state;
-        },
-      },
-    );
-    await laptop.setMembership("bob", "write");
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
+    await alice.setMembership("bob", "write");
     const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
-    await run([laptop, bob], 30_000);
+    await run([alice, bob], 6 * 60_000, 10_000);
+    expect(bob.controlClock).toEqual(alice.controlClock);
+    expect(bob.controlState.targets).toEqual(alice.controlState.targets);
 
-    // A copy of the laptop's state on another computer — a migration — decides under the same
-    // counter as the laptop, and the laptop never sees it.
-    const copy = await DocumentEngine.join(DOCUMENT_ID, "alice", port, undefined, {
-      ...AS_ALICE,
-      controlState: persisted,
-    });
-    expect(copy.deviceTag).toBe(laptop.deviceTag);
-    const before = (await port.receive(DOCUMENT_ID, "x")).length;
-    await copy.setMembership("carol", "read");
-    for (const delivery of (await port.receive(DOCUMENT_ID, "x")).slice(before))
-      hidden.add(delivery.id);
-    copy.dispose();
-    await laptop.setMembership("carol", "write");
+    dropNextEdit(port, "alice", "control");
+    await alice.closeDocument(); // lost
+    // The close is no register: the control clock stays where it was, only the digest differs.
+    expect(alice.controlClock).toEqual(bob.controlClock);
+    expect(bob.closed).toBe(false);
+    await run([alice, bob], 120_000);
+    expect(bob.closed).toBe(true);
+    expect(bob.syncHealth.suspicions).toEqual([]);
+  });
 
-    await run([laptop, bob], 120_000);
-    // Bob holds both and keeps the narrower (CTL-24); the laptop holds its own only.
+  it("is no evidence where the clocks differ: the greater one is evidence of its own (LOS-10)", async () => {
+    const port = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
+    await alice.setMembership("bob", "write");
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
+    await run([alice, bob], 6 * 60_000, 10_000);
+
+    dropNextEdit(port, "alice", "control");
+    await alice.setMembership("carol", "read"); // lost
+    await run([alice, bob], 60_000);
+    // The heartbeat after it states a control clock above Bob's: Bob asks and gets the register.
     expect(bob.permissionOf("carol")).toBe("read");
-    expect(laptop.permissionOf("carol")).toBe("write");
-    const tag = laptop.deviceTag as string;
-    expect(laptop.controlAnomalies).toContainEqual({
-      device: tag,
-      counter: laptop.controlVector[tag],
-    });
-    expect(
-      laptopErrors.some(
-        (error) =>
-          error instanceof ControlFrameRejectedError && error.message.includes("decide it again"),
-      ),
-    ).toBe(true);
-
-    // Deciding again supersedes both, and the two agree.
-    await laptop.setMembership("carol", "read");
-    await run([laptop, bob], 60_000);
-    expect(bob.permissionOf("carol")).toBe("read");
-    expect(laptop.syncHealth.suspicions.filter((s) => s.kind === "control-diverged")).toEqual([]);
-    expect(bob.syncHealth.suspicions.filter((s) => s.kind === "control-diverged")).toEqual([]);
+    expect(bob.controlClock).toEqual(alice.controlClock);
+    expect(bob.syncHealth.suspicions).toEqual([]);
   });
 });
