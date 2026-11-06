@@ -12,7 +12,7 @@ import { isProfileId } from "./framing";
 
 /** The invitation format this module reads and writes: the `tdsp` parameter. */
 /** The draft marker, as for frames (VER-3): a 1.x reader refuses the link as `unsupported-version`. */
-export const INVITATION_VERSION = "de.wappensc.together.tdsp.probe.draft-5";
+export const INVITATION_VERSION = "de.wappensc.together.tdsp.probe.draft-10";
 
 /** The most participants an email invitation may name, as the email binding bounds them. */
 export const MAX_INVITATION_RECIPIENTS = 64;

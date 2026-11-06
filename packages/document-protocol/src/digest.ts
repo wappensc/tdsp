@@ -1,7 +1,8 @@
 /**
- * State digests (SPECIFICATION.md LOS-12): the first 8 bytes of SHA-256 over a canonical encoding,
- * as 16 lowercase hex digits. Two participants whose vectors are equal and whose digests differ
- * hold different states — what a vector alone cannot show (LOS-12).
+ * Digests (SPECIFICATION.md LOS-24): the first 8 bytes of SHA-256 over a canonical encoding, as 16
+ * lowercase hex digits. Two participants whose state vectors, or control clocks, are equal and whose
+ * digests differ hold different states — what a vector or a clock alone cannot show (LOS-12). The
+ * control digest over registers is registers.ts's (`registerStateDigest`).
  *
  * SHA-256 is computed here, synchronously, because the engine digests while it writes a frame,
  * and the Web Crypto API it would otherwise use only answers asynchronously.
@@ -90,8 +91,8 @@ export function digestOf(encoding: Uint8Array): string {
 }
 
 /**
- * RFC 8785 (JSON Canonicalization Scheme) for the values a control snapshot holds — objects,
- * arrays, strings, integers, booleans and null: object members in the order of their names'
+ * RFC 8785 (JSON Canonicalization Scheme) for the values control state holds — objects, arrays,
+ * strings, integers, booleans and null: object members in the order of their names'
  * UTF-16 code units, strings and numbers as ECMAScript's JSON.stringify writes them.
  */
 export function canonicalJson(value: unknown): string {
@@ -108,41 +109,4 @@ export function canonicalJson(value: unknown): string {
     return `{${members.join(",")}}`;
   }
   return JSON.stringify(value);
-}
-
-const textEncoder = new TextEncoder();
-
-/**
- * What the control digest reads of a control state's snapshot (`ControlStateSnapshot`, §7.5),
- * named here: control-state.ts depends on this module, so this one does not depend on it.
- */
-interface DigestedSnapshot {
-  readonly vector: Readonly<Record<string, number>>;
-  readonly targets: Readonly<
-    Record<
-      string,
-      {
-        readonly seen: Readonly<Record<string, number>>;
-        readonly heads: readonly { readonly device: string; readonly counter: number }[];
-      }
-    >
-  >;
-}
-
-/**
- * The control digest of a control state (LOS-12): of its snapshot's `vector` and `targets`
- * (§7.5), every target's `heads` in order of `device` and then `counter`, canonicalized by
- * RFC 8785 and encoded as UTF-8.
- */
-export function controlDigestOf(snapshot: DigestedSnapshot): string {
-  const targets: Record<string, unknown> = {};
-  for (const [name, state] of Object.entries(snapshot.targets)) {
-    targets[name] = {
-      seen: state.seen,
-      heads: [...state.heads].sort((a, b) =>
-        a.device === b.device ? a.counter - b.counter : a.device < b.device ? -1 : 1,
-      ),
-    };
-  }
-  return digestOf(textEncoder.encode(canonicalJson({ vector: snapshot.vector, targets })));
 }

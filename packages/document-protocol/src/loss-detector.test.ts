@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { answerDelayMs, answerWindowMs } from "./answer-turn";
+import type { Clock } from "./clock";
 import {
   DEFAULT_LOSS_GRACE_MS,
+  GAP_SPACING_CAP_MS,
   LossDetector,
   MAX_ANSWER_PIECES,
+  MAX_GAP_TRIES,
   OPEN_TRANSFERS_PER_MEMBER,
   type StateReport,
+  WAKE_SPACING_MS,
 } from "./loss-detector";
 import { resolveSyncPolicy, type SyncPolicy } from "./sync-policy";
 
@@ -13,20 +18,24 @@ import { resolveSyncPolicy, type SyncPolicy } from "./sync-policy";
 // are in reconciliation's tests, and the whole path through a DocumentEngine is in index.test.ts.
 
 const T0 = 1_000_000;
-const STATE = new Uint8Array([1, 2, 3]);
+/** The absence threshold the engine gives its detector (RSY-1, Appendix B): 10 min. */
+const ABSENCE_MS = 600_000;
 /** This client's request, and another member's: what an answer's `respondsTo` names. */
 const MINE = "0f0f0f0f0f0f0f0f";
 const THEIRS = "e1e1e1e1e1e1e1e1";
+/** This client's own stream (LOS-13), from which the slot of each gap's first try derives (LOS-6). */
+const STREAM = "5e5e5e5e5e5e5e5e";
 
 interface World {
   detector: LossDetector;
   gaps: number[];
+  /** Of the CRDT clients a state vector, by its first byte, counts more of: which and how far (LOS-25). */
+  ahead: Map<number, Map<number, number>> | undefined;
   behind: boolean;
   /** Heartbeats whose state vector, by its first byte, accounts for changes we lack. */
   lacking: Set<number>;
-  /** What this client holds of the creator's operations: its control vector. */
-  held: Record<string, number>;
-  holes: boolean;
+  /** This client's control clock: the greatest clock among the registers it holds (LOS-10). */
+  held: Clock;
   policy: SyncPolicy;
   creator: string | undefined;
   /**
@@ -36,38 +45,36 @@ interface World {
   stateDigest: string;
   sameState: boolean;
   controlDigest: string;
-  sameControl: boolean;
-  creatorDevice: boolean;
+  /** This client's own stream (LOS-13). */
+  stream: string;
 }
 
 function world(policy: Partial<SyncPolicy> = {}): World {
   const w: World = {
     detector: undefined as unknown as LossDetector,
     gaps: [],
+    ahead: undefined,
     behind: false,
     lacking: new Set(),
-    held: {},
-    holes: false,
+    held: [0, 0],
     policy: resolveSyncPolicy({ expectedLatencyMs: 10_000, maxIntervalMs: 60_000, ...policy }),
     creator: "alice",
     stateDigest: "aaaaaaaaaaaaaaaa",
     sameState: true,
     controlDigest: "cccccccccccccccc",
-    sameControl: true,
-    creatorDevice: false,
+    stream: STREAM,
   };
   w.detector = new LossDetector({
+    absenceMs: ABSENCE_MS,
     creatorMemberId: () => w.creator,
     policy: () => w.policy,
     pendingGapClients: () => w.gaps,
     lacksUpdatesOf: (stateVector) => w.behind || w.lacking.has(stateVector[0] as number),
-    controlHoles: () => w.holes,
-    lacksControlOf: (vector) =>
-      Object.entries(vector).some(([device, counter]) => counter > (w.held[device] ?? 0)),
+    clientsAhead: (stateVector) => w.ahead?.get(stateVector[0] as number) ?? new Map(),
+    controlClock: () => w.held,
     stateDigestWithin: () => (w.sameState ? w.stateDigest : undefined),
-    sameControlVector: () => w.sameControl,
     controlDigest: () => w.controlDigest,
-    isCreatorDevice: () => w.creatorDevice,
+    stream: () => w.stream,
   });
   return w;
 }
@@ -78,7 +85,7 @@ function report(
   sequence: number,
   stateDigest = "aaaaaaaaaaaaaaaa",
   first = 1,
-  control: Record<string, number> | null = null,
+  controlClock: Clock | null = null,
   controlDigest: string | null = null,
 ): StateReport {
   return {
@@ -86,9 +93,22 @@ function report(
     sequence,
     stateVector: new Uint8Array([first]),
     stateDigest,
-    control,
+    controlClock,
     controlDigest,
   };
+}
+
+/** The slot of the first try of the gap `key` on a client of `stream`, at 10 s of latency (LOS-6): as RSY-20 derives a turn. */
+const slotOf = (key: string, stream = STREAM): number =>
+  answerDelayMs(key, stream, answerWindowMs(10_000));
+
+/** What the detector reports, without the gap's key and tries, which the tests of gaps hold (LOS-25). */
+function seen(w: World): { kind: string; sender?: string; since: number }[] {
+  return w.detector.suspicions().map(({ kind, sender, since }) => ({
+    kind,
+    ...(sender === undefined ? {} : { sender }),
+    since,
+  }));
 }
 
 beforeEach(() => {
@@ -107,9 +127,9 @@ describe("a pending gap", () => {
     w.detector.observe();
     vi.advanceTimersByTime(9_999);
     w.detector.observe();
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
     vi.advanceTimersByTime(1);
-    expect(w.detector.suspicions()).toEqual([{ kind: "pending-gap", since: T0 }]);
+    expect(seen(w)).toEqual([{ kind: "pending-gap", since: T0 }]);
   });
 
   it("counts from the first sighting, not from the most recent poll", () => {
@@ -119,7 +139,7 @@ describe("a pending gap", () => {
     vi.advanceTimersByTime(6_000);
     w.detector.observe(); // seen again, but not new
     vi.advanceTimersByTime(4_000);
-    expect(w.detector.suspicions()).toHaveLength(1);
+    expect(seen(w)).toHaveLength(1);
   });
 
   it("goes away when the predecessor arrives, and starts counting afresh for the next gap", () => {
@@ -127,14 +147,14 @@ describe("a pending gap", () => {
     w.gaps = [42];
     w.detector.observe();
     vi.advanceTimersByTime(20_000);
-    expect(w.detector.suspicions()).toHaveLength(1);
+    expect(seen(w)).toHaveLength(1);
     w.gaps = [];
     w.detector.observe();
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
     w.gaps = [42];
     w.detector.observe();
     vi.advanceTimersByTime(5_000);
-    expect(w.detector.suspicions()).toEqual([]); // a new gap, only 5 s old
+    expect(seen(w)).toEqual([]); // a new gap, only 5 s old
   });
 
   it("names the sender when the client id is known from an earlier single-author edit", () => {
@@ -143,7 +163,7 @@ describe("a pending gap", () => {
     w.gaps = [42];
     w.detector.observe();
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toEqual([{ kind: "pending-gap", sender: "bob", since: T0 }]);
+    expect(seen(w)).toEqual([{ kind: "pending-gap", sender: "bob", since: T0 }]);
   });
 
   it("does not guess a sender it has not learned", () => {
@@ -151,7 +171,7 @@ describe("a pending gap", () => {
     w.gaps = [42];
     w.detector.observe();
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()[0]).not.toHaveProperty("sender");
+    expect(seen(w)[0]).not.toHaveProperty("sender");
   });
 
   it("waits DEFAULT_LOSS_GRACE_MS when the policy does not say how long a message takes", () => {
@@ -159,9 +179,9 @@ describe("a pending gap", () => {
     w.gaps = [1];
     w.detector.observe();
     vi.advanceTimersByTime(DEFAULT_LOSS_GRACE_MS - 1);
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
     vi.advanceTimersByTime(1);
-    expect(w.detector.suspicions()).toHaveLength(1);
+    expect(seen(w)).toHaveLength(1);
   });
 });
 
@@ -170,14 +190,14 @@ describe("a different digest where this client holds the reported vector (LOS-12
     const w = world(); // 10 s of latency
     w.detector.heardReport("bob", report("b0b0b0b0b0b0b0b0", 1, "bbbbbbbbbbbbbbbb"));
     vi.advanceTimersByTime(9_999);
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
     vi.advanceTimersByTime(1);
-    expect(w.detector.suspicions()).toEqual([{ kind: "diverged", sender: "bob", since: T0 }]);
+    expect(seen(w)).toEqual([{ kind: "diverged", sender: "bob", since: T0 }]);
     w.sameState = false; // a vector this client lacks shows it itself (LOS-4)
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
     w.sameState = true;
     w.stateDigest = "bbbbbbbbbbbbbbbb"; // this client healed
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 
   it("is judged as the report was heard: what this client deletes since — the sender's own later edits among it — starts none (LOS-12)", () => {
@@ -185,7 +205,7 @@ describe("a different digest where this client holds the reported vector (LOS-12
     w.detector.heardReport("bob", report("b0b0b0b0b0b0b0b0", 1)); // the same digest as ours
     w.stateDigest = "dddddddddddddddd"; // Bob's next edit deleted, and reached us before his next report
     vi.advanceTimersByTime(60_000);
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 
   it("of a report heard while this client lacked an insertion it counts, is judged once it holds them all (LOS-12)", () => {
@@ -194,12 +214,12 @@ describe("a different digest where this client holds the reported vector (LOS-12
     w.detector.heardReport("carol", report("cacacacacacacaca", 1, "bbbbbbbbbbbbbbbb"));
     w.detector.observe();
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toEqual([]); // not to be compared yet; the vector shows it (LOS-4)
+    expect(seen(w)).toEqual([]); // not to be compared yet; the vector shows it (LOS-4)
     w.sameState = true; // the insertion arrived, and the deletion Carol stated did not
     w.detector.observe();
-    expect(w.detector.suspicions()).toEqual([{ kind: "diverged", sender: "carol", since: T0 }]);
+    expect(seen(w)).toEqual([{ kind: "diverged", sender: "carol", since: T0 }]);
     w.stateDigest = "dddddddddddddddd"; // what this client deletes since changes nothing of that
-    expect(w.detector.suspicions()).toEqual([{ kind: "diverged", sender: "carol", since: T0 }]);
+    expect(seen(w)).toEqual([{ kind: "diverged", sender: "carol", since: T0 }]);
 
     // Judged equal once, it stays no evidence, whatever this client deletes later.
     w.sameState = false;
@@ -210,7 +230,7 @@ describe("a different digest where this client holds the reported vector (LOS-12
     w.detector.observe();
     w.stateDigest = "ffffffffffffffff";
     vi.advanceTimersByTime(60_000);
-    expect(w.detector.suspicions().filter((s) => s.sender === "dave")).toEqual([]);
+    expect(seen(w).filter((s) => s.sender === "dave")).toEqual([]);
   });
 
   it("is replaced by a newer report of the same stream, which said it healed (LOS-17, LOS-18)", () => {
@@ -219,7 +239,7 @@ describe("a different digest where this client holds the reported vector (LOS-12
     vi.advanceTimersByTime(5_000);
     w.detector.heardReport("bob", report("b0b0b0b0b0b0b0b0", 2)); // Bob healed, and said so
     vi.advanceTimersByTime(20_000);
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 
   it("is not replaced by an older report of the same stream, offered again or late (LOS-17)", () => {
@@ -228,7 +248,7 @@ describe("a different digest where this client holds the reported vector (LOS-12
     w.detector.heardReport("bob", report("b0b0b0b0b0b0b0b0", 4)); // older, saying what we hold
     w.detector.heardReport("bob", report("b0b0b0b0b0b0b0b0", 5)); // the same number again
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toEqual([{ kind: "diverged", sender: "bob", since: T0 }]);
+    expect(seen(w)).toEqual([{ kind: "diverged", sender: "bob", since: T0 }]);
   });
 
   it("is not replaced by another stream's report, however new: another device of the member (LOS-17)", () => {
@@ -237,18 +257,18 @@ describe("a different digest where this client holds the reported vector (LOS-12
     vi.advanceTimersByTime(3_000);
     w.detector.heardReport("bob", report("2b2b2b2b2b2b2b2b", 9)); // the phone, lagging, holds what we hold
     vi.advanceTimersByTime(7_000);
-    expect(w.detector.suspicions()).toEqual([{ kind: "diverged", sender: "bob", since: T0 }]);
+    expect(seen(w)).toEqual([{ kind: "diverged", sender: "bob", since: T0 }]);
     vi.advanceTimersByTime(60_000);
-    expect(w.detector.suspicions()).toEqual([{ kind: "diverged", sender: "bob", since: T0 }]);
+    expect(seen(w)).toEqual([{ kind: "diverged", sender: "bob", since: T0 }]);
   });
 
   it("keeps when it began across a newer report of the stream that shows the same, without a second wait (LOS-1)", () => {
     const w = world();
     w.detector.heardReport("bob", report("b0b0b0b0b0b0b0b0", 1, "bbbbbbbbbbbbbbbb"));
     vi.advanceTimersByTime(12_000);
-    expect(w.detector.suspicions()).toEqual([{ kind: "diverged", sender: "bob", since: T0 }]);
+    expect(seen(w)).toEqual([{ kind: "diverged", sender: "bob", since: T0 }]);
     w.detector.heardReport("bob", report("b0b0b0b0b0b0b0b0", 2, "bbbbbbbbbbbbbbbb"));
-    expect(w.detector.suspicions()).toEqual([{ kind: "diverged", sender: "bob", since: T0 }]);
+    expect(seen(w)).toEqual([{ kind: "diverged", sender: "bob", since: T0 }]);
   });
 
   it("keeps four streams of a member; a fifth replaces the one heard from least recently (LOS-17)", () => {
@@ -258,160 +278,35 @@ describe("a different digest where this client holds the reported vector (LOS-12
       w.detector.heardReport("bob", report(stream, 1));
     }
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toHaveLength(1);
+    expect(seen(w)).toHaveLength(1);
     w.detector.heardReport("bob", report("0000000000000005", 1));
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 
-  it("counts for control state from the creator, and from a member only on a device of the creator (CTL-31)", () => {
+  it("counts for control state only at an equal control clock, and only from the creator (LOS-12)", () => {
     const w = world();
+    w.held = [5, 1];
     w.detector.heardReport(
       "alice",
-      report("a1a1a1a1a1a1a1a1", 1, "aaaaaaaaaaaaaaaa", 1, { D: 1 }, "dddddddddddddddd"),
+      report("a1a1a1a1a1a1a1a1", 1, "aaaaaaaaaaaaaaaa", 1, [5, 1], "dddddddddddddddd"),
     );
+    // A member's report counts for what the member holds, not for control state: its control clock is
+    // evidence only on a device of the creator (LOS-10, LOS-12).
     w.detector.heardReport(
       "bob",
-      report("b0b0b0b0b0b0b0b0", 1, "aaaaaaaaaaaaaaaa", 1, { D: 1 }, "dddddddddddddddd"),
+      report("b0b0b0b0b0b0b0b0", 1, "aaaaaaaaaaaaaaaa", 1, [5, 1], "dddddddddddddddd"),
     );
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "control-diverged", sender: "alice", since: T0 },
-    ]);
-    w.creatorDevice = true;
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "control-diverged", sender: "alice", since: T0 },
-      { kind: "control-diverged", sender: "bob", since: T0 },
-    ]);
-    w.sameControl = false;
-    expect(w.detector.suspicions()).toEqual([]);
-  });
-});
-
-describe("an overdue sender", () => {
-  it("is reported when an edit is followed by nothing for maxInterval plus one expected latency", () => {
-    const w = world(); // 60 s + 10 s
-    w.detector.heardEdit("bob", 60_000);
-    vi.advanceTimersByTime(69_999);
-    expect(w.detector.suspicions()).toEqual([]);
-    vi.advanceTimersByTime(1);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "sender-overdue", sender: "bob", since: T0, due: 60_000 },
-    ]);
-  });
-
-  it("is judged by the due the sender announced, not by this client's own pacing (LOS-11)", () => {
-    const w = world({ maxIntervalMs: 600_000 }); // this client would wait ten minutes itself
-    w.detector.heardEdit("bob", 20_000);
-    vi.advanceTimersByTime(29_999);
-    expect(w.detector.suspicions()).toEqual([]);
-    vi.advanceTimersByTime(1);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "sender-overdue", sender: "bob", since: T0, due: 20_000 },
-    ]);
-  });
-
-  it("waits for the pace when it is longer than what the sender promised (LOS-11, SND-15)", () => {
-    const w = world(); // 10 s of latency
-    let pace: number | undefined = 30_000;
-    const detector = new LossDetector({
-      creatorMemberId: () => w.creator,
-      policy: () => w.policy,
-      pendingGapClients: () => [],
-      lacksUpdatesOf: () => false,
-      controlHoles: () => false,
-      lacksControlOf: () => false,
-      stateDigestWithin: () => w.stateDigest,
-      sameControlVector: () => true,
-      controlDigest: () => w.controlDigest,
-      isCreatorDevice: () => false,
-      pace: () => pace,
-    });
-    // Announced before its sender learned the pace, which now keeps it from sending sooner.
-    detector.heardEdit("bob", 20_000);
-    vi.advanceTimersByTime(39_999);
-    expect(detector.suspicions()).toEqual([]);
-    vi.advanceTimersByTime(1);
-    expect(detector.suspicions()).toEqual([
-      { kind: "sender-overdue", sender: "bob", since: T0, due: 30_000 },
-    ]);
-    pace = undefined; // without a pace, the promise alone
-    expect(detector.suspicions()).toEqual([
-      { kind: "sender-overdue", sender: "bob", since: T0, due: 20_000 },
-    ]);
-  });
-
-  it("is cleared by any later message from the sender", () => {
-    const w = world();
-    w.detector.heardEdit("bob", 60_000);
-    vi.advanceTimersByTime(60_000);
-    w.detector.heardEdit("bob", 60_000); // more edits
-    vi.advanceTimersByTime(60_000);
-    expect(w.detector.suspicions()).toEqual([]);
-  });
-
-  it("is ended only by a heartbeat that holds the frame, or a further frame of its source (LOS-16)", () => {
-    const w = world(); // 60 s + 10 s
-    // Two devices of bob, each its own source; a heartbeat holds what its first byte names.
-    w.detector.heardEdit("bob", 60_000, "edit:1", (stateVector) => stateVector[0] === 1);
-    vi.advanceTimersByTime(1_000);
-    w.detector.heardEdit("bob", 60_000, "edit:2", (stateVector) => stateVector[0] === 2);
-    // The second device's heartbeat, which crossed the first device's edit.
-    w.detector.heardHeartbeat("bob", new Uint8Array([2]), null);
-    vi.advanceTimersByTime(69_000);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "sender-overdue", sender: "bob", since: T0, due: 60_000 },
-    ]);
-    // The first device's next edit ends what its earlier one left open, and leaves its own.
-    w.detector.heardEdit("bob", 60_000, "edit:1", (stateVector) => stateVector[0] === 1);
-    expect(w.detector.suspicions()).toEqual([]);
-    w.detector.heardHeartbeat("bob", new Uint8Array([1]), null);
-    vi.advanceTimersByTime(24 * 3_600_000);
-    expect(w.detector.suspicions().filter((s) => s.kind === "sender-overdue")).toEqual([]);
-  });
-
-  it("is ended by no heartbeat whose bytes are not a state vector", () => {
-    const w = world();
-    w.detector.heardEdit("bob", 60_000, "edit:1", () => {
-      throw new Error("not a state vector");
-    });
-    w.detector.heardHeartbeat("bob", STATE, null);
-    vi.advanceTimersByTime(70_000);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "sender-overdue", sender: "bob", since: T0, due: 60_000 },
-    ]);
-  });
-
-  it("is not reported after a heartbeat: it says nothing further is due, however long the silence", () => {
-    const w = world();
-    w.detector.heardEdit("bob", 60_000);
-    w.detector.heardHeartbeat("bob", STATE, null);
-    vi.advanceTimersByTime(24 * 3_600_000);
-    expect(w.detector.suspicions().filter((s) => s.kind === "sender-overdue")).toEqual([]);
-  });
-
-  it("is a soft signal that needs a promise: a sender that announced due 0 may be silent (SND-14)", () => {
-    const w = world({ maxIntervalMs: Number.POSITIVE_INFINITY });
-    w.detector.heardEdit("bob", 0);
-    vi.advanceTimersByTime(24 * 3_600_000);
-    expect(w.detector.suspicions()).toEqual([]);
-  });
-
-  it("is spent by a resync answer, so a sender who simply went offline is not reported forever", () => {
-    const w = world();
-    w.detector.heardEdit("bob", 60_000);
-    vi.advanceTimersByTime(80_000);
-    expect(w.detector.suspicions()).toHaveLength(1);
-    w.detector.answered();
-    expect(w.detector.suspicions()).toEqual([]);
-  });
-
-  it("counts the client's own member like anyone: what reaches it from there comes from another device (LOS-11)", () => {
-    const w = world();
-    w.detector.heardEdit("me", 60_000); // another device of "me"; the engine leaves out its own echoes
-    vi.advanceTimersByTime(60_000 + 10_000);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "sender-overdue", sender: "me", since: T0, due: 60_000 },
-    ]);
+    expect(seen(w)).toEqual([{ kind: "control-diverged", sender: "alice", since: T0 }]);
+    // The same digest: no difference.
+    w.controlDigest = "dddddddddddddddd";
+    expect(seen(w)).toEqual([]);
+    w.controlDigest = "cccccccccccccccc";
+    // At another clock the digests describe different states: the clocks say which is ahead (LOS-10).
+    w.held = [5, 2];
+    expect(seen(w)).toEqual([]);
+    w.held = [5, 0];
+    expect(seen(w).filter((s) => s.kind === "control-diverged")).toEqual([]);
   });
 });
 
@@ -421,11 +316,9 @@ describe("a report that shows we are behind (LOS-4)", () => {
     w.behind = true;
     w.detector.heardReport("bob", report("b0b0b0b0b0b0b0b0", 1));
     vi.advanceTimersByTime(9_999);
-    expect(w.detector.suspicions().filter((s) => s.kind === "behind-heartbeat")).toEqual([]);
+    expect(seen(w).filter((s) => s.kind === "behind-heartbeat")).toEqual([]);
     vi.advanceTimersByTime(1);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "behind-heartbeat", sender: "bob", since: T0 },
-    ]);
+    expect(seen(w)).toEqual([{ kind: "behind-heartbeat", sender: "bob", since: T0 }]);
   });
 
   it("is not reported when the report's state is one we already have", () => {
@@ -433,7 +326,7 @@ describe("a report that shows we are behind (LOS-4)", () => {
     w.behind = false;
     w.detector.heardReport("bob", report("b0b0b0b0b0b0b0b0", 1));
     vi.advanceTimersByTime(60_000);
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 
   it("goes away by itself once the changes arrive, because it is judged against the document as it is now", () => {
@@ -441,9 +334,9 @@ describe("a report that shows we are behind (LOS-4)", () => {
     w.behind = true;
     w.detector.heardReport("bob", report("b0b0b0b0b0b0b0b0", 1));
     vi.advanceTimersByTime(20_000);
-    expect(w.detector.suspicions()).toHaveLength(1);
+    expect(seen(w)).toHaveLength(1);
     w.behind = false; // the late edit arrived
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 
   it("judges the latest report of each of a member's streams, so one device's does not hide another's (LOS-4, LOS-17)", () => {
@@ -455,9 +348,7 @@ describe("a report that shows we are behind (LOS-4)", () => {
       w.detector.heardReport("bob", report("2b2b2b2b2b2b2b2b", sequence, undefined, 8)); // the phone's, which never saw it
     }
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "behind-heartbeat", sender: "bob", since: T0 },
-    ]);
+    expect(seen(w)).toEqual([{ kind: "behind-heartbeat", sender: "bob", since: T0 }]);
   });
 
   it("keeps a device's report however many answers another device of the member sends meanwhile (LOS-4, LOS-17)", () => {
@@ -477,7 +368,7 @@ describe("a report that shows we are behind (LOS-4)", () => {
       });
     }
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toEqual([
+    expect(seen(w)).toEqual([
       expect.objectContaining({ kind: "behind-heartbeat", sender: "alice", since: T0 }),
     ]);
   });
@@ -495,7 +386,7 @@ describe("a report that shows we are behind (LOS-4)", () => {
       request: THEIRS,
     });
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toEqual([
+    expect(seen(w)).toEqual([
       expect.objectContaining({ kind: "behind-heartbeat", sender: "alice" }),
     ]);
   });
@@ -505,27 +396,24 @@ describe("a report that shows we are behind (LOS-4)", () => {
     w.behind = true;
     w.detector.heardReport("me", report("2b2b2b2b2b2b2b2b", 1));
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "behind-heartbeat", sender: "me", since: T0 },
-    ]);
+    expect(seen(w)).toEqual([{ kind: "behind-heartbeat", sender: "me", since: T0 }]);
   });
 
   it("ignores a report whose state vector is not one, rather than reporting a loss on garbage", () => {
     const w = new LossDetector({
+      absenceMs: ABSENCE_MS,
       creatorMemberId: () => undefined,
       policy: () => resolveSyncPolicy({ expectedLatencyMs: 1000 }),
       pendingGapClients: () => [],
       lacksUpdatesOf: () => {
         throw new Error("not a state vector");
       },
-      controlHoles: () => false,
-      lacksControlOf: () => false,
+      controlClock: () => [0, 0],
       stateDigestWithin: () => {
         throw new Error("not a state vector");
       },
-      sameControlVector: () => false,
       controlDigest: () => "cccccccccccccccc",
-      isCreatorDevice: () => false,
+      stream: () => STREAM,
     });
     w.heardReport("bob", report("b0b0b0b0b0b0b0b0", 1, "bbbbbbbbbbbbbbbb"));
     vi.advanceTimersByTime(60_000);
@@ -564,7 +452,7 @@ describe("the pieces of an answer to this client's own request (LOS-14)", () => 
     w.behind = false;
     expect(w.detector.incompleteAnswers()).toEqual([]);
     vi.advanceTimersByTime(60_000);
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 
   it("lacking one is evidence once no piece has come for a floor and the waiting time, and names the responder", () => {
@@ -573,12 +461,12 @@ describe("the pieces of an answer to this client's own request (LOS-14)", () => 
     w.detector.heardAnswerPiece("alice", piece(1, null));
     w.detector.heardAnswerPiece("alice", piece(3, 3)); // the delete piece, number 2, never comes
     vi.advanceTimersByTime(11_999);
-    expect(w.detector.suspicions().filter((s) => s.kind === "answer-incomplete")).toEqual([]);
+    expect(seen(w).filter((s) => s.kind === "answer-incomplete")).toEqual([]);
     expect(w.detector.incompleteAnswers()).toEqual([
       { sender: "alice", received: 2, pieces: 3, since: T0 },
     ]);
     vi.advanceTimersByTime(1);
-    expect(w.detector.suspicions()).toContainEqual({
+    expect(seen(w)).toContainEqual({
       kind: "answer-incomplete",
       sender: "alice",
       since: T0 + 2_000,
@@ -590,9 +478,7 @@ describe("the pieces of an answer to this client's own request (LOS-14)", () => 
     w.detector.heardAnswerPiece("alice", piece(1, null));
     w.detector.heardAnswerPiece("alice", piece(2, null));
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "answer-incomplete", sender: "alice", since: T0 },
-    ]);
+    expect(seen(w)).toEqual([{ kind: "answer-incomplete", sender: "alice", since: T0 }]);
   });
 
   it("ends with a later answer of the same stream that is complete, not with an earlier one's copies", () => {
@@ -600,19 +486,19 @@ describe("the pieces of an answer to this client's own request (LOS-14)", () => 
     w.stateDigest = "bbbbbbbbbbbbbbbb"; // what this client deleted differs from what the last piece states
     w.detector.heardAnswerPiece("alice", piece(2, 2, 4));
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions().map((s) => s.kind)).toContain("answer-incomplete");
+    expect(seen(w).map((s) => s.kind)).toContain("answer-incomplete");
     w.detector.heardAnswerPiece("alice", piece(1, null, 3)); // a piece of an older answer, late
-    expect(w.detector.suspicions().map((s) => s.kind)).toContain("answer-incomplete");
+    expect(seen(w).map((s) => s.kind)).toContain("answer-incomplete");
     w.detector.heardAnswerPiece("alice", piece(1, 1, 5, "cccccccccccccccc")); // asked again: a whole answer
     expect(w.detector.incompleteAnswers()).toEqual([]);
-    expect(w.detector.suspicions()).toEqual([]); // held whole, though the digests differ
+    expect(seen(w)).toEqual([]); // held whole, though the digests differ
   });
 
   it("is no evidence when this client holds what the last piece states anyway", () => {
     const w = world();
     w.detector.heardAnswerPiece("alice", piece(2, 2)); // piece 1 lost, but its content came by edits
     vi.advanceTimersByTime(60_000);
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 
   it("are not counted for an answer to another client's request", () => {
@@ -620,7 +506,7 @@ describe("the pieces of an answer to this client's own request (LOS-14)", () => 
     w.detector.heardAnswerPiece("alice", { ...piece(1, null), own: false, request: THEIRS });
     vi.advanceTimersByTime(60_000);
     expect(w.detector.incompleteAnswers()).toEqual([]);
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 });
 
@@ -665,17 +551,13 @@ describe("transfers, kept apart from reports by sender, stream and number (LOS-1
     expect(w.detector.incompleteAnswers()).toEqual([
       { sender: "alice", received: 1, pieces: null, since: T0 },
     ]);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "answer-incomplete", sender: "alice", since: T0 },
-    ]);
+    expect(seen(w)).toEqual([{ kind: "answer-incomplete", sender: "alice", since: T0 }]);
     w.detector.heardAnswerPiece("alice", piece(3, 1, null, { own: false })); // her answer to Carol, piece 1
     vi.advanceTimersByTime(10_000);
     expect(w.detector.incompleteAnswers()).toEqual([
       { sender: "alice", received: 1, pieces: null, since: T0 },
     ]);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "answer-incomplete", sender: "alice", since: T0 },
-    ]);
+    expect(seen(w)).toEqual([{ kind: "answer-incomplete", sender: "alice", since: T0 }]);
     // Nor does its last piece, while this client lacks what it states.
     w.lacking.add(9);
     w.detector.heardAnswerPiece("alice", piece(3, 2, 2, { own: false, first: 9 }));
@@ -686,7 +568,7 @@ describe("transfers, kept apart from reports by sender, stream and number (LOS-1
     w.detector.heardAnswerPiece("alice", piece(2, 2, 2));
     expect(w.detector.incompleteAnswers()).toEqual([]);
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions().map((s) => s.kind)).toEqual(["behind-heartbeat"]); // what Carol's answer stated
+    expect(seen(w).map((s) => s.kind)).toEqual(["behind-heartbeat"]); // what Carol's answer stated
   });
 
   it("two overlapping answers to this client's own requests are counted apart, in either order", () => {
@@ -710,7 +592,7 @@ describe("transfers, kept apart from reports by sender, stream and number (LOS-1
     w.detector.heardAnswerPiece("alice", piece(3, 3, 3, { request: OTHER_REQUEST }));
     w.lacking.clear();
     expect(w.detector.incompleteAnswers()).toEqual([]);
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 
   it("a later answer of the stream, whole, ends an earlier one: the stream's state only grows", () => {
@@ -724,7 +606,7 @@ describe("transfers, kept apart from reports by sender, stream and number (LOS-1
     w.detector.heardAnswerPiece("alice", piece(2, 2, null));
     expect(w.detector.incompleteAnswers()).toEqual([]);
     vi.advanceTimersByTime(60_000);
-    expect(w.detector.suspicions().filter((s) => s.kind === "answer-incomplete")).toEqual([]);
+    expect(seen(w).filter((s) => s.kind === "answer-incomplete")).toEqual([]);
   });
 
   it("with both last pieces lost, both stay until a later report of the stream shows this client holds its state", () => {
@@ -735,17 +617,18 @@ describe("transfers, kept apart from reports by sender, stream and number (LOS-1
     w.detector.heardReport("alice", report(STREAM, 4, undefined, 5)); // her heartbeat: this client lacks what it states
     vi.advanceTimersByTime(10_000);
     expect(w.detector.incompleteAnswers()).toHaveLength(2);
+    // A gap of each answer, and one of what her report shows missing (LOS-25).
     expect(
       w.detector
         .suspicions()
         .map((s) => s.kind)
         .sort(),
-    ).toEqual(["answer-incomplete", "behind-heartbeat"]);
+    ).toEqual(["answer-incomplete", "answer-incomplete", "behind-heartbeat"]);
     // Her next heartbeat states what this client holds, digest and all.
     w.detector.heardReport("alice", report(STREAM, 5));
     w.lacking.clear();
     expect(w.detector.incompleteAnswers()).toEqual([]);
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 
   it("a later report of the stream ends a transfer only once this client can compare its digest, and it is the same", () => {
@@ -784,13 +667,11 @@ describe("transfers, kept apart from reports by sender, stream and number (LOS-1
     expect(w.detector.incompleteAnswers()).toEqual([
       { sender: "alice", received: 1, pieces: null, since: T0 },
     ]);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "answer-incomplete", sender: "alice", since: T0 },
-    ]);
+    expect(seen(w)).toEqual([{ kind: "answer-incomplete", sender: "alice", since: T0 }]);
     // What the old engine sent before it stopped may still come.
     w.detector.heardAnswerPiece("alice", piece(2, 2, 2));
     expect(w.detector.incompleteAnswers()).toEqual([]);
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 
   it("an identical copy of a piece counts once", () => {
@@ -837,7 +718,7 @@ describe("transfers, kept apart from reports by sender, stream and number (LOS-1
       expect(incompleteSince(w)).toEqual([T0]);
       w.detector.heardReport("alice", report(STREAM, 3));
       expect(w.detector.incompleteAnswers()).toEqual([]);
-      expect(w.detector.suspicions()).toEqual([]);
+      expect(seen(w)).toEqual([]);
     },
   );
 
@@ -855,12 +736,16 @@ describe("transfers, kept apart from reports by sender, stream and number (LOS-1
     expect(w.detector.incompleteAnswers()).toHaveLength(OPEN_TRANSFERS_PER_MEMBER);
     expect(w.detector.incompleteAnswers().map((answer) => answer.since)).not.toContain(T0);
     vi.advanceTimersByTime(10_000);
-    expect(incompleteSince(w)).toEqual([T0]);
+    // A gap of each, the one given up among them (LOS-25).
+    expect(incompleteSince(w)).toHaveLength(OPEN_TRANSFERS_PER_MEMBER + 1);
+    expect(w.detector.suspicions().find((s) => s.since === T0)?.key).toBe(
+      `answer:alice:${STREAM}:1`,
+    );
     // A report of the stream this client holds, above its number, ends it; one at a lower number would not.
     w.lacking.clear();
     w.detector.heardReport("alice", report(STREAM, OPEN_TRANSFERS_PER_MEMBER + 2));
     expect(w.detector.incompleteAnswers()).toEqual([]);
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 
   it("past the bound of streams with transfers given up, the member's evidence stays as long as the engine runs", () => {
@@ -880,9 +765,7 @@ describe("transfers, kept apart from reports by sender, stream and number (LOS-1
     }
     expect(w.detector.incompleteAnswers()).toEqual([]);
     vi.advanceTimersByTime(60_000);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "answer-incomplete", sender: "alice", since: T0 },
-    ]);
+    expect(seen(w)).toEqual([{ kind: "answer-incomplete", sender: "alice", since: T0 }]);
   });
 
   it("keeps a stream with a transfer besides the four kept for their reports", () => {
@@ -910,7 +793,7 @@ describe("a report this client holds by a whole answer (LOS-18)", () => {
     w.stateDigest = "bbbbbbbbbbbbbbbb"; // this client deleted something within the responder's vector
     w.detector.heardReport("alice", report(STREAM, 1)); // the responder's heartbeat, before it answered
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toEqual([{ kind: "diverged", sender: "alice", since: T0 }]);
+    expect(seen(w)).toEqual([{ kind: "diverged", sender: "alice", since: T0 }]);
     // Asked; the responder's whole answer, newer in its stream, ends it without a second request.
     w.detector.heardAnswerPiece("alice", {
       stream: STREAM,
@@ -921,17 +804,15 @@ describe("a report this client holds by a whole answer (LOS-18)", () => {
       own: true,
       request: MINE,
     });
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
     // Its heartbeat after the answer, saying the same, is held too.
     w.detector.heardReport("alice", report(STREAM, 3));
     vi.advanceTimersByTime(60_000);
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
     // One saying something else is judged again.
     w.detector.heardReport("alice", report(STREAM, 4, "cccccccccccccccc"));
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toEqual([
-      { kind: "diverged", sender: "alice", since: T0 + 70_000 },
-    ]);
+    expect(seen(w)).toEqual([{ kind: "diverged", sender: "alice", since: T0 + 70_000 }]);
   });
 
   it("is not held by an answer to someone else, or by one with a piece missing", () => {
@@ -947,7 +828,7 @@ describe("a report this client holds by a whole answer (LOS-18)", () => {
       request: THEIRS,
     });
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toEqual([{ kind: "diverged", sender: "alice", since: T0 }]);
+    expect(seen(w)).toEqual([{ kind: "diverged", sender: "alice", since: T0 }]);
     w.detector.heardAnswerPiece("alice", {
       stream: STREAM,
       sequence: 2,
@@ -967,66 +848,128 @@ describe("a report this client holds by a whole answer (LOS-18)", () => {
   });
 });
 
-describe("control state that is behind (LOS-10)", () => {
-  const TAG = "A".repeat(22);
-  const OTHER = "B".repeat(22);
+describe("a report this client holds by the state an answer's last piece states, a piece still missing (LOS-14, LOS-18)", () => {
+  const STREAM = "a2a2a2a2a2a2a2a2";
+  const lastPiece = (sequence: number, stateDigest = "aaaaaaaaaaaaaaaa") => ({
+    stream: STREAM,
+    sequence,
+    piece: 2,
+    pieces: 2,
+    report: report(STREAM, sequence, stateDigest),
+    own: true,
+    request: MINE,
+  });
 
-  it("is reported when the creator's heartbeat holds an operation we lack", () => {
+  it("shows no digest difference later where it crossed a deletion of this client's own, as with a whole answer", () => {
     const w = world();
-    w.held = { [TAG]: 3 };
-    w.detector.heardHeartbeat("alice", STATE, { [TAG]: 5 });
+    // The last piece arrives, its first piece never does: this client holds what it states anyway,
+    // so the answer covers (LOS-21).
+    w.detector.heardAnswerPiece("alice", lastPiece(2));
+    expect(seen(w)).toEqual([]);
+    expect(w.detector.incompleteAnswers()).toEqual([]);
+    // This client deletes something; the responder's heartbeat, sent before it had that deletion,
+    // states the same state as the answer: what differs is what this client deleted itself.
+    w.stateDigest = "bbbbbbbbbbbbbbbb";
+    w.detector.heardReport("alice", report(STREAM, 3));
+    vi.advanceTimersByTime(60_000);
+    expect(seen(w)).toEqual([]);
+    // One stating another state is judged again.
+    w.detector.heardReport("alice", report(STREAM, 4, "cccccccccccccccc"));
+    vi.advanceTimersByTime(10_000);
+    expect(seen(w)).toEqual([{ kind: "diverged", sender: "alice", since: T0 + 60_000 }]);
+  });
+
+  it("holds nothing where this client does not hold what the last piece states: a later report of that state that differs stays evidence", () => {
+    const w = world();
+    // The missing piece carried deletions this client lacks: its digest differs from the stated one.
+    w.stateDigest = "bbbbbbbbbbbbbbbb";
+    w.detector.heardAnswerPiece("alice", lastPiece(2));
+    w.detector.heardReport("alice", report(STREAM, 3));
+    vi.advanceTimersByTime(60_000);
+    expect(seen(w)).toEqual([
+      { kind: "diverged", sender: "alice", since: T0 },
+      { kind: "answer-incomplete", sender: "alice", since: T0 + w.policy.minIntervalMs },
+    ]);
+  });
+});
+
+describe("control state that is behind (LOS-10)", () => {
+  it("is reported when the creator's heartbeat states a control clock above ours", () => {
+    const w = world();
+    w.held = [1_000, 3];
+    w.detector.heardControlClock("alice", [1_000, 4]);
     w.detector.observe();
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions().filter((s) => s.kind === "control-behind")).toEqual([
+    expect(seen(w).filter((s) => s.kind === "control-behind")).toEqual([
       { kind: "control-behind", since: T0 },
     ]);
   });
 
-  it("believes a control vector only from the creator: anyone else's heartbeat cannot claim one", () => {
+  it("counts a control clock only from the creator: anyone else's states no decision of the creator's", () => {
     const w = world();
-    w.detector.heardHeartbeat("mallory", STATE, { [TAG]: 4_000_000_000 });
+    w.detector.heardControlClock("mallory", [2 ** 48 - 1, 65_535]);
+    w.detector.heardReport(
+      "mallory",
+      report(
+        "e0e0e0e0e0e0e0e0",
+        1,
+        "aaaaaaaaaaaaaaaa",
+        1,
+        [2 ** 48 - 1, 65_535],
+        "dddddddddddddddd",
+      ),
+    );
     w.detector.observe();
     vi.advanceTimersByTime(60_000);
-    expect(w.detector.suspicions().filter((s) => s.kind === "control-behind")).toEqual([]);
+    expect(seen(w).filter((s) => s.kind.startsWith("control"))).toEqual([]);
   });
 
-  it("is no evidence when the creator's device knows less than we do", () => {
+  it("is no evidence when the creator's device states a lower or an equal clock: it may know less", () => {
     const w = world();
-    w.held = { [TAG]: 5, [OTHER]: 2 };
-    w.detector.heardHeartbeat("alice", STATE, { [TAG]: 4 });
+    w.held = [2_000, 0];
+    w.detector.heardControlClock("alice", [1_999, 65_535]);
+    w.detector.heardControlClock("alice", [2_000, 0]);
     w.detector.observe();
     vi.advanceTimersByTime(60_000);
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 
-  it("keeps what each of the creator's devices said: one device's later heartbeat does not hide another's", () => {
+  it("counts a request of the creator as a heartbeat does", () => {
     const w = world();
-    w.held = { [TAG]: 5 };
-    w.detector.heardHeartbeat("alice", STATE, { [OTHER]: 2 });
-    w.detector.heardHeartbeat("alice", STATE, { [TAG]: 5 });
+    w.held = [1_000, 0];
+    // A request is a report (LOS-13); its clock counts as a heartbeat's.
+    w.detector.heardReport(
+      "alice",
+      report("a1a1a1a1a1a1a1a1", 1, "aaaaaaaaaaaaaaaa", 1, [1_000, 1], "dddddddddddddddd"),
+    );
     w.detector.observe();
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toEqual([{ kind: "control-behind", since: T0 }]);
+    expect(seen(w).filter((s) => s.kind === "control-behind")).toEqual([
+      { kind: "control-behind", since: T0 },
+    ]);
   });
 
-  it("is reported for a hole in the counters we have, with no heartbeat needed", () => {
+  it("keeps the greatest clock any of the creator's devices stated: a lagging device does not hide it", () => {
     const w = world();
-    w.holes = true;
+    w.held = [1_000, 0];
+    w.detector.heardControlClock("alice", [5_000, 0]);
+    w.detector.heardControlClock("alice", [500, 0]);
+    w.detector.heardControlClock("alice", null);
     w.detector.observe();
     vi.advanceTimersByTime(10_000);
-    expect(w.detector.suspicions()).toEqual([{ kind: "control-behind", since: T0 }]);
+    expect(seen(w)).toEqual([{ kind: "control-behind", since: T0 }]);
   });
 
   it("goes away when we catch up to what the creator holds", () => {
     const w = world();
-    w.held = { [TAG]: 3 };
-    w.detector.heardHeartbeat("alice", STATE, { [TAG]: 5 });
+    w.held = [1_000, 3];
+    w.detector.heardControlClock("alice", [1_000, 5]);
     w.detector.observe();
     vi.advanceTimersByTime(20_000);
-    expect(w.detector.suspicions()).toHaveLength(1);
-    w.held = { [TAG]: 5 };
+    expect(seen(w)).toHaveLength(1);
+    w.held = [1_000, 5];
     w.detector.observe();
-    expect(w.detector.suspicions()).toEqual([]);
+    expect(seen(w)).toEqual([]);
   });
 });
 
@@ -1035,15 +978,785 @@ describe("several kinds of evidence at once", () => {
     const w = world();
     w.gaps = [1];
     w.behind = true;
+    w.detector.heardControlClock("alice", [9, 0]);
     w.detector.observe();
     w.detector.heardReport("bob", report("b0b0b0b0b0b0b0b0", 1));
-    w.detector.heardEdit("carol", 60_000);
     vi.advanceTimersByTime(70_000);
     expect(
       w.detector
         .suspicions()
         .map((s) => s.kind)
         .sort(),
-    ).toEqual(["behind-heartbeat", "pending-gap", "sender-overdue"]);
+    ).toEqual(["behind-heartbeat", "control-behind", "pending-gap"]);
+  });
+});
+
+describe("a wall clock that jumps back (§1.6, LOS-1)", () => {
+  const HOUR = 3_600_000;
+
+  it("a pending gap is reported once it lasted one expected latency as measured, not as long again as the wall clock went back", () => {
+    const w = world();
+    w.gaps = [42];
+    w.detector.observe();
+    vi.advanceTimersByTime(4_000);
+    vi.setSystemTime(Date.now() - HOUR); // as a time service may set it
+    vi.advanceTimersByTime(5_999);
+    w.detector.observe();
+    expect(seen(w)).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(seen(w).map((s) => s.kind)).toEqual(["pending-gap"]);
+  });
+});
+
+describe("what a report of a device of the creator states of control state (LOS-12, LOS-17, LOS-18)", () => {
+  const LAPTOP = "a1a1a1a1a1a1a1a1";
+  const PHONE = "a2a2a2a2a2a2a2a2";
+  /** A report of the creator's `stream` at `sequence`, stating control clock `clock` and digest `digest`. */
+  const stating = (stream: string, sequence: number, clock: Clock, digest: string) =>
+    report(stream, sequence, "aaaaaaaaaaaaaaaa", 1, clock, digest);
+  /**
+   * Piece `number` of `pieces` of an answer of the creator's `stream` at `sequence` to this client's own
+   * request, carrying control clock `clock` and digest `digest` in its snapshot, which this client merged.
+   */
+  const answering = (
+    stream: string,
+    sequence: number,
+    clock: Clock,
+    digest: string,
+    number = 1,
+    pieces = 1,
+  ) => ({
+    stream,
+    sequence,
+    piece: number,
+    pieces: number === pieces ? pieces : null,
+    report: number === pieces ? report(stream, sequence) : null,
+    own: true,
+    request: MINE,
+    control: number === pieces ? { clock, digest } : null,
+  });
+
+  it("a stream's newer report replaces its older one, and an older one arriving late replaces nothing", () => {
+    const w = world();
+    w.held = [5, 1];
+    w.detector.heardReport("alice", stating(LAPTOP, 2, [5, 1], "dddddddddddddddd"));
+    w.detector.heardReport("alice", stating(LAPTOP, 1, [5, 1], "cccccccccccccccc"));
+    vi.advanceTimersByTime(10_000);
+    expect(seen(w)).toEqual([{ kind: "control-diverged", sender: "alice", since: T0 }]);
+    w.detector.heardReport("alice", stating(LAPTOP, 3, [5, 1], "cccccccccccccccc"));
+    expect(seen(w)).toEqual([]);
+    w.detector.heardReport("alice", stating(LAPTOP, 2, [5, 1], "dddddddddddddddd"));
+    vi.advanceTimersByTime(10_000);
+    expect(seen(w)).toEqual([]);
+  });
+
+  it("ends with a merged answer of that stream that states its clock and digest, not with another stream's (LOS-18)", () => {
+    const w = world();
+    w.held = [5, 1];
+    w.detector.heardReport("alice", stating(LAPTOP, 1, [5, 1], "dddddddddddddddd"));
+    w.detector.heardReport("alice", stating(PHONE, 1, [5, 1], "eeeeeeeeeeeeeeee"));
+    vi.advanceTimersByTime(10_000);
+    expect(w.detector.suspicions().map((s) => s.key)).toEqual([
+      `control-report:${LAPTOP}`,
+      `control-report:${PHONE}`,
+    ]);
+    // The phone's whole answer says what the phone held, nothing of the laptop's.
+    w.detector.heardAnswerPiece("alice", answering(PHONE, 2, [5, 1], "eeeeeeeeeeeeeeee"));
+    expect(w.detector.suspicions().map((s) => s.key)).toEqual([`control-report:${LAPTOP}`]);
+    // The phone stating again what it held as it answered is no evidence.
+    w.detector.heardReport("alice", stating(PHONE, 3, [5, 1], "eeeeeeeeeeeeeeee"));
+    vi.advanceTimersByTime(10_000);
+    expect(w.detector.suspicions().map((s) => s.key)).toEqual([`control-report:${LAPTOP}`]);
+  });
+
+  it("a gap that ended — this client came to hold that digest, or its clock moved on — restarts the wait of LOS-1 when a later report of the stream differs again", () => {
+    const EXPIRY = 30_000;
+    const w = world(); // 10 s of latency: believed after 10 s, first asked for after 20 s and its slot
+    const slot = slotOf(`control-report:${LAPTOP}`);
+    w.held = [5, 1];
+    w.detector.heardReport("alice", stating(LAPTOP, 1, [5, 1], "dddddddddddddddd"));
+    vi.advanceTimersByTime(20_000 + slot);
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual([`control-report:${LAPTOP}`]);
+    w.detector.tried(Date.now());
+    // This client merged what the report states: the gap ends.
+    w.controlDigest = "dddddddddddddddd";
+    w.detector.observe();
+    expect(seen(w)).toEqual([]);
+    vi.advanceTimersByTime(60_000);
+    // It merged more under that clock; the stream's next report states another digest again.
+    w.controlDigest = "eeeeeeeeeeeeeeee";
+    const again = Date.now();
+    w.detector.heardReport("alice", stating(LAPTOP, 2, [5, 1], "ffffffffffffffff"));
+    vi.advanceTimersByTime(9_999);
+    expect(seen(w)).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(w.detector.suspicions()).toMatchObject([
+      { kind: "control-diverged", since: again, tries: 0 },
+    ]);
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual([]);
+    vi.advanceTimersByTime(10_000 + slot);
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual([`control-report:${LAPTOP}`]);
+    // Ended by its clock moving on, past what the report states, the same holds.
+    w.detector.tried(Date.now());
+    w.held = [6, 0];
+    w.detector.observe();
+    expect(seen(w)).toEqual([]);
+    vi.advanceTimersByTime(60_000);
+    const third = Date.now();
+    w.detector.heardReport("alice", stating(LAPTOP, 3, [6, 0], "ffffffffffffffff"));
+    vi.advanceTimersByTime(10_000);
+    expect(w.detector.suspicions()).toMatchObject([
+      { kind: "control-diverged", since: third, tries: 0 },
+    ]);
+  });
+
+  it("ends with no member's merged answer, whatever it states (LOS-10, LOS-12)", () => {
+    const w = world();
+    w.held = [5, 1];
+    w.detector.heardReport("alice", stating(LAPTOP, 1, [5, 1], "dddddddddddddddd"));
+    vi.advanceTimersByTime(10_000);
+    w.detector.heardAnswerPiece("bob", answering(LAPTOP, 2, [5, 1], "dddddddddddddddd"));
+    expect(w.detector.suspicions().map((s) => s.key)).toEqual([`control-report:${LAPTOP}`]);
+  });
+
+  // A whole answer covers its stream's state up to its number, and later reports of that same state —
+  // not a newer state of the stream (LOS-17, LOS-18). Here the laptop's report no. 4 states the close
+  // this client missed; the answer no. 3 was taken before it, and arrives after it.
+  it("a whole answer older than the stream's report that states another control state leaves the evidence, with its time (LOS-17, LOS-18)", () => {
+    const w = world();
+    w.held = [5, 1];
+    w.sameState = false; // the answer's content is not held otherwise: only its pieces show it whole
+    w.detector.heardReport("alice", stating(LAPTOP, 4, [5, 1], "dddddddddddddddd"));
+    vi.advanceTimersByTime(10_000);
+    expect(seen(w)).toEqual([{ kind: "control-diverged", sender: "alice", since: T0 }]);
+    w.detector.heardAnswerPiece("alice", answering(LAPTOP, 3, [5, 1], "cccccccccccccccc"));
+    vi.advanceTimersByTime(10_000);
+    expect(seen(w)).toEqual([{ kind: "control-diverged", sender: "alice", since: T0 }]);
+  });
+
+  it("a whole answer newer than the report ends it, whatever control state it held (LOS-18)", () => {
+    const w = world();
+    w.held = [5, 1];
+    w.sameState = false;
+    w.detector.heardReport("alice", stating(LAPTOP, 4, [5, 1], "dddddddddddddddd"));
+    vi.advanceTimersByTime(10_000);
+    w.detector.heardAnswerPiece("alice", answering(LAPTOP, 3, [5, 1], "cccccccccccccccc"));
+    // The laptop's answer no. 5 brings the close; this client, which merged it, holds more under that
+    // clock than the laptop stated: no report of the laptop's up to no. 5 is evidence.
+    w.detector.heardAnswerPiece("alice", answering(LAPTOP, 5, [5, 1], "eeeeeeeeeeeeeeee"));
+    expect(seen(w)).toEqual([]);
+  });
+
+  it("an answer in pieces covers nothing before it is whole, the piece with the control state come first (LOS-14, LOS-18)", () => {
+    const w = world();
+    w.held = [5, 1];
+    w.sameState = false;
+    w.detector.heardReport("alice", stating(LAPTOP, 1, [5, 1], "dddddddddddddddd"));
+    vi.advanceTimersByTime(10_000);
+    w.detector.heardAnswerPiece("alice", answering(LAPTOP, 2, [5, 1], "eeeeeeeeeeeeeeee", 3, 3));
+    w.detector.heardAnswerPiece("alice", answering(LAPTOP, 2, [5, 1], "eeeeeeeeeeeeeeee", 1, 3));
+    expect(w.detector.suspicions().map((s) => s.key)).toEqual([`control-report:${LAPTOP}`]);
+    w.detector.heardAnswerPiece("alice", answering(LAPTOP, 2, [5, 1], "eeeeeeeeeeeeeeee", 2, 3));
+    expect(seen(w)).toEqual([]);
+  });
+
+  it("an answer in pieces covers once this client holds what its last piece states, a piece still missing (LOS-14, LOS-18)", () => {
+    const w = world();
+    w.held = [5, 1];
+    w.behind = true; // until it holds the last piece's state from elsewhere
+    w.detector.heardReport("alice", stating(LAPTOP, 1, [5, 1], "dddddddddddddddd"));
+    vi.advanceTimersByTime(10_000);
+    w.detector.heardAnswerPiece("alice", answering(LAPTOP, 2, [5, 1], "eeeeeeeeeeeeeeee", 2, 2));
+    expect(w.detector.suspicions().map((s) => s.key)).toContain(`control-report:${LAPTOP}`);
+    w.behind = false;
+    expect(seen(w)).toEqual([]);
+  });
+
+  it("an answer numbered no higher than what this client holds of the stream covers what it held at once (LOS-14, LOS-18)", () => {
+    const w = world();
+    w.held = [5, 1];
+    // The laptop's report no. 2 states what this client holds of the content, and a control digest that
+    // differs from this client's: a register under a lower clock the laptop lacks, say.
+    w.detector.heardReport("alice", stating(LAPTOP, 2, [5, 1], "dddddddddddddddd"));
+    vi.advanceTimersByTime(10_000);
+    expect(seen(w)).toEqual([{ kind: "control-diverged", sender: "alice", since: T0 }]);
+    // Its answer no. 1, which held the same control state, arrives late: not counted, it covers it all the same.
+    w.detector.heardAnswerPiece("alice", answering(LAPTOP, 1, [5, 1], "dddddddddddddddd"));
+    expect(seen(w)).toEqual([]);
+  });
+
+  it("a later report stating exactly what a whole answer held is covered; one stating another state is not (LOS-18)", () => {
+    const w = world();
+    w.held = [5, 1];
+    w.detector.heardReport("alice", stating(LAPTOP, 1, [5, 1], "dddddddddddddddd"));
+    vi.advanceTimersByTime(10_000);
+    w.detector.heardAnswerPiece("alice", answering(LAPTOP, 2, [5, 1], "eeeeeeeeeeeeeeee"));
+    w.detector.heardReport("alice", stating(LAPTOP, 3, [5, 1], "eeeeeeeeeeeeeeee"));
+    expect(seen(w)).toEqual([]);
+    vi.advanceTimersByTime(10_000);
+    expect(seen(w)).toEqual([]);
+    const later = Date.now();
+    w.detector.heardReport("alice", stating(LAPTOP, 4, [5, 1], "ffffffffffffffff"));
+    vi.advanceTimersByTime(10_000);
+    expect(seen(w)).toEqual([{ kind: "control-diverged", sender: "alice", since: later }]);
+  });
+
+  it("an older whole answer arriving late leaves the newer one's cover: its state stated again is no evidence, nor a report numbered below it (LOS-17, LOS-18)", () => {
+    const w = world();
+    w.held = [5, 1];
+    w.detector.heardAnswerPiece("alice", answering(LAPTOP, 5, [5, 1], "eeeeeeeeeeeeeeee"));
+    w.detector.heardAnswerPiece("alice", answering(LAPTOP, 3, [5, 1], "dddddddddddddddd"));
+    w.detector.heardReport("alice", stating(LAPTOP, 6, [5, 1], "eeeeeeeeeeeeeeee"));
+    vi.advanceTimersByTime(10_000);
+    expect(seen(w)).toEqual([]);
+    // A report numbered below the newer answer, arriving late, states nothing that answer does not cover.
+    const v = world();
+    v.held = [5, 1];
+    v.detector.heardAnswerPiece("alice", answering(LAPTOP, 5, [5, 1], "eeeeeeeeeeeeeeee"));
+    v.detector.heardReport("alice", stating(LAPTOP, 4, [5, 1], "dddddddddddddddd"));
+    vi.advanceTimersByTime(10_000);
+    expect(seen(v)).toEqual([]);
+  });
+});
+
+describe("a report of the creator that shows another control digest again (LOS-6, LOS-12)", () => {
+  it("keeps the time the first showed it, so a device that reports after every change does not start it afresh", () => {
+    const w = world();
+    w.held = [5, 1];
+    w.detector.heardReport(
+      "alice",
+      report("a1a1a1a1a1a1a1a1", 1, "aaaaaaaaaaaaaaaa", 1, [5, 1], "dddddddddddddddd"),
+    );
+    vi.advanceTimersByTime(4_000);
+    w.detector.heardReport(
+      "alice",
+      report("a1a1a1a1a1a1a1a1", 2, "aaaaaaaaaaaaaaaa", 1, [5, 1], "dddddddddddddddd"),
+    );
+    vi.advanceTimersByTime(4_000);
+    w.detector.heardReport(
+      "alice",
+      report("a1a1a1a1a1a1a1a1", 3, "aaaaaaaaaaaaaaaa", 1, [5, 1], "dddddddddddddddd"),
+    );
+    vi.advanceTimersByTime(4_000);
+    expect(seen(w)).toEqual([{ kind: "control-diverged", sender: "alice", since: T0 }]);
+  });
+});
+
+describe("gaps: one of each stream, with tries of its own, which rest and are woken (LOS-6, LOS-25, LOS-26)", () => {
+  /** 10 s of latency: a gap is believed after 10 s and first asked for after 20 s and its slot in a window of 60 s. */
+  const EXPIRY = 30_000;
+
+  it("a report that counts updates of two writers this client lacks is a gap of each, named by its writer where known", () => {
+    const w = world();
+    w.ahead = new Map([
+      [
+        7,
+        new Map([
+          [42, 5],
+          [43, 9],
+        ]),
+      ],
+    ]);
+    w.lacking.add(7);
+    w.detector.learnClient(42, "dave");
+    w.detector.heardReport("carol", report("cacacacacacacaca", 1, undefined, 7));
+    vi.advanceTimersByTime(10_000);
+    expect(w.detector.suspicions()).toStrictEqual([
+      { kind: "behind-heartbeat", sender: "dave", since: T0, key: "content:42", tries: 0 },
+      { kind: "behind-heartbeat", sender: "carol", since: T0, key: "content:43", tries: 0 },
+    ]);
+  });
+
+  it("a pending gap and a report showing the same writer's stream are one gap", () => {
+    const w = world();
+    w.gaps = [42];
+    w.detector.observe();
+    w.ahead = new Map([[7, new Map([[42, 5]])]]);
+    w.lacking.add(7);
+    w.detector.heardReport("carol", report("cacacacacacacaca", 1, undefined, 7));
+    vi.advanceTimersByTime(10_000);
+    expect(w.detector.suspicions().map((s) => [s.key, s.kind])).toStrictEqual([
+      ["content:42", "pending-gap"],
+    ]);
+  });
+
+  it("is first due after twice the waiting time and its slot, then after the expiry times two to its tries, never more than 10 min apart; after three it rests", () => {
+    const w = world();
+    w.gaps = [42];
+    w.detector.observe();
+    const due = () => w.detector.dueGaps(Date.now(), EXPIRY);
+    vi.advanceTimersByTime(20_000 + slotOf("content:42") - 1);
+    expect(due()).toStrictEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(due()).toStrictEqual(["content:42"]);
+    w.detector.tried(Date.now());
+    vi.advanceTimersByTime(2 * EXPIRY - 1);
+    expect(due()).toStrictEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(due()).toStrictEqual(["content:42"]);
+    w.detector.tried(Date.now());
+    vi.advanceTimersByTime(4 * EXPIRY);
+    expect(due()).toStrictEqual(["content:42"]);
+    w.detector.tried(Date.now());
+    expect(w.detector.suspicions()).toMatchObject([
+      { key: "content:42", tries: MAX_GAP_TRIES, resting: true },
+    ]);
+    vi.advanceTimersByTime(24 * 3_600_000);
+    expect(due()).toStrictEqual([]);
+  });
+
+  it("never waits more than 10 min between two tries", () => {
+    const w = world();
+    w.gaps = [42];
+    w.detector.observe();
+    const long = 400_000;
+    vi.advanceTimersByTime(20_000);
+    w.detector.tried(Date.now());
+    vi.advanceTimersByTime(GAP_SPACING_CAP_MS);
+    expect(w.detector.dueGaps(Date.now(), long)).toStrictEqual(["content:42"]);
+  });
+
+  it("keeps its time while it lasts: a gap seen again is not a new one, a gap after it ended is", () => {
+    const w = world();
+    w.gaps = [42];
+    w.detector.observe();
+    vi.advanceTimersByTime(20_000);
+    w.detector.tried(Date.now());
+    w.detector.observe();
+    expect(w.detector.suspicions()).toMatchObject([{ since: T0, tries: 1 }]);
+    w.gaps = [];
+    w.detector.observe();
+    w.gaps = [42];
+    w.detector.observe();
+    vi.advanceTimersByTime(10_000);
+    expect(w.detector.suspicions()).toMatchObject([{ since: T0 + 20_000, tries: 0 }]);
+  });
+
+  it("a request counts for every gap whose wait had passed, and for none that is newer", () => {
+    const w = world();
+    w.gaps = [42];
+    w.detector.observe();
+    vi.advanceTimersByTime(20_000);
+    w.gaps = [42, 43];
+    w.detector.observe();
+    w.detector.tried(Date.now());
+    vi.advanceTimersByTime(10_000);
+    expect(w.detector.suspicions().map((s) => [s.key, s.tries])).toStrictEqual([
+      ["content:42", 1],
+      ["content:43", 0],
+    ]);
+  });
+
+  /** A gap of client 42 that rests: three tries made. */
+  function resting(): World {
+    const w = world();
+    w.gaps = [42];
+    w.detector.heardClocks(new Map([[42, 5]]));
+    w.detector.observe();
+    for (let tried = 0; tried < MAX_GAP_TRIES; tried++) {
+      vi.advanceTimersByTime(GAP_SPACING_CAP_MS);
+      w.detector.tried(Date.now());
+    }
+    return w;
+  }
+
+  /** How long after a wake by a frame its request is due: the wait and the slot of a first try (LOS-6, LOS-26). */
+  const WOKEN_AFTER = 20_000 + slotOf("content:42");
+
+  it("a resting gap is woken by an update that carries its writer further: once, in its slot, and not again within 10 min", () => {
+    const w = resting();
+    w.detector.heardClocks(new Map([[42, 5]])); // the same position, from anyone
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual([]);
+    w.detector.heardClocks(new Map([[42, 6]]));
+    w.detector.observe(); // the poll that read it
+    vi.advanceTimersByTime(WOKEN_AFTER - 1);
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual(["content:42"]);
+    w.detector.tried(Date.now());
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual([]);
+    w.detector.heardClocks(new Map([[42, 7]]));
+    w.detector.observe();
+    vi.advanceTimersByTime(WAKE_SPACING_MS + WOKEN_AFTER - 1);
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual(["content:42"]);
+    w.detector.tried(Date.now());
+    expect(w.detector.suspicions()).toMatchObject([{ tries: MAX_GAP_TRIES, resting: true }]);
+  });
+
+  it("a resting gap of a client whose writer is known is woken by any frame of that writer, once, in its slot, and not again within 10 min; a frame of anyone else wakes nothing (LOS-2, LOS-26)", () => {
+    const w = resting();
+    w.detector.learnClient(42, "carol");
+    const due = () => w.detector.dueGaps(Date.now(), EXPIRY);
+    w.detector.heardFrom("dave");
+    vi.advanceTimersByTime(WOKEN_AFTER);
+    expect(due()).toStrictEqual([]);
+    w.detector.heardFrom("carol");
+    vi.advanceTimersByTime(WOKEN_AFTER - 1);
+    expect(due()).toStrictEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(due()).toStrictEqual(["content:42"]);
+    w.detector.tried(Date.now());
+    expect(due()).toStrictEqual([]);
+    w.detector.heardFrom("carol");
+    vi.advanceTimersByTime(WAKE_SPACING_MS + WOKEN_AFTER - 1);
+    expect(due()).toStrictEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(due()).toStrictEqual(["content:42"]);
+    w.detector.tried(Date.now());
+    expect(w.detector.suspicions()).toMatchObject([
+      { key: "content:42", sender: "carol", tries: MAX_GAP_TRIES, resting: true },
+    ]);
+  });
+
+  it("a frame of the writer read while the gap still has tries leaves no wake for when it rests; nor does one of a gap whose writer is not known", () => {
+    const w = world();
+    w.gaps = [42, 43];
+    w.detector.learnClient(42, "carol");
+    w.detector.observe();
+    const due = () => w.detector.dueGaps(Date.now(), EXPIRY);
+    for (let tried = 0; tried < MAX_GAP_TRIES; tried++) {
+      vi.advanceTimersByTime(GAP_SPACING_CAP_MS);
+      w.detector.heardFrom("carol");
+      w.detector.tried(Date.now());
+    }
+    expect(w.detector.suspicions().map((s) => s.resting)).toStrictEqual([true, true]);
+    vi.advanceTimersByTime(24 * 3_600_000);
+    expect(due()).toStrictEqual([]);
+    w.detector.heardFrom("carol");
+    vi.advanceTimersByTime(WOKEN_AFTER);
+    expect(due()).toStrictEqual(["content:42"]);
+  });
+
+  it("its first try waits, after twice the waiting time, for a slot derived from the gap and this client's own stream over the answer window: clients with the same gap ask apart, and one client's gaps too (LOS-6, RSY-20)", () => {
+    const window = answerWindowMs(10_000);
+    const streams = [STREAM, "a7a7a7a7a7a7a7a7"];
+    const slots = streams.map((stream) => slotOf("content:42", stream));
+    expect(new Set([...slots, slotOf("content:43")]).size).toBe(3);
+    for (const slot of [...slots, slotOf("content:43")]) {
+      expect(slot).toBeGreaterThan(0);
+      expect(slot).toBeLessThan(window);
+    }
+    for (const stream of streams) {
+      const w = world();
+      w.stream = stream;
+      w.gaps = [42, 43];
+      w.detector.observe();
+      // Both gaps arose at T0; each is due once it lasted 20 s and its own slot, not before.
+      for (const key of ["content:42", "content:43"]) {
+        const slot = slotOf(key, stream);
+        expect(w.detector.dueGaps(T0 + 20_000 + slot - 1, EXPIRY)).not.toContain(key);
+        expect(w.detector.dueGaps(T0 + 20_000 + slot, EXPIRY)).toContain(key);
+      }
+    }
+  });
+
+  it("wakeAll wakes every resting gap at once, whatever its last wake; its one request is theirs", () => {
+    const w = resting();
+    w.detector.heardClocks(new Map([[42, 6]]));
+    w.detector.tried(Date.now());
+    w.detector.wakeAll();
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual(["content:42"]);
+    w.detector.tried(Date.now());
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual([]);
+    vi.advanceTimersByTime(3_600_000);
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual([]);
+  });
+
+  it("a truncated history is a gap of its own, due at once and shown at once (LOS-19)", () => {
+    let truncated: number | undefined;
+    const w = world();
+    w.detector = new LossDetector({
+      absenceMs: ABSENCE_MS,
+      creatorMemberId: () => w.creator,
+      policy: () => w.policy,
+      pendingGapClients: () => w.gaps,
+      lacksUpdatesOf: () => false,
+      controlClock: () => w.held,
+      stateDigestWithin: () => w.stateDigest,
+      controlDigest: () => w.controlDigest,
+      truncatedSince: () => truncated,
+      stream: () => STREAM,
+    });
+    truncated = Date.now();
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual(["truncated"]);
+    expect(w.detector.suspicions()).toStrictEqual([
+      { kind: "history-truncated", since: T0, key: "truncated", tries: 0 },
+    ]);
+    truncated = undefined;
+    expect(w.detector.suspicions()).toStrictEqual([]);
+  });
+});
+
+describe("a difference in digests lapses once its stream is silent for longer than the absence threshold (LOS-12, LOS-13, RSY-1)", () => {
+  const BOB = "b0b0b0b0b0b0b0b0";
+  const LAPTOP = "a1a1a1a1a1a1a1a1";
+  /** 10 s of latency: a gap is believed after 10 s and first asked for after 20 s. */
+  const EXPIRY = 30_000;
+  /** A piece of an answer of `stream` at `sequence` that is not the last, to someone else's request: it states nothing. */
+  const passing = (stream: string, sequence: number) => ({
+    stream,
+    sequence,
+    piece: 1,
+    pieces: null,
+    report: null,
+    own: false,
+    request: THEIRS,
+  });
+  const keys = (w: World) => w.detector.suspicions().map((s) => s.key);
+
+  it("a report's state digest at a vector this client holds: shown up to the threshold, lapsed past it, and back only with a newer report of the stream that still differs, its gap keeping its tries", () => {
+    const w = world();
+    const slot = slotOf(`deletions:bob:${BOB}`);
+    w.detector.heardReport("bob", report(BOB, 2, "bbbbbbbbbbbbbbbb"));
+    vi.advanceTimersByTime(20_000 + slot);
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual([`deletions:bob:${BOB}`]);
+    w.detector.tried(Date.now());
+    vi.advanceTimersByTime(ABSENCE_MS - 20_000 - slot);
+    expect(w.detector.suspicions()).toMatchObject([
+      { kind: "diverged", key: `deletions:bob:${BOB}`, since: T0, tries: 1 },
+    ]);
+    vi.advanceTimersByTime(1);
+    expect(w.detector.suspicions()).toStrictEqual([]);
+    expect(w.detector.hasGaps).toBe(false);
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual([]);
+    // A request to all meanwhile — the person's, say — is no try of it.
+    w.detector.tried(Date.now());
+    // The same report offered again, or an older one arriving late, brings nothing back.
+    w.detector.heardReport("bob", report(BOB, 2, "bbbbbbbbbbbbbbbb"));
+    w.detector.heardReport("bob", report(BOB, 1, "bbbbbbbbbbbbbbbb"));
+    vi.advanceTimersByTime(20_000);
+    expect(w.detector.suspicions()).toStrictEqual([]);
+    // A newer one that still differs does: the gap it lapsed from, with its time and its try.
+    w.detector.heardReport("bob", report(BOB, 3, "bbbbbbbbbbbbbbbb"));
+    expect(w.detector.suspicions()).toMatchObject([
+      { kind: "diverged", key: `deletions:bob:${BOB}`, since: T0, tries: 1 },
+    ]);
+    // One that does not differ ends it.
+    w.detector.heardReport("bob", report(BOB, 4));
+    expect(w.detector.suspicions()).toStrictEqual([]);
+  });
+
+  it("a report of the creator's control digest at this client's control clock lapses the same way", () => {
+    const w = world();
+    w.held = [5, 1];
+    w.detector.heardReport(
+      "alice",
+      report(LAPTOP, 1, "aaaaaaaaaaaaaaaa", 1, [5, 1], "dddddddddddddddd"),
+    );
+    vi.advanceTimersByTime(ABSENCE_MS);
+    expect(keys(w)).toStrictEqual([`control-report:${LAPTOP}`]);
+    vi.advanceTimersByTime(1);
+    expect(keys(w)).toStrictEqual([]);
+    w.detector.heardReport(
+      "alice",
+      report(LAPTOP, 1, "aaaaaaaaaaaaaaaa", 1, [5, 1], "dddddddddddddddd"),
+    );
+    expect(keys(w)).toStrictEqual([]);
+    w.detector.heardReport(
+      "alice",
+      report(LAPTOP, 2, "aaaaaaaaaaaaaaaa", 1, [5, 1], "dddddddddddddddd"),
+    );
+    expect(keys(w)).toStrictEqual([`control-report:${LAPTOP}`]);
+  });
+
+  it("only a frame with a number above every one heard of the stream counts as heard: copies and older frames of it do not keep the difference, a later piece of an answer does, and brings back nothing once it lapsed", () => {
+    const w = world();
+    w.detector.heardReport("bob", report(BOB, 5, "bbbbbbbbbbbbbbbb"));
+    vi.advanceTimersByTime(ABSENCE_MS - 60_000);
+    w.detector.heardReport("bob", report(BOB, 5, "bbbbbbbbbbbbbbbb"));
+    w.detector.heardReport("bob", report(BOB, 4, "bbbbbbbbbbbbbbbb"));
+    w.detector.heardAnswerPiece("bob", passing(BOB, 5));
+    w.detector.heardStream("bob", BOB, 3);
+    vi.advanceTimersByTime(60_001);
+    expect(keys(w)).toStrictEqual([]);
+
+    const v = world();
+    const t1 = Date.now();
+    v.detector.heardReport("bob", report(BOB, 5, "bbbbbbbbbbbbbbbb"));
+    vi.advanceTimersByTime(ABSENCE_MS - 60_000);
+    // A piece of its answer to someone else, numbered above its report: the stream is heard, though the
+    // piece states nothing and replaces no report.
+    v.detector.heardAnswerPiece("bob", passing(BOB, 6));
+    vi.advanceTimersByTime(60_001);
+    expect(v.detector.suspicions()).toMatchObject([{ kind: "diverged", since: t1 }]);
+    // A piece of an answer it does not take, numbered above again, as the engine tells it.
+    vi.advanceTimersByTime(ABSENCE_MS - 70_000);
+    v.detector.heardStream("bob", BOB, 7);
+    vi.advanceTimersByTime(ABSENCE_MS);
+    expect(v.detector.suspicions()).toMatchObject([{ kind: "diverged", since: t1 }]);
+    vi.advanceTimersByTime(1);
+    expect(v.detector.suspicions()).toStrictEqual([]);
+    // Heard again after the lapse by a frame that is no report: still lapsed.
+    v.detector.heardStream("bob", BOB, 8);
+    v.detector.heardAnswerPiece("bob", passing(BOB, 9));
+    expect(v.detector.suspicions()).toStrictEqual([]);
+  });
+
+  it("a silent stream's difference lapses while another stream of the member goes on reporting", () => {
+    const w = world();
+    w.detector.heardReport("bob", report(BOB, 1, "bbbbbbbbbbbbbbbb"));
+    for (let minute = 1; minute <= 11; minute++) {
+      vi.advanceTimersByTime(60_000);
+      w.detector.heardReport("bob", report("b1b1b1b1b1b1b1b1", minute));
+    }
+    expect(keys(w)).toStrictEqual([]);
+  });
+
+  it("a lapsed gap that rested is not due, woken by an absence the application tells of or by the person; back with a newer report, it rests on with its tries, and the newer report wakes it once, its request in its slot", () => {
+    const w = world();
+    w.detector.heardReport("bob", report(BOB, 1, "bbbbbbbbbbbbbbbb"));
+    // Its three tries within five minutes: 20 s, then 60 s and 120 s apart (LOS-6).
+    for (let second = 0; second < 300; second++) {
+      vi.advanceTimersByTime(1_000);
+      w.detector.tried(Date.now(), w.detector.dueGaps(Date.now(), EXPIRY));
+    }
+    expect(w.detector.suspicions()).toMatchObject([
+      { kind: "diverged", tries: MAX_GAP_TRIES, resting: true },
+    ]);
+    vi.advanceTimersByTime(ABSENCE_MS);
+    w.detector.wakeAll();
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual([]);
+    expect(w.detector.suspicions()).toStrictEqual([]);
+    // Back with a newer report: it rests on, with its tries, and the newer report woke it.
+    w.detector.heardReport("bob", report(BOB, 2, "bbbbbbbbbbbbbbbb"));
+    w.detector.observe();
+    expect(w.detector.suspicions()).toMatchObject([
+      { kind: "diverged", tries: MAX_GAP_TRIES, resting: true },
+    ]);
+    vi.advanceTimersByTime(20_000 + slotOf(`deletions:bob:${BOB}`) - 1);
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(w.detector.dueGaps(Date.now(), EXPIRY)).toStrictEqual([`deletions:bob:${BOB}`]);
+  });
+});
+
+describe("a lapsed gap waiting for the slot of its first try (LOS-6, LOS-12, RSY-22)", () => {
+  const BOB = "b0b0b0b0b0b0b0b0";
+  const KEY = `deletions:bob:${BOB}`;
+  /** 400 s of latency: a gap is first asked for after 800 s, its stream lapsing after 600 s unheard; the window is 300 s. */
+  const slow = { expectedLatencyMs: 400_000 };
+  const slot = answerDelayMs(KEY, STREAM, answerWindowMs(400_000));
+
+  it("is not about to be asked for, nor is a request let go for another's for it; heard meanwhile, it is", () => {
+    expect(slot).toBeGreaterThan(1);
+    const lapsed = world(slow);
+    const heard = world(slow);
+    for (const w of [lapsed, heard])
+      w.detector.heardReport("bob", report(BOB, 2, "bbbbbbbbbbbbbbbb"));
+    vi.advanceTimersByTime(500_000);
+    heard.detector.heardStream("bob", BOB, 3);
+    vi.advanceTimersByTime(300_001);
+    expect(lapsed.detector.awaitingSlot(Date.now(), 30_000)).toStrictEqual([]);
+    expect(heard.detector.awaitingSlot(Date.now(), 30_000)).toStrictEqual([KEY]);
+    // Neither is due before its slot; the one heard is, after it.
+    vi.advanceTimersByTime(slot);
+    expect(lapsed.detector.dueGaps(Date.now(), 30_000)).toStrictEqual([]);
+    expect(heard.detector.dueGaps(Date.now(), 30_000)).toStrictEqual([KEY]);
+  });
+});
+
+describe("nothing else lapses with its stream's silence (LOS-12)", () => {
+  const BOB = "b0b0b0b0b0b0b0b0";
+  const LAPTOP = "a1a1a1a1a1a1a1a1";
+  const PAST = ABSENCE_MS + 60_000;
+  const kinds = (w: World) => w.detector.suspicions().map((s) => s.kind);
+
+  it("missing predecessors (LOS-2)", () => {
+    const w = world();
+    w.gaps = [42];
+    w.detector.observe();
+    vi.advanceTimersByTime(PAST);
+    expect(kinds(w)).toStrictEqual(["pending-gap"]);
+  });
+
+  it("updates a report shows this client lacks, of a writer it names (LOS-4, LOS-25)", () => {
+    const w = world();
+    w.ahead = new Map([[1, new Map([[7, 12]])]]);
+    w.lacking.add(1);
+    w.sameState = false;
+    w.detector.heardReport("bob", report(BOB, 1, "bbbbbbbbbbbbbbbb"));
+    vi.advanceTimersByTime(PAST);
+    expect(w.detector.suspicions()).toMatchObject([{ kind: "behind-heartbeat", key: "content:7" }]);
+    expect(w.detector.suspicions()).toHaveLength(1);
+  });
+
+  it("updates a report shows this client lacks, where the profile cannot name the writer (LOS-4)", () => {
+    const w = world();
+    w.lacking.add(1);
+    w.sameState = false; // lacking an insertion the report counts, this client cannot compare digests
+    w.detector.heardReport("bob", report(BOB, 1, "bbbbbbbbbbbbbbbb"));
+    vi.advanceTimersByTime(PAST);
+    expect(w.detector.suspicions()).toMatchObject([
+      { kind: "behind-heartbeat", key: `content-of:bob:${BOB}` },
+    ]);
+    expect(w.detector.suspicions()).toHaveLength(1);
+  });
+
+  it("an answer to this client's own request missing a piece (LOS-14)", () => {
+    const w = world();
+    w.lacking.add(1);
+    w.detector.heardAnswerPiece("alice", {
+      stream: LAPTOP,
+      sequence: 1,
+      piece: 2,
+      pieces: 2,
+      report: report(LAPTOP, 1),
+      own: true,
+      request: MINE,
+    });
+    vi.advanceTimersByTime(PAST);
+    expect(kinds(w)).toContain("answer-incomplete");
+  });
+
+  it("an answer given up for the bound (LOS-22)", () => {
+    const w = world();
+    w.lacking.add(1);
+    for (let sequence = 1; sequence <= OPEN_TRANSFERS_PER_MEMBER + 1; sequence++) {
+      w.detector.heardAnswerPiece("alice", {
+        stream: LAPTOP,
+        sequence,
+        piece: 1,
+        pieces: 2,
+        report: null,
+        own: true,
+        request: `${sequence}`.padStart(16, "0"),
+      });
+    }
+    expect(w.detector.incompleteAnswers()).toHaveLength(OPEN_TRANSFERS_PER_MEMBER);
+    vi.advanceTimersByTime(PAST);
+    expect(w.detector.suspicions().map((s) => s.key)).toContain(`answer:alice:${LAPTOP}:1`);
+  });
+
+  it("a truncated history (LOS-19)", () => {
+    const w = world();
+    const truncated = Date.now();
+    w.detector = new LossDetector({
+      absenceMs: ABSENCE_MS,
+      creatorMemberId: () => w.creator,
+      policy: () => w.policy,
+      pendingGapClients: () => [],
+      lacksUpdatesOf: () => false,
+      controlClock: () => w.held,
+      stateDigestWithin: () => w.stateDigest,
+      controlDigest: () => w.controlDigest,
+      truncatedSince: () => truncated,
+      stream: () => STREAM,
+    });
+    vi.advanceTimersByTime(PAST);
+    expect(kinds(w)).toStrictEqual(["history-truncated"]);
+  });
+
+  it("a control clock above this client's in a report of the creator (LOS-10)", () => {
+    const w = world();
+    w.held = [5, 1];
+    w.detector.heardReport(
+      "alice",
+      report(LAPTOP, 1, "aaaaaaaaaaaaaaaa", 1, [6, 0], "dddddddddddddddd"),
+    );
+    w.detector.observe();
+    vi.advanceTimersByTime(PAST);
+    expect(kinds(w)).toStrictEqual(["control-behind"]);
   });
 });

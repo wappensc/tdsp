@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { ControlState } from "./control-state";
-import { canonicalJson, controlDigestOf, digestOf, sha256 } from "./digest";
+import { canonicalJson, digestOf, sha256 } from "./digest";
 
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
 
@@ -62,23 +62,49 @@ describe("RFC 8785 canonical JSON", () => {
   });
 });
 
-describe("the control digest (LOS-12)", () => {
+describe("the control digest (LOS-24)", () => {
   const laptop = "QUFBQUFBQUFBQUFBQUFBQQ";
   const tablet = "QkJCQkJCQkJCQkJCQkJCQg";
+  const at = (ms: number): [number, number] => [1_793_008_800_000 + ms, 0];
 
-  it("is the same for the same operations in any order, and differs for another value under one dot", () => {
-    const one = new ControlState();
-    one.add({ device: laptop, counter: 1, target: "member:bob", value: "write", seen: {} });
-    one.add({ device: tablet, counter: 1, target: "member:carol", value: "read", seen: {} });
+  it("is the same for the same registers in any order, and differs for another value at one clock", () => {
+    const bob = { value: "write" as const, clock: at(0), device: laptop };
+    const carol = { value: "read" as const, clock: at(1), device: tablet };
+    const one = ControlState.from({
+      closed: false,
+      targets: { "member:bob": bob, "member:carol": carol },
+    });
     const two = new ControlState();
-    two.add({ device: tablet, counter: 1, target: "member:carol", value: "read", seen: {} });
-    two.add({ device: laptop, counter: 1, target: "member:bob", value: "write", seen: {} });
-    expect(controlDigestOf(two.snapshot())).toBe(controlDigestOf(one.snapshot()));
+    two.take({ closed: false, targets: { "member:carol": carol } });
+    two.take({ closed: false, targets: { "member:bob": bob } });
+    expect(two.digest).toBe(one.digest);
 
-    const other = new ControlState();
-    other.add({ device: laptop, counter: 1, target: "member:bob", value: "read", seen: {} });
-    other.add({ device: tablet, counter: 1, target: "member:carol", value: "read", seen: {} });
-    expect(other.vector).toEqual(one.vector);
-    expect(controlDigestOf(other.snapshot())).not.toBe(controlDigestOf(one.snapshot()));
+    const other = ControlState.from({
+      closed: false,
+      targets: { "member:bob": { ...bob, value: "read" }, "member:carol": carol },
+    });
+    // The control clock is the same, the state is not: the digest shows what the clock cannot (LOS-12).
+    expect(other.clock).toEqual(one.clock);
+    expect(other.digest).not.toBe(one.digest);
+  });
+
+  it("covers the close, which no clock shows", () => {
+    const state = ControlState.from({
+      closed: false,
+      targets: { "member:bob": { value: "write", clock: at(0), device: laptop } },
+    });
+    const closed = state.copy();
+    closed.close();
+    expect(closed.clock).toEqual(state.clock);
+    expect(closed.digest).not.toBe(state.digest);
+  });
+
+  it("is SHA-256 over the RFC 8785 form of exactly closed and targets", () => {
+    const state = ControlState.from({
+      closed: true,
+      targets: { pace: { value: 30_000, clock: at(5), device: tablet } },
+    });
+    const text = canonicalJson({ closed: true, targets: state.state().targets });
+    expect(state.digest).toBe(digestOf(new TextEncoder().encode(text)));
   });
 });

@@ -1,0 +1,238 @@
+{
+  "$comment": "TDSP 2.0 draft digest test vectors (draft revision 10), LOS-24: a digest is the first 8 bytes of SHA-256 of its input, as 16 lowercase hex digits. `control`: a state's `closed` and `targets` → its RFC 8785 serialisation (`canonical`, then `utf8Length` bytes of UTF-8) → the control digest. `deletions`: what a replica deleted as Appendix A writes it — `00`, the number of clients, then per client in descending order of its id the id, the number of ranges and each range's clock and length, ascending and merged, every number a variable-length unsigned integer —, from a delete set by client (`deleted`, [clock, length] ranges in any order, possibly unmerged), cut at the clocks of the state vector `within` where given (a client it does not name counts nothing), as `encoding` in hex → the state digest. `fromUpdates`: for an implementation that reads Yjs updates (encoding v1): a replica that applies `updates` (Base64) in order projects `text` and has deleted `deleted` — what it holds for missing predecessors counts not (LOS-23) — whose encoding and state digest follow. Checked in src/test-vectors.test.ts.",
+  "version": "de.wappensc.together.tdsp.probe.draft-10",
+  "control": [
+    {
+      "name": "nothing held",
+      "state": { "closed": false, "targets": {} },
+      "canonical": "{\"closed\":false,\"targets\":{}}",
+      "utf8Length": 29,
+      "digest": "dc2300e4cc3f671f"
+    },
+    {
+      "name": "nothing held, closed",
+      "state": { "closed": true, "targets": {} },
+      "canonical": "{\"closed\":true,\"targets\":{}}",
+      "utf8Length": 28,
+      "digest": "588ff007304ed221"
+    },
+    {
+      "name": "members, fields and targets out of order: sorted by name, the register's fields too",
+      "state": {
+        "targets": {
+          "pace": {
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA",
+            "clock": [1793008800000, 1],
+            "value": 30000
+          },
+          "member:carol": {
+            "clock": [1793008860000, 0],
+            "value": "read",
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          },
+          "layer:com.example.comments/1:member:bob": {
+            "value": null,
+            "device": "Q0FGRS1jcmVhdG9yLTAwMQ",
+            "clock": [1793008800000, 2]
+          },
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          }
+        },
+        "closed": false
+      },
+      "canonical": "{\"closed\":false,\"targets\":{\"layer:com.example.comments/1:member:bob\":{\"clock\":[1793008800000,2],\"device\":\"Q0FGRS1jcmVhdG9yLTAwMQ\",\"value\":null},\"member:bob\":{\"clock\":[1793008800000,0],\"device\":\"Ms3dRk0ZyS7cH1qkM8fWNA\",\"value\":\"write\"},\"member:carol\":{\"clock\":[1793008860000,0],\"device\":\"Ms3dRk0ZyS7cH1qkM8fWNA\",\"value\":\"read\"},\"pace\":{\"clock\":[1793008800000,1],\"device\":\"Ms3dRk0ZyS7cH1qkM8fWNA\",\"value\":30000}}}",
+      "utf8Length": 411,
+      "digest": "c580049f0c9cdf07"
+    },
+    {
+      "name": "names sorted by UTF-16 code units, not by code points: é, then 𝄞 (a surrogate pair), then ﬀ",
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:ﬀ": {
+            "value": "read",
+            "clock": [1793008800000, 0],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          },
+          "member:𝄞": {
+            "value": "read",
+            "clock": [1793008800000, 0],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          },
+          "member:é": {
+            "value": "read",
+            "clock": [1793008800000, 0],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          }
+        }
+      },
+      "canonical": "{\"closed\":false,\"targets\":{\"member:é\":{\"clock\":[1793008800000,0],\"device\":\"Ms3dRk0ZyS7cH1qkM8fWNA\",\"value\":\"read\"},\"member:𝄞\":{\"clock\":[1793008800000,0],\"device\":\"Ms3dRk0ZyS7cH1qkM8fWNA\",\"value\":\"read\"},\"member:ﬀ\":{\"clock\":[1793008800000,0],\"device\":\"Ms3dRk0ZyS7cH1qkM8fWNA\",\"value\":\"read\"}}}",
+      "utf8Length": 298,
+      "digest": "d9fef0577c8a247e"
+    },
+    {
+      "name": "escapes: quote, backslash, the short escapes, other control characters as lower-case \\u00xx; slash, DEL and U+2028 as they are",
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:a\"b\\c/d": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          },
+          "member:\b\f\n\r\t": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          },
+          "member:\u0001\u001f\u007f\u2028": {
+            "value": "read",
+            "clock": [1793008800000, 0],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          }
+        }
+      },
+      "canonical": "{\"closed\":false,\"targets\":{\"member:\\u0001\\u001f\u007f\u2028\":{\"clock\":[1793008800000,0],\"device\":\"Ms3dRk0ZyS7cH1qkM8fWNA\",\"value\":\"read\"},\"member:\\b\\f\\n\\r\\t\":{\"clock\":[1793008800000,0],\"device\":\"Ms3dRk0ZyS7cH1qkM8fWNA\",\"value\":\"write\"},\"member:a\\\"b\\\\c/d\":{\"clock\":[1793008800000,0],\"device\":\"Ms3dRk0ZyS7cH1qkM8fWNA\",\"value\":\"write\"}}}",
+      "utf8Length": 326,
+      "digest": "313de6342f3f5c6d"
+    },
+    {
+      "name": "non-ASCII written as UTF-8, never escaped",
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:Zoë 🙂": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          }
+        }
+      },
+      "canonical": "{\"closed\":false,\"targets\":{\"member:Zoë 🙂\":{\"clock\":[1793008800000,0],\"device\":\"Ms3dRk0ZyS7cH1qkM8fWNA\",\"value\":\"write\"}}}",
+      "utf8Length": 125,
+      "digest": "146776ef346c181d"
+    },
+    {
+      "name": "integers at the ends of their ranges, as plain digits",
+      "state": {
+        "closed": false,
+        "targets": {
+          "pace": {
+            "value": 4294967295,
+            "clock": [281474976710655, 65535],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          },
+          "member:bob": { "value": null, "clock": [0, 0], "device": "Ms3dRk0ZyS7cH1qkM8fWNA" }
+        }
+      },
+      "canonical": "{\"closed\":false,\"targets\":{\"member:bob\":{\"clock\":[0,0],\"device\":\"Ms3dRk0ZyS7cH1qkM8fWNA\",\"value\":null},\"pace\":{\"clock\":[281474976710655,65535],\"device\":\"Ms3dRk0ZyS7cH1qkM8fWNA\",\"value\":4294967295}}}",
+      "utf8Length": 198,
+      "digest": "d5b66fae2e9c64d9"
+    }
+  ],
+  "deletions": [
+    {
+      "name": "nothing deleted: 00 00",
+      "deleted": {},
+      "encoding": "0000",
+      "digest": "96a296d224f285c6"
+    },
+    {
+      "name": "one range",
+      "deleted": { "1": [[0, 3]] },
+      "encoding": "000101010003",
+      "digest": "bc3cdb5dbab2c5ca"
+    },
+    {
+      "name": "clients in descending order of their ids, whatever order they come in",
+      "deleted": { "1": [[5, 5]], "7": [[2, 1]], "300": [[0, 2]] },
+      "encoding": "0003ac020100020701020101010505",
+      "digest": "0324e71163cb8268"
+    },
+    {
+      "name": "ranges ascending and merged: adjacent and overlapping ones become one",
+      "deleted": { "5": [[10, 2], [0, 2], [2, 3], [11, 4]] },
+      "encoding": "0001050200050a05",
+      "digest": "88087b350d999be7"
+    },
+    {
+      "name": "variable-length integers: a 32-bit client id, a clock and a length above 127",
+      "deleted": { "4294967295": [[200, 300]] },
+      "encoding": "0001ffffffff0f01c801ac02",
+      "digest": "c5ece137ef5fdbe9"
+    },
+    {
+      "name": "a 53-bit client id, as yrs draws them",
+      "deleted": { "9007199254740991": [[0, 1]] },
+      "encoding": "0001ffffffffffffff0f010001",
+      "digest": "189f600d37b4b132"
+    },
+    {
+      "name": "within a state vector: ranges cut at the client's clock, a client it does not count left out",
+      "deleted": { "1": [[0, 2], [4, 4], [10, 1]], "2": [[0, 1]] },
+      "within": { "1": 6 },
+      "encoding": "0001010200020402",
+      "digest": "4ae63e7b2df0d481"
+    },
+    {
+      "name": "within a state vector that counts none of it: 00 00",
+      "deleted": { "3": [[5, 2]] },
+      "within": { "3": 5 },
+      "encoding": "0000",
+      "digest": "96a296d224f285c6"
+    }
+  ],
+  "fromUpdates": [
+    {
+      "name": "nothing deleted",
+      "updates": ["AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQNhYmMA"],
+      "text": "abc",
+      "deleted": {},
+      "encoding": "0000",
+      "digest": "96a296d224f285c6"
+    },
+    {
+      "name": "one character deleted",
+      "updates": [
+        "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQNhYmMA",
+        "AQEBBYQBBAFkAA==",
+        "AAEBAQUB"
+      ],
+      "text": "abc",
+      "deleted": { "1": [[5, 1]] },
+      "encoding": "000101010501",
+      "digest": "cad2744f2d142f5f"
+    },
+    {
+      "name": "the delete arrives before the insert it deletes: applied once both are there",
+      "updates": [
+        "AAEBAQUB",
+        "AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQNhYmMA",
+        "AQEBBYQBBAFkAA=="
+      ],
+      "text": "abc",
+      "deleted": { "1": [[5, 1]] },
+      "encoding": "000101010501",
+      "digest": "cad2744f2d142f5f"
+    },
+    {
+      "name": "a delete held for its missing insert does not count (LOS-23)",
+      "updates": ["AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQNhYmMA", "AAEBAQUB"],
+      "text": "abc",
+      "deleted": {},
+      "encoding": "0000",
+      "digest": "96a296d224f285c6"
+    },
+    {
+      "name": "a held delete beside one that applies: only the applied one counts",
+      "updates": ["AQMBAAcBB2NvbnRlbnQDCXBhcmFncmFwaAcAAQAGBAABAQNhYmMA", "AAEBAgMBBQE="],
+      "text": "ac",
+      "deleted": { "1": [[3, 1]] },
+      "encoding": "000101010301",
+      "digest": "65c9c00e11edf2f0"
+    }
+  ]
+}

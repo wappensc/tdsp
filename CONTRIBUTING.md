@@ -90,7 +90,9 @@ the kind:
 Only the CI role may run the acceptance: it rewrites `wire/wire-lock.json`, and refuses when
 the specification's version (its header line) does not match the kind. Within a version,
 a frozen entry is never changed: an incompatible change adds a new file for the new
-version (`wire/frames-v2.json`) and leaves the old one as it was.
+version (`wire/frames-v2.json`) and leaves the old one as it was. A draft of a version is
+no release: an incompatible change of the draft names a new marker (VER-3) and replaces the
+draft's files, since no engine reads an earlier marker.
 
 ### A Dependabot pull request
 

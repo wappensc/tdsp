@@ -6,11 +6,17 @@ import type {
   MessengerPort,
   TransportProfile,
 } from "@tdsp/messenger-port";
-import { deletePlainText, getPlainText, insertPlainText } from "@tdsp/reconciliation";
+import {
+  deletePlainText,
+  getPlainText,
+  insertPlainText,
+  pendingBytes,
+  pendingGapClients,
+} from "@tdsp/reconciliation";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
-import { decodeFrame, type Frame } from "./framing";
-import { DocumentEngine, type DocumentEngineOptions } from "./index";
+import { decodeFrame, encodeEditFrame, type Frame } from "./framing";
+import { DocumentEngine, type DocumentEngineOptions, MIN_MESSAGE_BYTES } from "./index";
 
 /**
  * Streams and numbered pieces (SPECIFICATION.md LOS-13, LOS-14, LOS-17, LOS-18, LOS-21, RSY-17,
@@ -30,6 +36,20 @@ const OPTIONS: DocumentEngineOptions = {
   syncPolicy: POLICY,
 };
 const JOIN: DocumentEngineOptions = { ...OPTIONS, creatorMemberId: "alice" };
+
+/**
+ * Each frame as decoded once: the helpers below read every frame again and again, and a frame of
+ * megabytes takes a while to decode.
+ */
+const decodedFrames = new Map<string, Frame>();
+function decoded(payload: string): Frame {
+  let frame = decodedFrames.get(payload);
+  if (frame === undefined) {
+    frame = decodeFrame(payload);
+    decodedFrames.set(payload, frame);
+  }
+  return frame;
+}
 
 /**
  * One device's view of the shared mock: what it sends of a kind can be held back (captured, to be
@@ -52,7 +72,7 @@ class Device {
     const visible = (deliveries: readonly Delivery[]) =>
       deliveries.filter((delivery) => {
         if (this.#hidden.has(delivery.id)) return false;
-        if (this.#hiding?.(delivery, decodeFrame(delivery.payload))) {
+        if (this.#hiding?.(delivery, decoded(delivery.payload))) {
           this.#hidden.add(delivery.id);
           return false;
         }
@@ -69,7 +89,7 @@ class Device {
       listChannels: (who) => shared.listChannels(who),
       receive: async (documentId, who) => visible(await shared.receive(documentId, who)),
       send: async (documentId, sender, payload) => {
-        const kind = decodeFrame(payload).kind;
+        const kind = decoded(payload).kind;
         const losing = this.#losing.get(kind) ?? 0;
         if (losing > 0) {
           this.#losing.set(kind, losing - 1);
@@ -131,7 +151,7 @@ async function sentBy(
 ): Promise<number> {
   return (await shared.receive(DOCUMENT_ID, "x"))
     .slice(after)
-    .filter((delivery) => delivery.sender === member && decodeFrame(delivery.payload).kind === kind)
+    .filter((delivery) => delivery.sender === member && decoded(delivery.payload).kind === kind)
     .length;
 }
 
@@ -148,13 +168,15 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  decodedFrames.clear();
 });
 
 describe("a device that lags behind does not end another device's evidence (LOS-17)", () => {
   /**
    * Alice creates, Bob writes from a laptop and a phone, Carol reads along. All hold "abc"; the
-   * phone types "x", and the laptop then deletes "b" in an edit nobody receives. Both of Bob's
-   * devices owe a heartbeat, at equal state vectors: the laptop's states the deletion, the
+   * phone types "x", and the laptop then deletes "b" in an edit nobody receives, and types "y", which
+   * everyone receives: the laptop's report carries "y" again, not the deletion (SND-27). Both of
+   * Bob's devices owe a report, at equal state vectors: the laptop's states the deletion, the
    * phone's — a device that never saw it — does not. Both are held back, to be delivered in a
    * chosen order.
    */
@@ -185,38 +207,40 @@ describe("a device that lags behind does not end another device's evidence (LOS-
     await run(engines, 2_000);
     laptopWire.loseNext("edit");
     laptop.edit((fragment) => deletePlainText(fragment, 1, 1)); // lost
-    await run(engines, 20_000); // both heartbeats are held now
+    await run(engines, 1_000);
+    laptop.edit((fragment) => insertPlainText(fragment, 0, "y")); // arrives
+    await run(engines, 20_000); // both reports are held now
     expect(laptopWire.captured).toHaveLength(1);
     expect(phoneWire.captured).toHaveLength(1);
     laptopWire.capture("heartbeat", false);
     phoneWire.capture("heartbeat", false);
-    expect(getPlainText(laptop.fragment)).toBe("acx");
+    expect(getPlainText(laptop.fragment)).toBe("yacx");
     expect([alice, phone, carol].map((engine) => getPlainText(engine.fragment))).toEqual([
-      "abcx",
-      "abcx",
-      "abcx",
+      "yabcx",
+      "yabcx",
+      "yabcx",
     ]);
     return { shared, alice, laptop, phone, carol, engines, laptopWire, phoneWire };
   }
 
   it.each([
     [
-      "the deleting device's heartbeat first, the lagging one's before the waiting time",
+      "the deleting device's report first, the lagging one's before the waiting time",
       "laptop",
       2_000,
     ],
     [
-      "the deleting device's heartbeat first, the lagging one's after the waiting time",
+      "the deleting device's report first, the lagging one's after the waiting time",
       "laptop",
       7_000,
     ],
     [
-      "the lagging device's heartbeat first, the deleting one's before the waiting time",
+      "the lagging device's report first, the deleting one's before the waiting time",
       "phone",
       2_000,
     ],
     [
-      "the lagging device's heartbeat first, the deleting one's after the waiting time",
+      "the lagging device's report first, the deleting one's after the waiting time",
       "phone",
       7_000,
     ],
@@ -244,10 +268,10 @@ describe("a device that lags behind does not end another device's evidence (LOS-
       // Healed for real: everyone ends with the deletion, and nothing suggests a loss any more.
       await run(engines, 3 * 60_000);
       expect(engines.map((engine) => getPlainText(engine.fragment))).toEqual([
-        "acx",
-        "acx",
-        "acx",
-        "acx",
+        "yacx",
+        "yacx",
+        "yacx",
+        "yacx",
       ]);
       for (const engine of engines) {
         expect(engine.syncHealth.suspicions).toEqual([]);
@@ -265,29 +289,33 @@ describe("a device that lags behind does not end another device's evidence (LOS-
       }
       expect(await deliveries(shared)).toBe(before + 2); // the two copies, and nothing else
       expect([alice, laptop, phone, carol].map((engine) => getPlainText(engine.fragment))).toEqual([
-        "acx",
-        "acx",
-        "acx",
-        "acx",
+        "yacx",
+        "yacx",
+        "yacx",
+        "yacx",
       ]);
     },
   );
 });
 
-const TEXT = "A paragraph long enough to split an answer into several pieces on their way. ".repeat(
-  20,
-);
+const PARAGRAPH = "A paragraph long enough to split an answer into several pieces on their way. ";
+/**
+ * Four fifths of a frame of the smallest transport (TRN-23), and more than one as Base64, four
+ * characters for every three bytes: an answer that carries it goes in two pieces, beside any of
+ * deletions.
+ */
+const TEXT = PARAGRAPH.repeat(Math.ceil(((MIN_MESSAGE_BYTES / 5) * 4) / PARAGRAPH.length));
 
 /** The update an answer's frame carries, and whether it holds deletions only. */
 function deletesOnly(payload: string): boolean {
-  const frame = decodeFrame(payload);
+  const frame = decoded(payload);
   if (frame.kind !== "resync-response" || frame.update.length === 0) return false;
   const { structs, ds } = Y.decodeUpdate(frame.update);
   return structs.length === 0 && ds.clients.size > 0;
 }
 
 const pieceOf = (payload: string) => {
-  const frame = decodeFrame(payload);
+  const frame = decoded(payload);
   return frame.kind === "resync-response"
     ? { piece: frame.piece, pieces: frame.pieces }
     : undefined;
@@ -295,16 +323,17 @@ const pieceOf = (payload: string) => {
 
 /**
  * Lets time pass until `wire` has held back every piece of one answer, and returns that answer's
- * pieces; it holds back nothing more, and what else it held is lost.
+ * pieces; it holds back nothing more, and what else it held is lost. Two minutes at most: a report,
+ * then the gap it shows, asked for after its wait and its slot (LOS-6), and the answer.
  */
 async function oneAnswer(wire: Device, engines: readonly DocumentEngine[]): Promise<string[]> {
   const first = () => {
     const payload = wire.captured[0];
-    return payload === undefined ? undefined : decodeFrame(payload);
+    return payload === undefined ? undefined : decoded(payload);
   };
   const of = () =>
     wire.captured.filter((payload) => {
-      const frame = decodeFrame(payload);
+      const frame = decoded(payload);
       const head = first();
       return (
         frame.kind === "resync-response" &&
@@ -315,7 +344,7 @@ async function oneAnswer(wire: Device, engines: readonly DocumentEngine[]): Prom
     });
   for (
     let second = 0;
-    second < 60 && !of().some((payload) => pieceOf(payload)?.pieces !== null);
+    second < 120 && !of().some((payload) => pieceOf(payload)?.pieces !== null);
     second += 1
   ) {
     await run(engines, 1_000);
@@ -399,10 +428,12 @@ describe("a receiver that holds more than the responder (LOS-12, RSY-17)", () =>
     bob.edit((fragment) => insertPlainText(fragment, 3, "!"));
     aliceWire.loseNext("edit");
     alice.edit((fragment) => deletePlainText(fragment, 1, 1)); // reaches nobody
+    // A later edit, which arrives: her report carries it again, not the deletion (SND-27).
+    alice.edit((fragment) => insertPlainText(fragment, 0, "z"));
     const before = await deliveries(shared);
     await run(engines, 2 * 60_000);
-    expect(getPlainText(alice.fragment)).toBe("ac");
-    expect(getPlainText(bob.fragment)).toBe("ac!");
+    expect(getPlainText(alice.fragment)).toBe("zac");
+    expect(getPlainText(bob.fragment)).toBe("zac!");
     expect(bob.syncHealth.suspicions).toEqual([]);
     expect(await sentBy(shared, "bob", before, "resync-request")).toBe(1);
   });
@@ -443,14 +474,16 @@ describe("a receiver that holds more than the responder (LOS-12, RSY-17)", () =>
 });
 
 describe("the pieces of an answer (RSY-18, LOS-14)", () => {
-  // A transport that carries small messages, at a floor of one second.
-  const SMALL = 700;
+  // A transport of the smallest size (TRN-23), at a floor of one second.
+  const SMALL = MIN_MESSAGE_BYTES;
   const PACED: DocumentEngineOptions = {
     ...OPTIONS,
     syncPolicy: { ...POLICY, minIntervalMs: 1_000 },
   };
 
-  it("the last piece first: the bootstrap's trust is there at once, the transfer shows as incomplete until the rest arrives", async () => {
+  it("the last piece first: bootstrapped at once, the transfer shows as incomplete until the rest arrives", {
+    timeout: 60_000,
+  }, async () => {
     const shared = new InMemoryMessengerPort();
     const aliceWire = new Device(shared, "alice", SMALL);
     const alice = await DocumentEngine.create(
@@ -499,7 +532,9 @@ describe("the pieces of an answer (RSY-18, LOS-14)", () => {
     expect(await sentBy(shared, "bob", before, "resync-request")).toBe(1);
   });
 
-  it("a missing delete piece, at a receiver that holds an edit the responder lacks, is incomplete, asked again and healed, with no edit after the transfer", async () => {
+  it("a missing delete piece, at a receiver that holds an edit the responder lacks, is incomplete, asked again and healed, with no edit after the transfer", {
+    timeout: 60_000,
+  }, async () => {
     const shared = new InMemoryMessengerPort();
     const aliceWire = new Device(shared, "alice", SMALL);
     // Alice asks nobody by herself here: what heals Bob is his own evidence.
@@ -547,15 +582,19 @@ describe("the pieces of an answer (RSY-18, LOS-14)", () => {
       await run(engines, 1_000);
       seen.push(...kindsOf(bob));
     }
-    expect(seen).toContain("answer-incomplete");
-    // Asked again by itself, and healed; nobody edits after the transfer.
+    // Asked again by itself, and healed; nobody edits after the transfer. The deletion Alice's report
+    // showed, judged once Bob held every insertion it counts, is a gap of its own with tries of its
+    // own (LOS-12, LOS-25): it may ask before the missing piece has waited its time (LOS-14).
     expect(getPlainText(bob.fragment).replace("!", "")).toBe(getPlainText(alice.fragment));
     expect(bob.syncHealth.incompleteAnswers).toEqual([]);
     expect(bob.syncHealth.suspicions).toEqual([]);
+    expect(await sentBy(shared, "bob", before, "resync-request")).toBeGreaterThanOrEqual(2);
     expect(await sentBy(shared, "bob", before, "resync-request")).toBeLessThanOrEqual(3);
   });
 
-  it("two responders under one MemberId: each answer's pieces are counted apart (RSY-18, LOS-21)", async () => {
+  it("two responders under one MemberId: each answer's pieces are counted apart (RSY-18, LOS-21)", {
+    timeout: 60_000,
+  }, async () => {
     const shared = new InMemoryMessengerPort();
     const laptopWire = new Device(shared, "alice", SMALL);
     const laptop = await DocumentEngine.create(
@@ -605,7 +644,9 @@ describe("the pieces of an answer (RSY-18, LOS-14)", () => {
     }
   });
 
-  it("a later answer of the same stream to someone else, of which only a piece that is not the last came, leaves this client's incomplete answer evidence", async () => {
+  it("a later answer of the same stream to someone else, of which only a piece that is not the last came, leaves this client's incomplete answer evidence", {
+    timeout: 60_000,
+  }, async () => {
     const shared = new InMemoryMessengerPort();
     const aliceWire = new Device(shared, "alice", SMALL);
     // Nobody asks by themselves here: every request is the test's.
@@ -628,9 +669,15 @@ describe("the pieces of an answer (RSY-18, LOS-14)", () => {
     });
     await run([alice, bob], 6 * 60_000, 10_000);
 
-    // Bob misses Alice's edits from now on; her text reaches him by her answers only.
-    bobWire.hide((delivery, frame) => delivery.sender === "alice" && frame.kind === "edit");
-    alice.edit((fragment) => insertPlainText(fragment, 0, TEXT));
+    // Bob misses Alice's edits from now on; her text reaches him by her answers only. His request asks
+    // all (RSY-21): what Carol, who joins later, would answer at her turn never reaches him. Twice
+    // the text: three pieces.
+    bobWire.hide(
+      (delivery, frame) =>
+        (delivery.sender === "alice" && frame.kind === "edit") ||
+        (delivery.sender === "carol" && frame.kind === "resync-response"),
+    );
+    alice.edit((fragment) => insertPlainText(fragment, 0, `${TEXT}${TEXT}`));
     await run([alice, bob], 30_000);
     aliceWire.capture("resync-response");
     const asked = bob.requestResync(); // waits for the floor, which only passing time brings
@@ -689,7 +736,9 @@ describe("the pieces of an answer (RSY-18, LOS-14)", () => {
     expect(getPlainText(bob.fragment)).toBe(getPlainText(alice.fragment));
   });
 
-  it("an answer made while editing goes on ends as a whole, and raises no false alarm when the edits that follow delete", async () => {
+  it("an answer made while editing goes on ends as a whole, and raises no false alarm when the edits that follow delete", {
+    timeout: 60_000,
+  }, async () => {
     const shared = new InMemoryMessengerPort();
     const aliceWire = new Device(shared, "alice", SMALL);
     const alice = await DocumentEngine.create(
@@ -730,5 +779,153 @@ describe("the pieces of an answer (RSY-18, LOS-14)", () => {
     expect(getPlainText(bob.fragment)).toBe(getPlainText(alice.fragment));
     expect(seen.filter((kind) => kind === "diverged" || kind === "answer-incomplete")).toEqual([]);
     expect(await sentBy(shared, "bob", before, "resync-request")).toBe(1);
+  });
+
+  it("carry only what the responder applied, nothing it holds for missing predecessors (RSY-8, Appendix A, LOS-23)", {
+    timeout: 60_000,
+  }, async () => {
+    const shared = new InMemoryMessengerPort();
+    const aliceWire = new Device(shared, "alice", SMALL);
+    const alice = await DocumentEngine.create(
+      DOCUMENT_ID,
+      "alice",
+      aliceWire.port,
+      undefined,
+      PACED,
+    );
+    await run([alice], 2_000);
+    await alice.setMembership("bob", "write");
+    alice.edit((fragment) => insertPlainText(fragment, 0, TEXT));
+    await run([alice], 60_000);
+
+    // Alice holds a struct of client 77 whose predecessor never came, and a deletion of an item of
+    // client 88 she never received.
+    const sent = (clientID: number, edits: readonly ((fragment: Y.XmlFragment) => void)[]) => {
+      const writer = new Y.Doc();
+      writer.clientID = clientID;
+      Y.applyUpdate(writer, Y.encodeStateAsUpdate(alice.document));
+      const updates: Uint8Array[] = [];
+      writer.on("update", (update: Uint8Array) => updates.push(update));
+      for (const edit of edits) writer.transact(() => edit(writer.getXmlFragment("content")));
+      return updates.at(-1) as Uint8Array;
+    };
+    const heldStruct = sent(77, [
+      (fragment) => insertPlainText(fragment, 0, "lost "),
+      (fragment) => insertPlainText(fragment, 5, "held "),
+    ]);
+    const heldDeletion = sent(88, [
+      (fragment) => insertPlainText(fragment, 0, "gone"),
+      (fragment) => deletePlainText(fragment, 0, 4),
+    ]);
+    for (const update of [heldStruct, heldDeletion]) {
+      await shared.send(DOCUMENT_ID, "mallory", encodeEditFrame(DOCUMENT_ID, update));
+    }
+    await run([alice], 1_000);
+    expect(pendingBytes(alice.document)).toBeGreaterThan(0);
+    expect(pendingGapClients(alice.document).sort()).toEqual([77, 88]);
+
+    aliceWire.capture("resync-response");
+    const bobWire = new Device(shared, "bob", SMALL);
+    // Bob learns Alice's content from her answer only, and never sees what she holds.
+    bobWire.hide(
+      (delivery, frame) =>
+        delivery.sender === "mallory" || (delivery.sender === "alice" && frame.kind === "edit"),
+    );
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", bobWire.port, undefined, {
+      ...PACED,
+      creatorMemberId: "alice",
+    });
+    const pieces = await oneAnswer(aliceWire, [alice, bob]);
+    expect(pieces.length).toBeGreaterThanOrEqual(2);
+    for (const payload of pieces) {
+      const frame = decodeFrame(payload);
+      if (frame.kind !== "resync-response") throw new Error(`not an answer: ${frame.kind}`);
+      const { structs, ds } = Y.decodeUpdate(frame.update);
+      expect(structs.map((struct) => struct.id.client)).not.toContain(77);
+      expect([...ds.clients.keys()]).not.toContain(77);
+      expect([...ds.clients.keys()]).not.toContain(88);
+    }
+
+    await aliceWire.release(pieces);
+    await run([alice, bob], 1_000);
+    expect(bob.hasCompletedBootstrap).toBe(true);
+    expect(getPlainText(bob.fragment)).toBe(getPlainText(alice.fragment));
+    expect(pendingBytes(bob.document)).toBe(0);
+    expect(bob.syncHealth.suspicions).toEqual([]);
+  });
+});
+
+describe("a piece of an answer this client does not take (LOS-12, LOS-13)", () => {
+  it("is heard of its stream, though not the last: the difference that stream's report showed lapses only once the stream is silent again", {
+    timeout: 60_000,
+  }, async () => {
+    const shared = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(
+      DOCUMENT_ID,
+      "alice",
+      new Device(shared, "alice", MIN_MESSAGE_BYTES).port,
+      undefined,
+      OPTIONS,
+    );
+    for (const member of ["bob", "carol", "dave"]) await alice.setMembership(member, "write");
+    alice.edit((fragment) => insertPlainText(fragment, 0, `abc${TEXT}`));
+    const bobWire = new Device(shared, "bob", MIN_MESSAGE_BYTES);
+    const carolWire = new Device(shared, "carol", MIN_MESSAGE_BYTES);
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", bobWire.port, undefined, JOIN);
+    // Carol asks nobody by herself: the difference stays hers to show.
+    const quiet = { ...JOIN, autoResync: false };
+    const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", carolWire.port, undefined, quiet);
+    await run([alice, bob, carol], 6 * 60_000, 10_000);
+    expect(getPlainText(carol.fragment)).toBe(`abc${TEXT}`);
+    // The creator is away from here on: nobody but Bob and Carol answers.
+    alice.dispose();
+
+    // Bob deletes "b" in an edit nobody receives and types "y", which his report carries again
+    // (SND-27): at equal state vectors, his report states a deletion Carol lacks.
+    bobWire.loseNext("edit");
+    bob.edit((fragment) => deletePlainText(fragment, 1, 1));
+    await run([bob, carol], 1_000);
+    bob.edit((fragment) => insertPlainText(fragment, 0, "y"));
+    await run([bob, carol], 20_000);
+    const diverged = expect.objectContaining({ kind: "diverged", sender: "bob" });
+    expect(carol.syncHealth.suspicions).toContainEqual(diverged);
+    const reported = Date.now();
+
+    // Of Bob, Carol hears from now on only pieces of answers that are not the last: they state
+    // nothing, and she takes none of them (RSY-12, RSY-18). Of Dave, who joins below, she hears
+    // nothing, so that only Bob answers him, with all he holds.
+    carolWire.hide(
+      (delivery, frame) =>
+        delivery.sender === "dave" ||
+        (delivery.sender === "bob" && !(frame.kind === "resync-response" && frame.pieces === null)),
+    );
+    await run([bob, carol], 8 * 60_000, 10_000);
+    // Dave joins on a messenger that shows him no edit and nothing of the creator's: he holds
+    // nothing. Unanswered by the creator, he asks all (RSY-21), and Bob answers him in pieces at his
+    // turn. Dave leaves once a piece of it is out.
+    const daveWire = new Device(shared, "dave", MIN_MESSAGE_BYTES);
+    daveWire.hide((delivery, frame) => delivery.sender === "alice" || frame.kind === "edit");
+    const dave = await DocumentEngine.join(DOCUMENT_ID, "dave", daveWire.port, undefined, JOIN);
+    const bobsPieces = async () =>
+      (await shared.receive(DOCUMENT_ID, "x")).filter((delivery) => {
+        const frame = decoded(delivery.payload);
+        return (
+          delivery.sender === "bob" && frame.kind === "resync-response" && frame.pieces === null
+        );
+      }).length;
+    for (let second = 0; second < 90 && (await bobsPieces()) === 0; second++) {
+      await run([bob, carol, dave], 1_000);
+    }
+    dave.dispose();
+    expect(await bobsPieces()).toBeGreaterThan(0);
+    await run([bob, carol], 10_000);
+
+    // Twelve minutes after the report, beyond the absence threshold (RSY-1): Bob's stream was heard
+    // since, by those pieces only, and the difference stands.
+    await run([bob, carol], reported + 12 * 60_000 - Date.now(), 10_000);
+    expect(carol.syncHealth.suspicions).toContainEqual(diverged);
+    // Silent again for longer than the absence threshold after those pieces, it lapses (RSY-1).
+    await run([bob, carol], 10 * 60_000, 10_000);
+    expect(carol.syncHealth.suspicions).not.toContainEqual(diverged);
   });
 });

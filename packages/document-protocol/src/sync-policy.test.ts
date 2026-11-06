@@ -67,7 +67,11 @@ describe("resolveSyncPolicy", () => {
   });
 });
 
-/** A transport shaped like the email bridge: a floor of 15 s, 30 s suggested (SND-16). */
+/**
+ * A slow transport for the policy arithmetic alone: a floor of 15 s as the email binding's, 30 s
+ * suggested (SND-16). No engine runs on it, and the policy reads no `maxBytes`, so its bound may lie
+ * below the 4 MiB every real transport carries (TRN-23).
+ */
 const EMAIL_LIKE: TransportProfile = {
   bounds: { minIntervalMs: 15_000, maxBytes: 100_000 },
   pacing: {

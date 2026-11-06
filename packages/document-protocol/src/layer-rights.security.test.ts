@@ -1,7 +1,11 @@
 import { InMemoryMessengerPort } from "@tdsp/messenger-mock";
 import { getPlainText, insertPlainText } from "@tdsp/reconciliation";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Clock } from "./clock";
+import type { ControlValue } from "./control-state";
+import { encodeControlFrame } from "./framing";
 import { DocumentEngine, SendRefusedError } from "./index";
+import { registerStateDigest } from "./registers";
 
 /**
  * Rights on layers (SPECIFICATION.md §5.6, LAY-5, LAY-6, LAY-7): a member's right on a layer is the
@@ -186,11 +190,56 @@ describe("a right on a layer (LAY-5, LAY-6, LAY-7)", () => {
     await alice.sync();
     await dave.sync();
     expect(dave.hasCompletedBootstrap).toBe(false);
-    expect(errors.some((error) => String(error).includes("lists the creator"))).toBe(true);
+    expect(errors.some((error) => String(error).includes("names the creator"))).toBe(true);
   });
 });
 
-describe("inherit lies between read and write, and a revoked member has no layer (CTL-23, LAY-5, LAY-6)", () => {
+describe("of two decisions on a layer at the same clock and tag the narrower holds: read, then inherit, then write (CTL-23, LAY-5)", () => {
+  /**
+   * Bob writes the content; two `control` frames of Alice's identity decide his right on the layer
+   * with one clock and one device tag — a copy of a device, say —, in the order given. Returns the
+   * value Bob holds then, and whether he may write the layer.
+   */
+  async function tie(first: ControlValue, second: ControlValue) {
+    const port = new InMemoryMessengerPort();
+    const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, AS_ALICE);
+    await alice.setMembership("bob", "write");
+    const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, AS_ALICE);
+    await settle(alice, bob);
+    const target = `layer:${LAYER}:member:bob`;
+    const clock: Clock = [Date.now() + 1_000, 0];
+    const device = "T".repeat(22);
+    for (const value of [first, second]) {
+      const targets = { [target]: { value, clock, device } };
+      await port.send(
+        DOCUMENT_ID,
+        "alice",
+        encodeControlFrame({
+          documentId: DOCUMENT_ID,
+          device,
+          targets,
+          closed: false,
+          controlClock: clock,
+          controlDigest: registerStateDigest({ closed: false, targets }),
+        }),
+      );
+      await bob.sync();
+    }
+    return { value: bob.controlState.targets[target]?.value, mayWrite: bob.mayEditLayer(LAYER) };
+  }
+
+  it("read and inherit: read, in either order — a reset may not let a member write who should only read", async () => {
+    expect(await tie("read", null)).toStrictEqual({ value: "read", mayWrite: false });
+    expect(await tie(null, "read")).toStrictEqual({ value: "read", mayWrite: false });
+  });
+
+  it("inherit and write: inherit, in either order", async () => {
+    expect((await tie(null, "write")).value).toBeNull();
+    expect((await tie("write", null)).value).toBeNull();
+  });
+});
+
+describe("of two decisions on a layer the later holds, and a revoked member has no layer (CTL-22, CTL-23, LAY-5, LAY-6)", () => {
   /** Two devices of Alice, both with Bob writing the content, and Bob bootstrapped. */
   async function twoDevicesAndBob() {
     const port = new InMemoryMessengerPort();
@@ -213,12 +262,29 @@ describe("inherit lies between read and write, and a revoked member has no layer
     return { laptop, tablet, bob, refusals };
   }
 
-  it("a reset to inherit made concurrently with a restriction does not undo it: the member may only read the layer", async () => {
+  it("a reset to inherit made after a restriction it had not seen holds over it everywhere: the later decision, not the narrower (CTL-22)", async () => {
+    const { laptop, tablet, bob } = await twoDevicesAndBob();
+    vi.setSystemTime(Date.now() + 60_000);
+    const restriction = laptop.setLayerRight(LAYER, "bob", "read");
+    vi.setSystemTime(Date.now() + 60_000);
+    const reset = tablet.setLayerRight(LAYER, "bob", null);
+    await Promise.all([restriction, reset]);
+    await settle(laptop, tablet, bob);
+    for (const client of [laptop, tablet, bob]) {
+      expect(client.permissionOf("bob", LAYER)).toBe("write");
+    }
+    comment(bob, "c1", "now");
+    await settle(bob, laptop);
+    expect(comments(laptop).get("c1")).toBe("now");
+  });
+
+  it("a restriction made after a reset to inherit it had not seen holds over it everywhere: the member may only read the layer", async () => {
     const { laptop, tablet, bob, refusals } = await twoDevicesAndBob();
-    await Promise.all([
-      laptop.setLayerRight(LAYER, "bob", "read"),
-      tablet.setLayerRight(LAYER, "bob", null),
-    ]);
+    vi.setSystemTime(Date.now() + 60_000);
+    const reset = tablet.setLayerRight(LAYER, "bob", null);
+    vi.setSystemTime(Date.now() + 60_000);
+    const restriction = laptop.setLayerRight(LAYER, "bob", "read");
+    await Promise.all([reset, restriction]);
     await settle(laptop, tablet, bob);
     for (const client of [laptop, tablet, bob]) {
       expect(client.permissionOf("bob", LAYER)).toBe("read");

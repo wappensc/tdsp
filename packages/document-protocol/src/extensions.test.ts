@@ -8,8 +8,18 @@ import {
 } from "@tdsp/messenger-port";
 import { getPlainText, insertPlainText } from "@tdsp/reconciliation";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { encodeControlFrame, FrameDecodeError, frameByteLength } from "./framing";
-import { DocumentEngine, type FrameExtension, type PersistedControlState } from "./index";
+import {
+  CURRENT_FRAME_VERSION,
+  encodeControlFrame,
+  FrameDecodeError,
+  frameByteLength,
+} from "./framing";
+import {
+  DocumentEngine,
+  type FrameExtension,
+  MIN_MESSAGE_BYTES,
+  type PersistedControlState,
+} from "./index";
 
 /**
  * `com.example.mood/1` is a test extension, defined here as FRM-12 asks; no application uses it.
@@ -64,13 +74,17 @@ async function rounds(engines: readonly DocumentEngine[], times = 2): Promise<vo
   await vi.advanceTimersByTimeAsync(0);
 }
 
-/** What a device of the creator persists (CTL-26). */
+/** What a device of the creator persists (CTL-26): its registers, its tag, its clock, bootstrapped. */
 function persistedOf(engine: DocumentEngine): PersistedControlState {
   const device = engine.deviceTag;
+  const { closed, targets } = engine.controlState;
   return {
+    tdsp: CURRENT_FRAME_VERSION,
     profile: engine.profile,
-    control: engine.controlState,
-    ...(device === undefined ? {} : { device, counter: engine.controlVector[device] ?? 0 }),
+    control: { closed, targets },
+    ...(device === undefined ? {} : { device }),
+    clock: engine.controlClock,
+    bootstrapped: engine.controlStanding.kind === "bootstrapped",
   };
 }
 
@@ -132,6 +146,7 @@ describe("an extension an engine implements (FRM-9 to FRM-12, FRM-15 to FRM-17)"
       batchWindowMs: 0,
       extensions: [mood(heardByAlice, { values: { edit: "calm" } })],
     });
+    await alice.setMembership("bob", "write"); // named before he joins (LIF-9)
     const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, {
       ...JOIN_ALICE,
       extensions: [mood(heardByBob, { values: { edit: "busy" } })],
@@ -300,14 +315,20 @@ describe("an extension an engine implements (FRM-9 to FRM-12, FRM-15 to FRM-17)"
     });
     await rounds([alice, bob]);
 
-    // Carol is not the creator: her control operation is refused (CTL-1), its extension with it.
+    // Carol is not the creator: her control frame is refused (CTL-5, CTL-6), its extension with it.
     const forged = encodeControlFrame({
       documentId: DOCUMENT_ID,
       device: "AAAAAAAAAAAAAAAAAAAAAA",
-      counter: 1,
-      target: "member:carol",
-      value: "write",
-      seen: {},
+      targets: {
+        "member:carol": {
+          value: "write",
+          clock: [1_793_008_800_000, 0],
+          device: "AAAAAAAAAAAAAAAAAAAAAA",
+        },
+      },
+      closed: false,
+      controlClock: null,
+      controlDigest: null,
     });
     await messenger.send(DOCUMENT_ID, "carol", withFields(forged, { [MOOD]: "calm" }));
     await bob.sync();
@@ -323,6 +344,7 @@ describe("an extension an engine implements (FRM-9 to FRM-12, FRM-15 to FRM-17)"
       batchWindowMs: 0,
       extensions: [mood([], { values: { edit: "calm", "resync-response": "calm" } })],
     });
+    await alice.setMembership("bob", "write"); // named before he joins (LIF-9)
     const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", messenger, undefined, {
       ...JOIN_ALICE,
       extensions: [mood(heardByBob)],
@@ -358,10 +380,13 @@ describe("an extension an engine implements (FRM-9 to FRM-12, FRM-15 to FRM-17)"
     expect(heardByRestarted.filter((heard) => heard.sender === "bob")).toEqual([]);
   });
 
-  it("counts toward the size of every piece, and a critical one rides in each (FRM-10, FRM-11)", async () => {
-    const port = new LimitedPort(600);
+  it("counts toward the size of every piece, and a critical one rides in each (FRM-10, FRM-11)", {
+    timeout: 60_000,
+  }, async () => {
+    const port = new LimitedPort(MIN_MESSAGE_BYTES);
     const heardByBob: Heard[] = [];
-    const long = "calm".repeat(50);
+    // A quarter of every frame of the smallest transport (TRN-23).
+    const long = "calm".repeat(MIN_MESSAGE_BYTES / 16);
     const accepts = (value: unknown) => typeof value === "string";
     const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, {
       batchWindowMs: 0,
@@ -373,12 +398,13 @@ describe("an extension an engine implements (FRM-9 to FRM-12, FRM-15 to FRM-17)"
     });
     await rounds([alice, bob]);
 
-    alice.edit((fragment) => insertPlainText(fragment, 0, "x".repeat(3000)));
+    const paste = "x".repeat(2 * MIN_MESSAGE_BYTES);
+    alice.edit((fragment) => insertPlainText(fragment, 0, paste));
     await vi.advanceTimersByTimeAsync(60_000);
     await rounds([bob, alice]);
 
-    expect(getPlainText(bob.fragment)).toBe("x".repeat(3000));
-    expect(Math.max(...port.sizes)).toBeLessThanOrEqual(600);
+    expect(getPlainText(bob.fragment)).toBe(paste);
+    expect(Math.max(...port.sizes)).toBeLessThanOrEqual(MIN_MESSAGE_BYTES);
     const pieces = (await port.receive(DOCUMENT_ID, "bob")).filter(
       (delivery) => delivery.sender === "alice" && delivery.payload.includes('"kind":"edit"'),
     );

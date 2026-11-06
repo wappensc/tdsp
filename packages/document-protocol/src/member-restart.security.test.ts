@@ -18,8 +18,9 @@ import { DocumentEngine, type PersistedControlState, SendRefusedError } from "./
  * cursor its engine had reached (LIF-8). It may edit again once its first read went on from that
  * cursor without a gap — so a revocation that arrived meanwhile takes effect first — and only then.
  * With a gap, under another instance of its bridge, without a cursor, or with state taken before a
- * bootstrap, it waits for the creator's answer, and nothing it types leaves as an edit. Its
- * restored state is never authority.
+ * bootstrap, it waits for the creator's answer, and nothing it types leaves as an edit. A decision
+ * lost before it stopped holds it back no more than a member that never stopped: an answer heals
+ * it. Its restored state is never authority.
  * Security tests: only the CI role may change this file (.github/CODEOWNERS, CONTRIBUTING.md).
  */
 
@@ -202,18 +203,27 @@ describe("a member restarted with its persisted control state (CTL-13, CTL-39, C
     expect(await editsOfBob(port, from)).toStrictEqual([]);
   });
 
-  it("waits for the creator when a creator device's counters have a hole (LOS-10)", async () => {
+  it("is not held back by a decision lost before the restart, as a member that never restarted is not (CTL-41); an answer heals it, the digests showing the loss at an equal clock (LOS-12, RSY-17)", async () => {
     const { port, alice, saved } = await bobStops();
     port.dropNextSend("alice");
-    await alice.setMembership("carol", "read"); // lost
+    await alice.setMembership("bob", "read"); // lost
     await alice.setMembership("dave", "read");
     await settle(alice);
-    port.disconnect("alice");
 
     const refusals: string[] = [];
     const bob = await bobRestarts(port, saved, refusals);
     await settle(bob);
     expect(bob.permissionOf("dave")).toBe("read");
+    // The later decision brought the creator's control clock; only the digest shows what is lost.
+    expect(bob.controlClock).toStrictEqual(alice.controlClock);
+    expect(bob.controlState.targets).not.toStrictEqual(alice.controlState.targets);
+    expect(bob.mayEdit).toBe(true);
+
+    // Its request after the restart states no control clock yet; the creator's answer brings the
+    // lost revocation, which takes effect before anything more is sent.
+    await settle(alice, bob);
+    expect(bob.permissionOf("bob")).toBe("read");
+    expect(bob.controlState.targets).toStrictEqual(alice.controlState.targets);
     expect(bob.mayEdit).toBe(false);
   });
 

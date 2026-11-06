@@ -1,5 +1,6 @@
 import {
   applyUpdate,
+  clientsAhead,
   createDocument,
   encodeDeletions,
   encodeDeletionsWithin,
@@ -21,9 +22,9 @@ import {
   pendingGapClients,
   type ReconciledDocument,
   splitUpdate,
-  stateVectorHolds,
   transact,
   updateClientIds,
+  updateClocks,
 } from "@tdsp/reconciliation";
 import { type Frame, FrameDecodeError, isProfileId } from "./framing";
 
@@ -96,9 +97,12 @@ export interface DocumentProfile {
    * its last byte.
    */
   isStateVector?(stateVector: Uint8Array): boolean;
-  /** The whole state as one update. */
+  /** The whole state the replica applied, as one update (item 4). */
   encodeState(document: ReconciledDocument): Uint8Array;
-  /** The updates `stateVector` lacks; with the empty state vector, the whole state (item 4). */
+  /**
+   * The updates `stateVector` lacks of those the replica applied, nothing it holds for missing
+   * predecessors; with the empty state vector, the whole state (item 4, Appendix A).
+   */
   encodeStateSince(document: ReconciledDocument, stateVector: Uint8Array): Uint8Array;
   /** The replica's state vector (item 3). */
   encodeStateVector(document: ReconciledDocument): Uint8Array;
@@ -109,24 +113,27 @@ export interface DocumentProfile {
   lacksUpdatesOf(document: ReconciledDocument, stateVector: Uint8Array): boolean;
   /** Whose updates are held for missing predecessors (item 2), as the CRDT names them. */
   pendingGapClients(document: ReconciledDocument): number[];
-  /**
-   * How many bytes the replica holds for missing predecessors (item 2), what LOS-23 bounds.
-   * Optional: without it, and without `giveUpPending`, the engine cannot bound them.
-   */
-  pendingBytes?(document: ReconciledDocument): number;
+  /** How many bytes the replica holds for missing predecessors (item 2), what LOS-23 bounds. */
+  pendingBytes(document: ReconciledDocument): number;
   /**
    * Gives up what the replica holds for missing predecessors (item 2, LOS-23), and returns whose
    * updates they were, as `pendingGapClients` names them.
    */
-  giveUpPending?(document: ReconciledDocument): number[];
+  giveUpPending(document: ReconciledDocument): number[];
   /** Whose updates one update carries, as the CRDT names them. */
   updateClientIds(update: Uint8Array): number[];
   /**
-   * Whether `stateVector` holds `update`, as the state vector summarises it (PRF-1, item 3): what a heartbeat holds of an edit,
-   * which ends the silence the edit left open (LOS-16). Optional: without it the engine uses
-   * `stateVectorHolds`, which reads any Yjs update of version 1.
+   * Of each CRDT client one update carries, how far it carries that writer, as the CRDT counts it
+   * (PRF-1, item 2): the position of a gap of that writer's stream (LOS-25). Optional: without it the
+   * engine uses `updateClocks`, which reads any Yjs update of version 1.
    */
-  holdsUpdate?(stateVector: Uint8Array, update: Uint8Array): boolean;
+  updateClocks?(update: Uint8Array): Map<number, number>;
+  /**
+   * Of the CRDT clients `stateVector` holds updates of that the replica lacks, how far it counts each
+   * (PRF-1, items 2 and 4): whose updates a report shows missing, a gap of each writer (LOS-4,
+   * LOS-25). Optional: without it the engine uses `clientsAhead`, which reads a Yjs state vector.
+   */
+  clientsAhead?(document: ReconciledDocument, stateVector: Uint8Array): Map<number, number>;
   /**
    * What the replica deleted, as one canonical encoding (PRF-1, item 8): equal for equal states,
    * whatever the order updates came in. Its digest is what a state vector does not show (LOS-12).
@@ -157,11 +164,18 @@ export interface DocumentProfile {
   readonly projection?: ProfileProjection;
 }
 
-/** How a profile tells whether a state vector holds an update (PRF-1, item 3): its own way, or the Yjs one. */
-export function holderOf(
+/** How far a profile tells an update carries each writer (PRF-1, item 2, LOS-25): its own way, or the Yjs one. */
+export function updateClocksOf(
   profile: DocumentProfile,
-): (stateVector: Uint8Array, update: Uint8Array) => boolean {
-  return profile.holdsUpdate ?? stateVectorHolds;
+): (update: Uint8Array) => Map<number, number> {
+  return profile.updateClocks ?? updateClocks;
+}
+
+/** Whose updates a profile tells a state vector holds that the replica lacks (PRF-1, LOS-4, LOS-25): its own way, or the Yjs one. */
+export function clientsAheadOf(
+  profile: DocumentProfile,
+): (document: ReconciledDocument, stateVector: Uint8Array) => Map<number, number> {
+  return profile.clientsAhead ?? clientsAhead;
 }
 
 /** How a profile encodes what a replica deleted (PRF-1, item 8): its own way, or Appendix A's. */
@@ -206,7 +220,9 @@ export function readerOf(profile: DocumentProfile): {
 export function checkProfileReads(frame: Frame, profile: DocumentProfile): void {
   const reader = readerOf(profile);
   const update =
-    frame.kind === "edit" || frame.kind === "resync-response" ? frame.update : undefined;
+    frame.kind === "edit" || frame.kind === "resync-response" || frame.kind === "heartbeat"
+      ? frame.update
+      : undefined;
   if (update !== undefined && !reader.isUpdate(update)) {
     throw new FrameDecodeError(
       "invalid-field",
@@ -256,7 +272,8 @@ const yjsParagraphs1: DocumentProfile = {
   pendingBytes: (document) => pendingBytes(document),
   giveUpPending: (document) => giveUpPending(document),
   updateClientIds: (update) => updateClientIds(update),
-  holdsUpdate: (stateVector, update) => stateVectorHolds(stateVector, update),
+  updateClocks: (update) => updateClocks(update),
+  clientsAhead: (document, stateVector) => clientsAhead(document, stateVector),
   encodeDeletions: (document) => encodeDeletions(document),
   encodeDeletionsWithin: (document, stateVector) => encodeDeletionsWithin(document, stateVector),
   splitUpdate: (update, maxBytes) => splitUpdate(update, maxBytes),
@@ -293,8 +310,9 @@ export class UnsupportedProfileError extends Error {
 /**
  * The implementation of `id` among the built-in profiles and those the application `supplied`,
  * or `UnsupportedProfileError` (PRF-3). A supplied profile that is not a valid profile id,
- * takes a built-in profile's id, or is supplied twice is a mistake of the application and is
- * refused whatever `id` asks for: one id has one meaning in an engine.
+ * takes a built-in profile's id, is supplied twice, or lacks `pendingBytes` or `giveUpPending`
+ * (PRF-1, item 2) is a mistake of the application and is refused whatever `id` asks for: one id
+ * has one meaning in an engine, and what a profile holds for missing predecessors is bounded.
  */
 export function profileFor(id: string, supplied: readonly DocumentProfile[] = []): DocumentProfile {
   const available = new Map(PROFILES);
@@ -309,6 +327,13 @@ export function profileFor(id: string, supplied: readonly DocumentProfile[] = []
     }
     if (available.has(profile.id)) {
       throw new Error(`the document profile ${profile.id} is supplied twice`);
+    }
+    // Checked here, not only by the type: without them the engine could not bound what anyone in
+    // the channel makes it hold (LOS-23).
+    if (typeof profile.pendingBytes !== "function" || typeof profile.giveUpPending !== "function") {
+      throw new Error(
+        `the document profile ${profile.id} does not measure and give up what it holds for missing predecessors (PRF-1, item 2; LOS-23)`,
+      );
     }
     available.set(profile.id, profile);
   }

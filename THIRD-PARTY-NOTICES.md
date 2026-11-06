@@ -2,12 +2,12 @@
 
 TDSP's own code is licensed under the MIT License ([LICENSE](LICENSE)).
 
-**This repository contains no third-party code.** It declares dependencies, which your
-package manager fetches at install time, and two of its bridges run programs you install
-yourself. This file lists both, so that anyone who packages and distributes a bridge or a
-package from this repository knows what comes with it and under which license. Each npm
-package carries its own license text and copyright notice in its `LICENSE` file; whoever
-distributes it has to keep those.
+**Apart from the checker named at the end, this repository contains no third-party code.** It
+declares dependencies, which your package manager fetches at install time, and two of its
+bridges run programs you install yourself. This file lists both, so that anyone who packages
+and distributes a bridge or a package from this repository knows what comes with it and under
+which license. Each npm package carries its own license text and copyright notice in its
+`LICENSE` file; whoever distributes it has to keep those.
 
 The two tables below are generated from [third-party-licenses.json](third-party-licenses.json)
 and the resolved dependency tree by `pnpm run licenses:generate`. Everything else here is
@@ -144,3 +144,14 @@ Greenmail (Apache-2.0) run as containers for testing and are never part of a bri
 `@matrix-org/matrix-sdk-crypto-nodejs` is used only by `bridges/matrix-bridge` and ships
 only where that bridge does. `matrix-js-sdk` is not a dependency: the bridge talks to the
 Matrix Client-Server API directly.
+
+## A checker that follows Yjs and lib0
+
+[conformance/swift-checker/](conformance/swift-checker/) is a small checker in Swift, written for this
+repository and part of no package or bridge. Yjs's update encoding version 1 has no description
+apart from its implementation, which Appendix A of the specification names as the normative
+reference, so the checker's decoders follow the sources of Yjs 13.6.33 and lib0 0.2.118, both under
+the MIT License; [conformance/swift-checker/NOTICE.md](conformance/swift-checker/NOTICE.md) carries
+their license texts and copyright notices, which travel with any copy of the checker. It is no
+dependency, so it is not in [third-party-licenses.json](third-party-licenses.json). This
+repository's maintainers decided to keep it, with these notices.

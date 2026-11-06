@@ -14,6 +14,8 @@
  *   does not lift it.
  */
 
+import { SteadyClock } from "./steady-clock";
+
 export type ResyncRefusal = "in-flight" | "rate-floor";
 
 export type ResyncOutcome =
@@ -44,7 +46,16 @@ export class ResyncGate {
   #lastAutomatic = false;
   #lastOutcome: ResyncStatus["lastOutcome"] = null;
 
-  constructor(now: () => number = () => Date.now()) {
+  /**
+   * `now`: the clock its expiry and floor are measured on, one that never runs back (§1.6, RSY-4) —
+   * its engine's, so that `lastMessageAt` and `lastRequestAt` compare with the engine's times; a
+   * `SteadyClock` of its own if not given. The times `status()` reports are on that clock.
+   */
+  constructor(now?: () => number) {
+    if (now === undefined) {
+      const clock = new SteadyClock();
+      now = () => clock.now();
+    }
     this.#now = now;
   }
 

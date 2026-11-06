@@ -337,7 +337,7 @@ VER-1). The *wire tests*, `*.wire.test.ts`, hold the reference implementation to
 
 | Test | Holds to what is frozen in |
 | --- | --- |
-| `packages/document-protocol/src/frames.wire.test.ts` | `wire/frames-draft-5.json` (20 frames, every kind, both directions: written byte for byte, read back); `wire/invitations-draft-5.json`; the profile `yjs-paragraphs/1` against the bytes of §4.5 |
+| `packages/document-protocol/src/frames.wire.test.ts` | `wire/frames-draft-10.json` (24 frames, every kind, both directions: written byte for byte, read back); `wire/invitations-draft-10.json`; the profile `yjs-paragraphs/1` against the bytes of §4.5 |
 | `packages/document-protocol/src/spec-examples.wire.test.ts` | The specification's example frames (§4.5, Appendix D), written by the encoder byte for byte, and Appendix D's envelope |
 | `bridges/signal-bridge/src/envelope.wire.test.ts` | `wire/signal-v1.json`: the group message for a frame — in the body, at the body limit, as an attachment — and Appendix D's envelope, whose 2.0 frame is an entry added within envelope version 1 |
 | `bridges/matrix-bridge/src/event.wire.test.ts` | `wire/matrix-v1.json`: the room event's type and content — inline, at the limit, as a media file |
@@ -347,7 +347,8 @@ VER-1). The *wire tests*, `*.wire.test.ts`, hold the reference implementation to
 The files of TDSP 1.x — `wire/frames-v1.json`, `wire/invitations-v1.json` and the v1 test
 vectors — stay in the lock as they were, though no test writes them any more: a version's
 files are frozen, not removed ([CONTRIBUTING.md](../CONTRIBUTING.md), "A change to the
-wire"). Until TDSP 2.0 is released, the draft's files carry its marker in their names.
+wire"). Until TDSP 2.0 is released, the draft's files carry its marker in their names; a new
+marker replaces them, since a draft is no release and no engine reads an earlier marker (VER-3).
 
 A failing wire test is a decision, not a bug to fix by editing the expectation: the wire
 files and the lock belong to the CI role, and `pnpm run wire:lock` names what kind of

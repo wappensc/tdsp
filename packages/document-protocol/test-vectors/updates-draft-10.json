@@ -1,0 +1,221 @@
+{
+  "$comment": "TDSP 2.0 draft update vectors (draft revision 10): behaviour, not wire — bytes that a receiver of the profile `yjs-paragraphs/1` reads as exactly one update or state vector in Yjs update encoding version 1, or not (Appendix A, \"Reading without applying\"; §4.4, a frame carrying one that is not is `invalid-field`). Every `update` and `stateVector` is hex. Where a vector puts an item into the top-level type `a`, the update holds one client (1) with one struct at clock 0 whose parent is that type, then an empty delete set. A variable-length integer takes at most 8 bytes and is at most 2^53 − 1. A client's structs end, from the clock of the first by their lengths (a string's in UTF-16 code units), and a delete range ends, its clock plus its length, at most at 2^53 − 1. Nesting counts arrays and objects, the outermost the first level, as §1.6 counts a frame's; each JSON text and each Any value on its own. Checked in src/update-vectors.test.ts.",
+  "version": "de.wappensc.together.tdsp.probe.draft-10",
+  "profile": "yjs-paragraphs/1",
+  "updates": [
+    { "name": "the update that holds nothing", "update": "0000", "valid": true },
+    { "name": "a client id of 2^53 − 1", "update": "0100ffffffffffffff0f0000", "valid": true },
+    {
+      "name": "a client id of 2^53, which lib0 reads",
+      "update": "010080808080808080100000",
+      "valid": false
+    },
+    {
+      "name": "a client id of about 2^56, which lib0 reads",
+      "update": "0100ffffffffffffff7f0000",
+      "valid": false
+    },
+    {
+      "name": "a client id of 1 in 8 bytes, the longest a variable-length integer may take",
+      "update": "010081808080808080000000",
+      "valid": true
+    },
+    {
+      "name": "a client id of 1 in 9 bytes",
+      "update": "01008180808080808080000000",
+      "valid": false
+    },
+    {
+      "name": "a client id of 0 in 9 bytes",
+      "update": "01008080808080808080000000",
+      "valid": false
+    },
+    {
+      "name": "a first clock padded to 151 bytes, which lib0 reads as NaN",
+      "update": "0101018080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080800004010161017800",
+      "valid": false
+    },
+    { "name": "a first clock of 2^53", "update": "010001808080808080801000", "valid": false },
+    {
+      "name": "collected structs of 2^53 − 2 and 1, which end at 2^53 − 1",
+      "update": "0102010000feffffffffffff0f000100",
+      "valid": true
+    },
+    {
+      "name": "collected structs of 2^53 − 1 and 1, which end at 2^53, each length within bounds",
+      "update": "0102010000ffffffffffffff0f000100",
+      "valid": false
+    },
+    {
+      "name": "an item of length 1 at the first clock 2^53 − 1, which ends at 2^53",
+      "update": "010101ffffffffffffff0f04010161017800",
+      "valid": false
+    },
+    {
+      "name": "a string of two UTF-16 code units (U+1F600) after 2^53 − 3 collected, which ends at 2^53 − 1",
+      "update": "0102010000fdffffffffffff0f0401016104f09f988000",
+      "valid": true
+    },
+    {
+      "name": "a string of two UTF-16 code units (U+1F600) after 2^53 − 2 collected, which ends at 2^53",
+      "update": "0102010000feffffffffffff0f0401016104f09f988000",
+      "valid": false
+    },
+    {
+      "name": "a skip of 1 after 2^53 − 1 collected, which ends at 2^53",
+      "update": "0102010000ffffffffffffff0f0a0100",
+      "valid": false
+    },
+    {
+      "name": "a delete range at the clock 2^53 − 2 of length 1, which ends at 2^53 − 1",
+      "update": "00010101feffffffffffff0f01",
+      "valid": true
+    },
+    {
+      "name": "a delete range at the clock 2^53",
+      "update": "00010101808080808080801001",
+      "valid": false
+    },
+    {
+      "name": "a delete range at the clock 2^53 − 1 of length 1, which ends at 2^53",
+      "update": "00010101ffffffffffffff0f01",
+      "valid": false
+    },
+    {
+      "name": "a delete range at the clock 1 of length 2^53 − 1, which ends at 2^53",
+      "update": "0001010101ffffffffffffff0f",
+      "valid": false
+    },
+    {
+      "name": "an Any integer of 2^53 − 1",
+      "update": "0101010008010161017dbfffffffffffff1f00",
+      "valid": true
+    },
+    {
+      "name": "an Any integer of 2^53",
+      "update": "0101010008010161017d808080808080802000",
+      "valid": false
+    },
+    {
+      "name": "an Any integer of −2^53",
+      "update": "0101010008010161017dc08080808080802000",
+      "valid": false
+    },
+    {
+      "name": "an Any integer of 1 in 8 bytes",
+      "update": "0101010008010161017d818080808080800000",
+      "valid": true
+    },
+    {
+      "name": "an Any integer of 1 in 9 bytes",
+      "update": "0101010008010161017d81808080808080800000",
+      "valid": false
+    },
+    {
+      "name": "an Any value of 32 arrays, the innermost empty",
+      "update": "0101010008010161017501750175017501750175017501750175017501750175017501750175017501750175017501750175017501750175017501750175017501750175017501750000",
+      "valid": true
+    },
+    {
+      "name": "an Any value of 33 arrays",
+      "update": "01010100080101610175017501750175017501750175017501750175017501750175017501750175017501750175017501750175017501750175017501750175017501750175017501750000",
+      "valid": false
+    },
+    {
+      "name": "an Any value of 33 objects",
+      "update": "0101010008010161017601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b7601016b760000",
+      "valid": false
+    },
+    {
+      "name": "two Any values, a string of brackets and an integer: scalars add no level",
+      "update": "01010100080101610277045b5b5b5b7d0300",
+      "valid": true
+    },
+    {
+      "name": "a subdocument whose options nest 33 deep",
+      "update": "010101000901016104677569647601016f7501750175017501750175017501750175017501750175017501750175017501750175017501750175017501750175017501750175017501750175017501750000",
+      "valid": false
+    },
+    {
+      "name": "JSON content of 32 arrays",
+      "update": "010101000201016101405b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d00",
+      "valid": true
+    },
+    {
+      "name": "JSON content of 33 arrays",
+      "update": "010101000201016101425b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d00",
+      "valid": false
+    },
+    {
+      "name": "JSON content with brackets inside a string, which count no level",
+      "update": "0101010002010161012e5b225c225b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b225d00",
+      "valid": true
+    },
+    {
+      "name": "JSON content `undefined`, as Yjs writes an undefined value",
+      "update": "01010100020101610109756e646566696e656400",
+      "valid": true
+    },
+    {
+      "name": "JSON content that names a member twice, which JSON.parse reads",
+      "update": "0101010002010161010d7b2261223a312c2261223a327d00",
+      "valid": true
+    },
+    {
+      "name": "JSON content with an escaped unpaired surrogate, which JSON.parse reads",
+      "update": "0101010002010161010a5b225c7564383030225d00",
+      "valid": true
+    },
+    {
+      "name": "JSON content that does not parse",
+      "update": "010101000201016101045b312c5d00",
+      "valid": false
+    },
+    {
+      "name": "an embed of 33 objects",
+      "update": "0101010005010161c2017b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b226b223a7b7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d00",
+      "valid": false
+    },
+    {
+      "name": "a format whose value nests 33 deep",
+      "update": "0101010006010161046d61726b425b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d00",
+      "valid": false
+    },
+    { "name": "a skip: the info byte 10 itself", "update": "010101000a0500", "valid": true },
+    {
+      "name": "content kind 10 with an origin: not a skip, no content kind",
+      "update": "010101058a010000",
+      "valid": false
+    },
+    {
+      "name": "content kind 10 with a parent key: not a skip, no content kind",
+      "update": "010101002a010161016200",
+      "valid": false
+    },
+    {
+      "name": "parent info 2, read as an item's id as 0 is",
+      "update": "0101010004020500017800",
+      "valid": true
+    },
+    { "name": "a string that is not UTF-8", "update": "010101000401016101ff00", "valid": false },
+    {
+      "name": "content kind 11, which the encoding does not define",
+      "update": "010101000b0101610000",
+      "valid": false
+    },
+    {
+      "name": "an Any tag of 115, which the encoding does not define",
+      "update": "0101010008010161017300",
+      "valid": false
+    },
+    { "name": "a byte after a complete update", "update": "000000", "valid": false }
+  ],
+  "stateVectors": [
+    { "name": "the empty document's", "stateVector": "00", "valid": true },
+    { "name": "a client id of 2^53 − 1", "stateVector": "01ffffffffffffff0f00", "valid": true },
+    { "name": "a client id of 2^53", "stateVector": "01808080808080801000", "valid": false },
+    { "name": "a clock of 2^53", "stateVector": "01018080808080808010", "valid": false },
+    { "name": "a clock of 1 in 9 bytes", "stateVector": "0101818080808080808000", "valid": false },
+    { "name": "a byte after a complete state vector", "stateVector": "0000", "valid": false }
+  ]
+}

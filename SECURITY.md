@@ -26,8 +26,9 @@ inherits from the messenger, what it assumes, what it enforces itself and what i
 deliberately does not guarantee. Something listed there as not guaranteed — for example
 that the in-memory test transport sends plaintext, or that a document is no more
 confidential than the channel it rides on — is documented behaviour, not a vulnerability.
-[CONFORMANCE.md](CONFORMANCE.md)'s "Known gaps" lists what is not yet specified or built.
-A finding that shows one of those gaps is worse than stated is welcome.
+[CONFORMANCE.md](CONFORMANCE.md) lists the protocol's known limits, what is not yet specified,
+the gaps of this implementation and the evidence not yet gathered. A finding that shows one of
+them is worse than stated is welcome.
 
 ## What to expect
 

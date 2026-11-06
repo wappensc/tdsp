@@ -1,6 +1,6 @@
 # TDSP bindings — Signal
 
-**Specification · TDSP bindings 2.0 (draft) · 24 October 2026**
+**Specification · TDSP bindings 2.0 (draft) · 3 November 2026**
 
 Part of TDSP 2.0, whose core is [SPECIFICATION.md](../SPECIFICATION.md). This
 document holds what TDSP 1.4 had in §13.2 of its specification, unchanged in
@@ -15,7 +15,7 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
 | Aspect | Binding |
 |---|---|
 | Account | A linked device of an existing Signal account (`signal-cli link`; the person scans a QR code on the phone). The bridge holds the device's keys |
-| Security (BND-1) | Sender authentication, integrity and confidentiality, inherited from Signal's protocol and always on, also against Signal's servers, which can still delay or withhold a message. The binding adds none of them, and TDSP has not verified them: they are what Signal states of its protocol. A member's first identity key is trusted on first use — `signal-cli`'s default (`--trust-new-identities on-first-use`), and the bridge of this repository sets no other mode — so against Signal's servers a member is authenticated only as far as safety numbers are compared outside TDSP; a changed key is not trusted until the person trusts it (SIG-4) |
+| Security (BND-1) | Sender authentication, integrity and confidentiality, inherited from Signal's protocol and always on, also against Signal's servers, which can still delay or withhold a message. The binding adds none of them, and TDSP has not verified them: they are what Signal states of its protocol. A member's first identity key is trusted on first use — `signal-cli`'s default (`--trust-new-identities on-first-use`), and the bridge of this repository sets no other mode — so against Signal's servers a member is authenticated only as far as safety numbers are compared outside TDSP; a changed key is not trusted until the person trusts it (SIG-4) — for sending, and for receiving as well: observed with `signal-cli` 0.14.9, not by a test of this repository ([CONFORMANCE.md](../CONFORMANCE.md)), it delivers none of the direct or group messages of a sender whose identity is not the one it holds, stores the new identity as untrusted, keeps those messages, and delivers them once that identity is trusted |
 | Channel | An existing Signal group; channel id = the group id |
 | Carrier | One group text message whose body is the envelope JSON |
 | MemberId | The account's ACI (UUID). Never the phone number |
@@ -26,6 +26,7 @@ conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-l
 | Attachment | A larger frame, up to 4 MiB, is the message's only attachment; the envelope carries `"attachment": {"size": <bytes>, "sha256": "<64 hex digits>"}` in place of `frame`. `signal-cli` downloads every attachment of a message it receives itself, up to its own limit (150 MiB in 0.14.9), before the bridge sees the message: BRG-13 and BRG-14 bound what the bridge reads from `signal-cli`, not that download |
 | Accepted (TRN-6) | The client sends to every member itself and answers per recipient; a recipient skipped as an identity to trust is recorded as a notice in the integrity log (SIG-4) |
 | Refusals (BRG-8) | A send `signal-cli` refuses because it cannot load the account is `unavailable` while the bridge's link status shows its device linked, and `needs-person` once it shows it unlinked (SIG-7) |
+| Retention (LIF-8) | Unknown: Signal's servers keep a message for a device that is away for a time this binding does not state, and a linked device receives no history; an application that knows the time tells its engine |
 | Transport profile | Bounds: floor 500 ms, 4 MiB; suggested pacing 2 s / 20 s / 10 s; all estimates ([Appendix B](../SPECIFICATION.md#appendix-b-recommended-values)) |
 | Frames carried | TDSP 2.0's, and 1.x's, unchanged ([§2.2](../SPECIFICATION.md#22-two-wrappers-two-readers)) |
 | Immutability | An `editMessage` or a remote delete targeting a delivered message is an integrity violation, inside a sync transcript too |

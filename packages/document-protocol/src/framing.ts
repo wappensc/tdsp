@@ -4,20 +4,15 @@ import {
   MAX_JSON_NESTING,
   type ResyncRequestId,
 } from "@tdsp/messenger-port";
+import { type Clock, isClock } from "./clock";
 import {
-  type ControlStateSnapshot,
-  type ControlTarget,
-  type ControlValue,
-  type ControlVector,
   DEVICE_TAG,
   isControlTarget,
-  MAX_COUNTERS_AHEAD,
-  MAX_CREATOR_DEVICES,
   MAX_TARGETS,
   type MemberRight,
   memberOf,
   PROFILE_ID_FORM,
-  type TargetState,
+  type Register,
   valueFitsTarget,
 } from "./control-state";
 import { type JsonPath, numbersNotInIntegerForm, strictJsonProblem } from "./strict-json";
@@ -30,7 +25,7 @@ import { type JsonPath, numbersNotInIntegerForm, strictJsonProblem } from "./str
  * interprets").
  *
  * ```
- * {"tdsp":2,"kind":"edit","documentId":"doc-a1b2c3","update":"<Base64>","due":30000}
+ * {"tdsp":2,"kind":"edit","documentId":"doc-a1b2c3","update":"<Base64>"}
  * ```
  *
  * Every frame has `tdsp` (the format version: 2, the draft marker until TDSP releases 2.0,
@@ -50,7 +45,7 @@ import { type JsonPath, numbersNotInIntegerForm, strictJsonProblem } from "./str
  * no draft frame passes for TDSP 2.0, and every 1.x engine refuses it as `unsupported-version`.
  * The revision rises with every incompatible change of the draft wire.
  */
-export const CURRENT_FRAME_VERSION = "de.wappensc.together.tdsp.probe.draft-5";
+export const CURRENT_FRAME_VERSION = "de.wappensc.together.tdsp.probe.draft-10";
 
 /**
  * How a receiver checks the value of an extension it implements (FRM-16): `true` for one the
@@ -80,7 +75,10 @@ const UINT32_MAX = 0xffffffff;
 const MAX_ID_BYTES = 255;
 const MAX_DECLINE_TEXT = 500;
 const MAX_DECLINE_PROFILES = 16;
-/** The most targets a control snapshot may list: members, layer rights, the close and the pace (CTL-30). */
+/**
+ * The most targets a control snapshot or a `control` frame may list: members and rights on layers,
+ * and the pace (CTL-30).
+ */
 export const MAX_SNAPSHOT_TARGETS = MAX_TARGETS;
 const PROFILE_ID = PROFILE_ID_FORM;
 const MESSAGE_ID = /^[0-9a-f]{16}$/;
@@ -93,8 +91,6 @@ export interface EditFrame {
   readonly kind: "edit";
   readonly documentId: DocumentId;
   readonly update: Uint8Array;
-  /** Milliseconds within which the sender will send again at the latest; 0 for no promise (SND-14). */
-  readonly due: number;
 }
 
 export interface ResyncResponseFrame {
@@ -104,9 +100,9 @@ export interface ResyncResponseFrame {
   readonly respondsTo: ResyncRequestId;
   readonly update: Uint8Array;
   /**
-   * The creator's control snapshot, or `null` from anyone else — checked here in full, like
-   * every other field (§7.5, FRM-6). Whether it names the creator is the engine's check, which
-   * alone knows who the creator is.
+   * A control snapshot, or `null` — checked here in full, like every other field (§7.5, FRM-6).
+   * Whether it names the creator, and whether the answer it comes in is one to merge, is the engine's
+   * check (CTL-4, CTL-25, RSY-12), which alone knows who the creator is and which requests are its own.
    */
   readonly control: DecodedSnapshot | null;
   /** The responder's attribution overlay, or `null` — checked here in full (§5.4). */
@@ -127,11 +123,13 @@ export interface ResyncResponseFrame {
 }
 
 /**
- * A control snapshot as it arrives (CTL-25): the document's profile, the control
- * vector and, per target, what its operations had seen and the operations nothing supersedes.
+ * A control snapshot as it arrives (§7.5, CTL-25): the document's profile, the close, and one
+ * register per target.
  */
-export interface DecodedSnapshot extends ControlStateSnapshot {
+export interface DecodedSnapshot {
   readonly profile: string;
+  readonly closed: boolean;
+  readonly targets: Readonly<Record<string, Register>>;
 }
 
 /** One author's stretch of the plain-text projection, `[start, end)` (§5.4); `null` for unattributed text (ATR-2). */
@@ -147,38 +145,42 @@ export interface AttributionOverlay {
   readonly lastEditBySender: Readonly<Record<string, number>>;
 }
 
-/** The permission a control operation sets on a member; `null` revokes. The creator's own is never carried. */
+/** The permission a decision sets on a member; `null` revokes. The creator's own is never carried. */
 export type ControlPermission = MemberRight;
 
 /**
- * One control operation of a device of the creator (CTL-20): its device's tag
- * and own counter, the target and value, and what the device had seen of the other creator
- * devices (CTL-22).
+ * Decisions of a device of the creator (CTL-20): the registers it decided — and any others it holds
+ * that it adds —, its close flag after them, and its control clock and control digest after them, or
+ * `null` for both from a device that is not bootstrapped (RSY-14).
  */
 export interface ControlFrame {
   readonly kind: "control";
   readonly documentId: DocumentId;
+  /**
+   * The tag of the device of the creator that sends it (CTL-20). It names no stream: the frame carries
+   * no number, and what it states of control state is no evidence (LOS-12); the device's reports are.
+   */
   readonly device: string;
-  readonly counter: number;
-  readonly target: ControlTarget;
-  readonly value: ControlValue;
-  readonly seen: ControlVector;
-  /** As an edit's: when its sender will send again at the latest; 0 for no promise (SND-14). */
-  readonly due: number;
+  readonly targets: Readonly<Record<string, Register>>;
+  readonly closed: boolean;
+  readonly controlClock: Clock | null;
+  /** The sender's control digest after the frame (LOS-24); `null` exactly when `controlClock` is. */
+  readonly controlDigest: string | null;
 }
 
 /**
- * "I have sent everything I am going to for now, and this is what I have" — sent once,
- * `maxIntervalMs` after an engine's last message that owes one (§9.3). It carries no document
- * content; a receiver compares the sender's state vector with its own to see a lost final
- * message.
+ * "I have sent everything I am going to for now, and this is what I have" — the report: one for each
+ * phase of its sender's own sending, once the report delay has passed since the phase's last `edit`
+ * or `control` frame, or at once where SND-11 says so (§9.3). Of the document's content it carries at
+ * most the update of its sender's last `edit` frame again (§4.3, SND-27); a receiver compares the
+ * sender's state vector with its own to see a lost final message.
  */
 export interface HeartbeatFrame {
   readonly kind: "heartbeat";
   readonly documentId: DocumentId;
-  /** A device of the creator's control vector (SND-11); `null` from anyone else. */
-  readonly control: ControlVector | null;
-  /** The digest of the control state behind `control` (LOS-12); `null` exactly when `control` is. */
+  /** A bootstrapped device of the creator's control clock (SND-11); `null` from anyone else. */
+  readonly controlClock: Clock | null;
+  /** The digest of the control state behind `controlClock` (LOS-24); `null` exactly when it is. */
   readonly controlDigest: string | null;
   readonly stateVector: Uint8Array;
   /** The digest of the sender's content (LOS-12): what its state vector does not show, deletions. */
@@ -186,6 +188,11 @@ export interface HeartbeatFrame {
   /** The sender's stream — its engine as it runs now — and this report's number in it (LOS-13). */
   readonly stream: string;
   readonly sequence: number;
+  /**
+   * The update of the sender's last `edit` frame, as it went out, never empty; absent, never `null`,
+   * when the report carries none (§4.3). Read by the document's profile like an edit's (§4.4).
+   */
+  readonly update?: Uint8Array;
 }
 
 /** "I need to be caught up" (§8.2): how far the requester is along, in control state and content. */
@@ -199,12 +206,14 @@ export interface ResyncRequestFrame {
    */
   readonly requestId: string;
   /**
-   * The requester's control vector, or `null` while it holds no snapshot from the creator: the
-   * creator then answers it regardless (RSY-17).
+   * The requester's control clock, or `null` while it holds no control state it may state — before
+   * its bootstrap: a responder with control state then answers it regardless (RSY-16, RSY-17).
    */
-  readonly control: ControlVector | null;
-  /** The digest of the requester's control state (LOS-12); `null` exactly when `control` is. */
+  readonly controlClock: Clock | null;
+  /** The digest of the requester's control state (LOS-24); `null` exactly when `controlClock` is. */
   readonly controlDigest: string | null;
+  /** Whether any member may answer it (RSY-6, RSY-21). */
+  readonly all: boolean;
   /** Answer even with nothing to add: the requester cannot tell what it lacks (RSY-16, LOS-19). */
   readonly force: boolean;
   readonly stateVector: Uint8Array;
@@ -362,14 +371,12 @@ function extensionFields(extensions: OutgoingExtensions | undefined): Record<str
 export function encodeEditFrame(
   documentId: DocumentId,
   update: Uint8Array,
-  due = 0,
   extensions?: OutgoingExtensions,
 ): string {
   if (update.length === 0) {
     throw new Error("an edit frame needs an update");
   }
-  checkUint32("due", due);
-  return frameText(documentId, "edit", { update: bytesToBase64(update), due }, extensions);
+  return frameText(documentId, "edit", { update: bytesToBase64(update) }, extensions);
 }
 
 /**
@@ -394,8 +401,9 @@ export function encodeResyncRequestFrame(
   options: {
     documentId: DocumentId;
     requestId: string;
-    control: ControlVector | null;
+    controlClock: Clock | null;
     controlDigest: string | null;
+    all: boolean;
     force: boolean;
     stateVector: Uint8Array;
     stateDigest: string;
@@ -408,8 +416,8 @@ export function encodeResyncRequestFrame(
     "resync-request",
     {
       requestId: options.requestId,
-      control: options.control === null ? null : checkedVector("control", options.control),
-      controlDigest: checkedDigestBeside(options.control, options.controlDigest),
+      ...checkedControlClock(options.controlClock, options.controlDigest),
+      all: options.all,
       force: options.force,
       stateVector: bytesToBase64(options.stateVector),
       stateDigest: checkedDigest("stateDigest", options.stateDigest),
@@ -467,56 +475,52 @@ export function encodeResyncResponseFrame(
 export function encodeControlFrame(options: {
   documentId: DocumentId;
   device: string;
-  counter: number;
-  target: ControlTarget;
-  value: ControlValue;
-  seen: ControlVector;
-  due?: number;
+  targets: Readonly<Record<string, Register>>;
+  closed: boolean;
+  controlClock: Clock | null;
+  controlDigest: string | null;
 }): string {
-  checkUint32("due", options.due ?? 0);
   if (!DEVICE_TAG.test(options.device)) {
     throw new Error("a device tag is 22 base64url characters");
   }
-  checkUint32("control counter", options.counter, 1);
-  if (Object.hasOwn(options.seen, options.device)) {
-    throw new Error("an operation's seen names the other creator devices, not its own (CTL-20)");
-  }
-  if (!isControlTarget(options.target) || !valueFitsTarget(options.target, options.value)) {
-    throw new Error(`a control operation on ${options.target} cannot set ${String(options.value)}`);
-  }
-  const member = memberOf(options.target);
-  if (member !== undefined) {
-    checkId("member id", member);
+  const targets = checkedTargets(options.targets);
+  // A frame carries a decision: a register at least, or the close (CTL-20).
+  if (Object.keys(targets).length === 0 && !options.closed) {
+    throw new Error("a control frame carries a register, or the close");
   }
   return frameText(options.documentId, "control", {
     device: options.device,
-    counter: options.counter,
-    target: options.target,
-    value: options.value,
-    seen: checkedVector("seen", options.seen),
-    due: options.due ?? 0,
+    targets,
+    closed: options.closed,
+    ...checkedControlClock(options.controlClock, options.controlDigest),
   });
 }
 
 export function encodeHeartbeatFrame(
   options: {
     documentId: DocumentId;
-    control: ControlVector | null;
+    controlClock: Clock | null;
     controlDigest: string | null;
     stateVector: Uint8Array;
     stateDigest: string;
+    /** The update of the sender's last `edit` frame again, or none (§4.3). */
+    update?: Uint8Array;
     extensions?: OutgoingExtensions;
   } & StreamPosition,
 ): string {
+  if (options.update !== undefined && options.update.length === 0) {
+    throw new Error("a heartbeat's update is never empty: one without leaves the field out");
+  }
   return frameText(
     options.documentId,
     "heartbeat",
     {
-      control: options.control === null ? null : checkedVector("control", options.control),
-      controlDigest: checkedDigestBeside(options.control, options.controlDigest),
+      ...checkedControlClock(options.controlClock, options.controlDigest),
       stateVector: bytesToBase64(options.stateVector),
       stateDigest: checkedDigest("stateDigest", options.stateDigest),
       ...streamFields(options),
+      // After the stream and before any extension field, as §4.3 lists it.
+      ...(options.update === undefined ? {} : { update: bytesToBase64(options.update) }),
     },
     options.extensions,
   );
@@ -529,29 +533,60 @@ function checkedDigest(name: string, digest: string): string {
   return digest;
 }
 
-function checkedDigestBeside(control: ControlVector | null, digest: string | null): string | null {
-  if ((control === null) !== (digest === null)) {
-    throw new Error("a control digest goes with a control vector, and only with one");
+/** A control clock and its digest, both or neither (LOS-24), as a frame writes them. */
+function checkedControlClock(
+  clock: Clock | null,
+  digest: string | null,
+): { controlClock: Clock | null; controlDigest: string | null } {
+  if ((clock === null) !== (digest === null)) {
+    throw new Error("a control digest goes with a control clock, and only with one");
   }
-  return digest === null ? null : checkedDigest("controlDigest", digest);
+  if (clock !== null && !isClock(clock)) {
+    throw new Error("a control clock is two integers in their ranges (CTL-45)");
+  }
+  return {
+    controlClock: clock === null ? null : [clock[0], clock[1]],
+    controlDigest: digest === null ? null : checkedDigest("controlDigest", digest),
+  };
 }
 
 /**
- * A control vector, sorted for one spelling, or an error for one that is not; a device of which
- * nothing is held without a gap is absent, never written with 0 (FRM-14).
+ * A frame's or a snapshot's registers, in code unit order for one spelling (CTL-20), each exactly
+ * `value`, `clock` and `device`; or an error for a target or a register the layout forbids.
  */
-function checkedVector(name: string, vector: ControlVector): Record<string, number> {
-  const entries = Object.entries(vector).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  if (entries.length > MAX_CREATOR_DEVICES) {
-    throw new Error(`${name} names more than ${MAX_CREATOR_DEVICES} devices`);
+export function checkedTargets(
+  targets: Readonly<Record<string, Register>>,
+): Record<string, Register> {
+  const entries = Object.entries(targets).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  if (entries.length > MAX_SNAPSHOT_TARGETS) {
+    throw new Error(`at most ${MAX_SNAPSHOT_TARGETS} targets`);
   }
-  for (const [device, counter] of entries) {
-    if (!DEVICE_TAG.test(device)) {
-      throw new Error(`${name} names something that is not a device tag`);
-    }
-    checkUint32(`${name} counter`, counter, 1);
-  }
-  return Object.fromEntries(entries);
+  return Object.fromEntries(
+    entries.map(([target, register]) => {
+      if (!isControlTarget(target)) {
+        throw new Error(`not a control target: ${target}`);
+      }
+      const member = memberOf(target);
+      if (member !== undefined) {
+        checkId("member id", member);
+      }
+      if (
+        !valueFitsTarget(target, register.value) ||
+        !isClock(register.clock) ||
+        !DEVICE_TAG.test(register.device)
+      ) {
+        throw new Error(`not a register on ${target} (CTL-20)`);
+      }
+      return [
+        target,
+        {
+          value: register.value,
+          clock: [register.clock[0], register.clock[1]],
+          device: register.device,
+        },
+      ];
+    }),
+  );
 }
 
 export function encodeDeclineFrame(options: {
@@ -588,11 +623,12 @@ const DECLINE_REASONS: ReadonlySet<string> = new Set([
 ]);
 
 const FIELDS: Readonly<Record<Frame["kind"], readonly string[]>> = {
-  edit: ["update", "due"],
+  edit: ["update"],
   "resync-request": [
     "requestId",
-    "control",
+    "controlClock",
     "controlDigest",
+    "all",
     "force",
     "stateVector",
     "stateDigest",
@@ -611,8 +647,16 @@ const FIELDS: Readonly<Record<Frame["kind"], readonly string[]>> = {
     "piece",
     "pieces",
   ],
-  control: ["device", "counter", "target", "value", "seen", "due"],
-  heartbeat: ["control", "controlDigest", "stateVector", "stateDigest", "stream", "sequence"],
+  control: ["device", "targets", "closed", "controlClock", "controlDigest"],
+  heartbeat: [
+    "controlClock",
+    "controlDigest",
+    "stateVector",
+    "stateDigest",
+    "stream",
+    "sequence",
+    "update",
+  ],
   decline: ["reason", "profiles", "text"],
 };
 
@@ -795,9 +839,7 @@ type Place =
   | "frame"
   | "snapshot"
   | "targets"
-  | "target"
-  | "heads"
-  | "operation"
+  | "register"
   | "overlay"
   | "ranges"
   | "range"
@@ -807,8 +849,7 @@ type Place =
 const FIELD_PLACES: ReadonlySet<Place> = new Set([
   "frame",
   "snapshot",
-  "target",
-  "operation",
+  "register",
   "overlay",
   "range",
 ]);
@@ -820,29 +861,17 @@ function placeBelow(place: Place, name: string | number, kind: Frame["kind"]): P
   }
   switch (place) {
     case "frame":
-      return name === "control"
-        ? kind === "resync-response"
-          ? "snapshot"
-          : "map"
-        : name === "seen"
-          ? "map"
+      return name === "control" && kind === "resync-response"
+        ? "snapshot"
+        : name === "targets" && kind === "control"
+          ? "targets"
           : name === "attribution"
             ? "overlay"
             : "value";
     case "snapshot":
-      return name === "vector" || name === "aboveHoles"
-        ? "map"
-        : name === "targets"
-          ? "targets"
-          : "value";
+      return name === "targets" ? "targets" : "value";
     case "targets":
-      return "target";
-    case "target":
-      return name === "seen" ? "map" : name === "heads" ? "heads" : "value";
-    case "heads":
-      return "operation";
-    case "operation":
-      return name === "seen" ? "map" : "value";
+      return "register";
     case "overlay":
       return name === "ranges" ? "ranges" : name === "lastEditBySender" ? "map" : "value";
     case "ranges":
@@ -885,16 +914,17 @@ function decodeDefined(kind: Frame["kind"], f: Fields, documentId: DocumentId): 
         kind: "edit",
         documentId,
         update: f.base64("update", { nonEmpty: true }),
-        due: f.integer("due", 0, UINT32_MAX),
       };
     case "resync-request": {
-      const control = decodeVectorOrNull(f.objectOrNull("control"), "the request's control");
+      const requestId = f.randomId("requestId");
+      const { controlClock, controlDigest } = decodeControlClock(f, "the request");
       return {
         kind: "resync-request",
         documentId,
-        requestId: f.randomId("requestId"),
-        control,
-        controlDigest: digestBeside(control, f, "the request"),
+        requestId,
+        controlClock,
+        controlDigest,
+        all: f.boolean("all"),
         force: f.boolean("force"),
         stateVector: f.base64("stateVector"),
         stateDigest: f.digest("stateDigest"),
@@ -936,15 +966,17 @@ function decodeDefined(kind: Frame["kind"], f: Fields, documentId: DocumentId): 
       };
     }
     case "heartbeat": {
-      const control = decodeVectorOrNull(f.objectOrNull("control"), "the heartbeat's control");
+      const { controlClock, controlDigest } = decodeControlClock(f, "the heartbeat");
       return {
         kind: "heartbeat",
         documentId,
-        control,
-        controlDigest: digestBeside(control, f, "the heartbeat"),
+        controlClock,
+        controlDigest,
         stateVector: f.base64("stateVector"),
         stateDigest: f.digest("stateDigest"),
         ...decodeStream(f),
+        // Optional and never `null`, as a decline's optional fields (§4.3).
+        ...(f.has("update") ? { update: f.base64("update", { nonEmpty: true }) } : {}),
       };
     }
     case "control":
@@ -959,13 +991,33 @@ function decodeStream(f: Fields): { stream: string; sequence: number } {
   return { stream: f.randomId("stream"), sequence: f.integer("sequence", 1, UINT32_MAX) };
 }
 
-/** `controlDigest` beside a control vector: a digest exactly when there is a vector (LOS-12). */
-function digestBeside(control: ControlVector | null, f: Fields, what: string): string | null {
-  const digest = f.digestOrNull("controlDigest");
-  if ((control === null) !== (digest === null)) {
-    throw invalid(`${what} carries a control digest exactly when it carries a control vector`);
+/**
+ * `controlClock` and `controlDigest`: a clock — an array of exactly two integers in their ranges
+ * (CTL-45) — and a digest, or `null` for both (LOS-24).
+ */
+function decodeControlClock(
+  f: Fields,
+  what: string,
+): { controlClock: Clock | null; controlDigest: string | null } {
+  const controlClock = decodeClockOrNull(f.optional("controlClock"), f.has("controlClock"), what);
+  const controlDigest = f.digestOrNull("controlDigest");
+  if ((controlClock === null) !== (controlDigest === null)) {
+    throw invalid(`${what} carries a control digest exactly when it carries a control clock`);
   }
-  return digest;
+  return { controlClock, controlDigest };
+}
+
+function decodeClockOrNull(raw: unknown, present: boolean, what: string): Clock | null {
+  if (!present) {
+    throw new FrameDecodeError("missing-field", `${what} has no controlClock`);
+  }
+  if (raw === null) {
+    return null;
+  }
+  if (!isClock(raw)) {
+    throw invalid(`${what}'s control clock must be two integers in their ranges (CTL-45)`);
+  }
+  return [raw[0], raw[1]];
 }
 
 /**
@@ -1070,164 +1122,70 @@ function isId(value: unknown): value is string {
 }
 
 /**
- * A control vector (§4.3, §7.4): device tags to uint32 counters, at most one entry per creator device
- * bound. An entry of 0 is read as it is written here; the control state drops it (FRM-14).
+ * A frame's or a snapshot's registers (CTL-20, §7.5): an object of at most 5 002 entries, each a
+ * target mapped to a register, checked completely (FRM-6). Its keys are targets, not field names: a
+ * MemberId may contain `.` (FRM-9).
  */
-function decodeVector(raw: unknown, what: string): ControlVector {
+function decodeTargets(raw: unknown, what: string): Record<string, Register> {
+  if (!isRecord(raw)) {
+    throw invalid(`${what}'s targets must be an object`);
+  }
+  const entries = Object.entries(raw);
+  if (entries.length > MAX_SNAPSHOT_TARGETS) {
+    throw invalid(`${what} lists more than ${MAX_SNAPSHOT_TARGETS} targets`);
+  }
+  const targets: Record<string, Register> = {};
+  for (const [name, register] of entries) {
+    if (!isControlTarget(name) || (memberOf(name) !== undefined && !isId(memberOf(name)))) {
+      throw invalid(`${what} names an unknown target ${name}`);
+    }
+    targets[name] = decodeRegister(name, register, `${what}'s register on ${name}`);
+  }
+  return targets;
+}
+
+/**
+ * A register (CTL-20): exactly `value` — one its target can take —, `clock` — an array of exactly two
+ * integers in their ranges (CTL-45) — and `device`, a device tag; an extension field in it is ignored
+ * (FRM-9).
+ */
+function decodeRegister(target: string, raw: unknown, what: string): Register {
   if (!isRecord(raw)) {
     throw invalid(`${what} must be an object`);
   }
-  const entries = Object.entries(raw);
-  if (entries.length > MAX_CREATOR_DEVICES) {
-    throw invalid(`${what} names more than ${MAX_CREATOR_DEVICES} devices`);
+  exactKeys(what, raw, ["value", "clock", "device"]);
+  if (!valueFitsTarget(target, raw.value)) {
+    throw invalid(`${what} cannot hold ${String(raw.value)}`);
   }
-  const vector: Record<string, number> = {};
-  for (const [device, counter] of entries) {
-    if (!DEVICE_TAG.test(device) || !isUint32(counter)) {
-      throw invalid(`${what} must map device tags to uint32 counters`);
-    }
-    vector[device] = counter;
+  if (!isClock(raw.clock)) {
+    throw invalid(`${what}'s clock must be two integers in their ranges (CTL-45)`);
   }
-  return vector;
+  if (typeof raw.device !== "string" || !DEVICE_TAG.test(raw.device)) {
+    throw invalid(`${what} needs a device tag`);
+  }
+  return { value: raw.value, clock: [raw.clock[0], raw.clock[1]], device: raw.device };
 }
 
 /**
- * What an operation had seen of the other creator devices (CTL-20): a control vector that does not
- * name the operation's own device, whose earlier counters are implied (CTL-22). One that did could
- * make the operation supersede itself, so that it held nowhere and counted nowhere. An entry of 0
- * names nothing, its own device's too (FRM-14).
- */
-function decodeSeen(raw: unknown, device: string, what: string): ControlVector {
-  const seen = decodeVector(raw, what);
-  if ((seen[device] ?? 0) > 0) {
-    throw invalid(`${what} names the operation's own device`);
-  }
-  return seen;
-}
-
-function decodeVectorOrNull(
-  raw: Record<string, unknown> | null,
-  what: string,
-): ControlVector | null {
-  return raw === null ? null : decodeVector(raw, what);
-}
-
-/**
- * The control state a snapshot carries (CTL-25), checked completely before anything of the frame
- * is applied (FRM-6): an invalid snapshot rejects the whole response.
+ * The control state a snapshot carries (§7.5, CTL-25), checked completely before anything of the
+ * frame is applied (FRM-6): an invalid snapshot rejects the whole response.
  */
 function decodeSnapshot(raw: Record<string, unknown> | null): DecodedSnapshot | null {
   if (raw === null) {
     return null;
   }
-  exactKeys("the snapshot", raw, ["profile", "vector", "targets"], ["aboveHoles"]);
+  exactKeys("the snapshot", raw, ["profile", "closed", "targets"]);
   if (!isProfileId(raw.profile)) {
     throw invalid("the snapshot's profile is not a profile id");
   }
-  const vector = decodeVector(raw.vector, "the snapshot's vector");
-  const aboveHoles =
-    raw.aboveHoles === undefined ? undefined : decodeAboveHoles(raw.aboveHoles, vector);
-  if (!isRecord(raw.targets)) {
-    throw invalid("the snapshot's targets must be an object");
-  }
-  // Every key of `targets` is a target, not a field name: a MemberId may contain `.` (FRM-9).
-  const entries = Object.entries(raw.targets);
-  if (entries.length > MAX_SNAPSHOT_TARGETS) {
-    throw invalid(`the snapshot lists more than ${MAX_SNAPSHOT_TARGETS} targets`);
-  }
-  const targets: Record<string, TargetState> = {};
-  for (const [name, state] of entries) {
-    if (!isControlTarget(name) || (memberOf(name) !== undefined && !isId(memberOf(name)))) {
-      throw invalid(`the snapshot names an unknown target ${name}`);
-    }
-    if (!isRecord(state)) {
-      throw invalid(`the snapshot's target ${name} must be an object`);
-    }
-    exactKeys(`the snapshot's target ${name}`, state, ["seen", "heads"]);
-    if (!Array.isArray(state.heads) || state.heads.length > MAX_CREATOR_DEVICES) {
-      throw invalid(
-        `the snapshot's target ${name} must list at most ${MAX_CREATOR_DEVICES} operations`,
-      );
-    }
-    // At most one head per device (§7.5): a device's later operation supersedes its earlier ones
-    // (CTL-22), and two under one counter merge into one (CTL-24), so a second is no state a
-    // creator can hold.
-    const devices = new Set<string>();
-    const heads = (state.heads as unknown[]).map((head) => {
-      if (!isRecord(head)) {
-        throw invalid("an operation in the snapshot must be an object");
-      }
-      exactKeys("an operation in the snapshot", head, ["device", "counter", "value", "seen"]);
-      if (typeof head.device !== "string" || !DEVICE_TAG.test(head.device)) {
-        throw invalid("an operation in the snapshot needs a device tag");
-      }
-      if (devices.has(head.device)) {
-        throw invalid(`the snapshot's target ${name} has two heads of the device ${head.device}`);
-      }
-      devices.add(head.device);
-      if (!isUint32(head.counter) || head.counter < 1) {
-        throw invalid("an operation in the snapshot needs a counter from 1");
-      }
-      if (!valueFitsTarget(name, head.value)) {
-        throw invalid(`an operation on ${name} cannot set ${String(head.value)}`);
-      }
-      return {
-        device: head.device,
-        counter: head.counter,
-        value: head.value,
-        seen: decodeSeen(head.seen, head.device, "an operation in the snapshot's seen"),
-      };
-    });
-    targets[name] = {
-      seen: decodeVector(state.seen, `the snapshot's target ${name}'s seen`),
-      heads,
-    };
+  if (typeof raw.closed !== "boolean") {
+    throw invalid("the snapshot's closed must be true or false");
   }
   return {
     profile: raw.profile,
-    vector,
-    targets,
-    ...(aboveHoles === undefined ? {} : { aboveHoles }),
+    closed: raw.closed,
+    targets: decodeTargets(raw.targets, "the snapshot"),
   };
-}
-
-/**
- * A snapshot's counters held above a hole (§7.5): per device tag, 1 to 1 024 counters, ascending
- * without repeats, each above that device's entry in `vector` (CTL-30) — at most one entry per
- * creator device bound.
- */
-function decodeAboveHoles(raw: unknown, vector: ControlVector): Record<string, number[]> {
-  if (!isRecord(raw)) {
-    throw invalid("the snapshot's aboveHoles must be an object");
-  }
-  const entries = Object.entries(raw);
-  if (entries.length > MAX_CREATOR_DEVICES) {
-    throw invalid(`the snapshot's aboveHoles names more than ${MAX_CREATOR_DEVICES} devices`);
-  }
-  const result: Record<string, number[]> = {};
-  for (const [device, counters] of entries) {
-    if (
-      !DEVICE_TAG.test(device) ||
-      !Array.isArray(counters) ||
-      counters.length === 0 ||
-      counters.length > MAX_COUNTERS_AHEAD
-    ) {
-      throw invalid(
-        `the snapshot's aboveHoles must map device tags to 1 to ${MAX_COUNTERS_AHEAD} counters`,
-      );
-    }
-    let previous = vector[device] ?? 0;
-    for (const counter of counters as unknown[]) {
-      if (!isUint32(counter) || counter <= previous) {
-        throw invalid(
-          "the snapshot's aboveHoles must list counters above the vector's, ascending without repeats",
-        );
-      }
-      previous = counter;
-    }
-    result[device] = counters as number[];
-  }
-  return result;
 }
 
 /**
@@ -1282,33 +1240,26 @@ function decodeAttribution(raw: Record<string, unknown> | null): AttributionOver
 function decodeControl(f: Fields, documentId: DocumentId): ControlFrame {
   const device = f.string("device");
   if (!DEVICE_TAG.test(device)) {
-    throw invalid("a control operation's device must be a device tag");
+    throw invalid("a control frame's device must be a device tag");
   }
-  const counter = f.integer("counter", 1, UINT32_MAX);
-  const target = f.string("target");
-  if (!isControlTarget(target) || (memberOf(target) !== undefined && !isId(memberOf(target)))) {
-    throw invalid(`unknown control target ${target}`);
+  if (!f.has("targets")) {
+    throw new FrameDecodeError("missing-field", "a control frame has no targets");
   }
-  if (!f.has("value")) {
-    throw new FrameDecodeError("missing-field", "a control operation has no value");
+  const targets = decodeTargets(f.optional("targets"), "a control frame");
+  const closed = f.boolean("closed");
+  // A frame carries a decision: a register at least, or the close (CTL-20).
+  if (Object.keys(targets).length === 0 && !closed) {
+    throw invalid("a control frame without registers must carry the close");
   }
-  const value = f.optional("value");
-  if (!valueFitsTarget(target, value)) {
-    throw invalid(`a control operation on ${target} cannot set ${String(value)}`);
-  }
-  if (!f.has("seen")) {
-    throw new FrameDecodeError("missing-field", "a control operation has no seen");
-  }
-  const seen = decodeSeen(f.optional("seen"), device, "a control operation's seen");
+  const { controlClock, controlDigest } = decodeControlClock(f, "a control frame");
   return {
     kind: "control",
     documentId,
     device,
-    counter,
-    target,
-    value,
-    seen,
-    due: f.integer("due", 0, UINT32_MAX),
+    targets,
+    closed,
+    controlClock,
+    controlDigest,
   };
 }
 

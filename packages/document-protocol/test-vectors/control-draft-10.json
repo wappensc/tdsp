@@ -1,0 +1,2076 @@
+{
+  "$comment": "TDSP 2.0 draft control-state test vectors (draft revision 10): each vector's frames — registers and the close, as `control` frames and snapshots carry them — merged in any order, each also twice, and as one snapshot, hold exactly `state`, whose control digest is `digest` (LOS-24), and give each member the right listed, on the document and on the layer — `read`, `write`, `revoked` (refused as `read` is, CTL-13, on every layer, LAY-5) or `unknown` (never named). Of two registers on one target the greater clock holds, then the later device tag in Unicode code point order, then the narrower value — for the reason for the close the greater string in code point order — (CTL-22, CTL-23); the close only goes from false to true (LIF-7). Checked in src/test-vectors.test.ts.",
+  "version": "de.wappensc.together.tdsp.probe.draft-10",
+  "layer": "com.example.comments/1",
+  "vectors": [
+    {
+      "name": "nothing held: every member unknown",
+      "frames": [],
+      "state": {
+        "closed": false,
+        "targets": {}
+      },
+      "digest": "dc2300e4cc3f671f",
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "unknown"
+        }
+      }
+    },
+    {
+      "name": "one grant (the design example, digest 106166478695c222)",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          }
+        }
+      },
+      "digest": "106166478695c222",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        },
+        "dave": {
+          "document": "unknown",
+          "com.example.comments/1": "unknown"
+        }
+      }
+    },
+    {
+      "name": "a grant and the pace a counter later (digest f1bd21d9458955ff)",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "pace": {
+              "value": 30000,
+              "clock": [1793008800000, 1],
+              "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          },
+          "pace": {
+            "value": 30000,
+            "clock": [1793008800000, 1],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          }
+        }
+      },
+      "digest": "f1bd21d9458955ff",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "and carol read a minute later (digest 8d243bc3f8bf3126)",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "pace": {
+              "value": 30000,
+              "clock": [1793008800000, 1],
+              "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:carol": {
+              "value": "read",
+              "clock": [1793008860000, 0],
+              "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          },
+          "member:carol": {
+            "value": "read",
+            "clock": [1793008860000, 0],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          },
+          "pace": {
+            "value": 30000,
+            "clock": [1793008800000, 1],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          }
+        }
+      },
+      "digest": "8d243bc3f8bf3126",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        },
+        "carol": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "the same, closed (digest c3d2af7d419e5c5a)",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "pace": {
+              "value": 30000,
+              "clock": [1793008800000, 1],
+              "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:carol": {
+              "value": "read",
+              "clock": [1793008860000, 0],
+              "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+            }
+          }
+        },
+        {
+          "closed": true,
+          "targets": {}
+        }
+      ],
+      "state": {
+        "closed": true,
+        "targets": {
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          },
+          "member:carol": {
+            "value": "read",
+            "clock": [1793008860000, 0],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          },
+          "pace": {
+            "value": 30000,
+            "clock": [1793008800000, 1],
+            "device": "Ms3dRk0ZyS7cH1qkM8fWNA"
+          }
+        }
+      },
+      "digest": "c3d2af7d419e5c5a",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        },
+        "carol": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "the greater ms holds",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800001, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "read",
+            "clock": [1793008800001, 0],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          }
+        }
+      },
+      "digest": "9eecb48ef13a665f",
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "the greater ms holds, though it grants more (not the narrower)",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800001, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800001, 0],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          }
+        }
+      },
+      "digest": "55a86853cb79721c",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "at an equal ms the greater counter holds, before the device",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": null,
+              "clock": [1793008800000, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 1],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 1],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "b9dc6db872c15afb",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "the counter carries into the ms: [T, 65535] lies below [T+1, 0]",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 65535],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800001, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "read",
+            "clock": [1793008800001, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "be2370125664270a",
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "at an equal clock the later device tag holds",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800000, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "read",
+            "clock": [1793008800000, 0],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          }
+        }
+      },
+      "digest": "10994f1cbfd99ac9",
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "at an equal clock the later device tag holds, though it grants more",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          }
+        }
+      },
+      "digest": "35c3ee5d6d666dd7",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "device tags in Unicode code point order: \"Z\" before \"_\" before \"a\"",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "ZZZZZZZZZZZZZZZZZZZZZZ"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800000, 0],
+              "device": "______________________"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": null,
+              "clock": [1793008800000, 0],
+              "device": "aaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": null,
+            "clock": [1793008800000, 0],
+            "device": "aaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      },
+      "digest": "a38890478e497f03",
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "device tags in code point order: \"-\" before \"0\"",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800000, 0],
+              "device": "----------------------"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "0000000000000000000000"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "0000000000000000000000"
+          }
+        }
+      },
+      "digest": "6f9fcb5b4fba8d87",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "a tie on a member: read before write",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "read",
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "9987a332e34e94d7",
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "a tie on a member: revoked before read",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": null,
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": null,
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "8d77bca2d9bacaf7",
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "a tie on a member: revoked before write",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": null,
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": null,
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "8d77bca2d9bacaf7",
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "a tie on a layer: read before inherit",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "layer:com.example.comments/1:member:bob": {
+              "value": null,
+              "clock": [1793008800001, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "layer:com.example.comments/1:member:bob": {
+              "value": "read",
+              "clock": [1793008800001, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "layer:com.example.comments/1:member:bob": {
+            "value": "read",
+            "clock": [1793008800001, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          },
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "6d06704435c1d57b",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "a tie on a layer: inherit before write",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "layer:com.example.comments/1:member:bob": {
+              "value": "write",
+              "clock": [1793008800001, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "layer:com.example.comments/1:member:bob": {
+              "value": null,
+              "clock": [1793008800001, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "layer:com.example.comments/1:member:bob": {
+            "value": null,
+            "clock": [1793008800001, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          },
+          "member:bob": {
+            "value": "read",
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "432566700e40ace7",
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "a tie on a layer: read before write",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "layer:com.example.comments/1:member:bob": {
+              "value": "write",
+              "clock": [1793008800001, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "layer:com.example.comments/1:member:bob": {
+              "value": "read",
+              "clock": [1793008800001, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "layer:com.example.comments/1:member:bob": {
+            "value": "read",
+            "clock": [1793008800001, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          },
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "6d06704435c1d57b",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "a tie on the pace: the longer interval",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "pace": {
+              "value": 30000,
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "pace": {
+              "value": 60000,
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "pace": {
+            "value": 60000,
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "0f0345aaf92bbe41",
+      "rights": {}
+    },
+    {
+      "name": "a tie on the pace: 30 s before none (0)",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "pace": {
+              "value": 30000,
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "pace": {
+              "value": 0,
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "pace": {
+            "value": 30000,
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "eb2b49af1f91aafa",
+      "rights": {}
+    },
+    {
+      "name": "the pace by the greater clock, though shorter",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "pace": {
+              "value": 60000,
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "pace": {
+              "value": 1000,
+              "clock": [1793008800001, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "pace": {
+            "value": 1000,
+            "clock": [1793008800001, 0],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          }
+        }
+      },
+      "digest": "2d56d05f9c494071",
+      "rights": {}
+    },
+    {
+      "name": "a pace taken back to none by a later decision",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "pace": {
+              "value": 30000,
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "pace": {
+              "value": 0,
+              "clock": [1793008800001, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "pace": {
+            "value": 0,
+            "clock": [1793008800001, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "a6bced3d2013d151",
+      "rights": {}
+    },
+    {
+      "name": "the same register twice",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "6e3aa4ee39e9981c",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "a revocation after a grant holds",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": null,
+              "clock": [1793008800001, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": null,
+            "clock": [1793008800001, 0],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          }
+        }
+      },
+      "digest": "7efc29c0c533df56",
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "a grant after a revocation holds: removal does not win",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": null,
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800001, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "read",
+            "clock": [1793008800001, 0],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          }
+        }
+      },
+      "digest": "9eecb48ef13a665f",
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "a revoked member holds no right on a layer",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": null,
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "layer:com.example.comments/1:member:bob": {
+              "value": "write",
+              "clock": [1793008800001, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "layer:com.example.comments/1:member:bob": {
+            "value": "write",
+            "clock": [1793008800001, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          },
+          "member:bob": {
+            "value": null,
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "7f1117e5841f52b4",
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        }
+      }
+    },
+    {
+      "name": "a member that reads the document may write on a layer",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "layer:com.example.comments/1:member:bob": {
+              "value": "write",
+              "clock": [1793008800001, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "layer:com.example.comments/1:member:bob": {
+            "value": "write",
+            "clock": [1793008800001, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          },
+          "member:bob": {
+            "value": "read",
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "b05f83e1cbe94812",
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "inherit on a layer: the permission on the document",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "layer:com.example.comments/1:member:bob": {
+              "value": null,
+              "clock": [1793008800001, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "layer:com.example.comments/1:member:bob": {
+            "value": null,
+            "clock": [1793008800001, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          },
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "740bfbb122fe1629",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "inherit by a later decision ends a restriction on the layer",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "layer:com.example.comments/1:member:bob": {
+              "value": "read",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "layer:com.example.comments/1:member:bob": {
+              "value": null,
+              "clock": [1793008800001, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "layer:com.example.comments/1:member:bob": {
+            "value": null,
+            "clock": [1793008800001, 0],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          },
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "499173d88a74c4bd",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "a clock a year ahead is held like any other: no receiver filters by its own time",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1824544800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800001, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "read",
+            "clock": [1824544800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "371d330c0d238907",
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "two clocks a year ahead, equal: the later device tag",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1824544800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1824544800000, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "write",
+            "clock": [1824544800000, 0],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          }
+        }
+      },
+      "digest": "e0b13e284faada07",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "a clock at the end of its range holds over every other",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [281474976710655, 65535],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [281474976710655, 65534],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "read",
+            "clock": [281474976710655, 65535],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "cb4f622e5737ec31",
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "three devices: the greatest clock holds, in any order",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800005, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": null,
+              "clock": [1793008800003, 0],
+              "device": "CCCCCCCCCCCCCCCCCCCCCC"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:bob": {
+            "value": "read",
+            "clock": [1793008800005, 0],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          }
+        }
+      },
+      "digest": "a42633f9f3243965",
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "only the close",
+      "frames": [
+        {
+          "closed": true,
+          "targets": {}
+        }
+      ],
+      "state": {
+        "closed": true,
+        "targets": {}
+      },
+      "digest": "588ff007304ed221",
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "unknown"
+        }
+      }
+    },
+    {
+      "name": "the close with registers in one frame",
+      "frames": [
+        {
+          "closed": true,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": true,
+        "targets": {
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "f419e816c1acf968",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "the close from two devices",
+      "frames": [
+        {
+          "closed": true,
+          "targets": {}
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "read",
+              "clock": [1793008800000, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        },
+        {
+          "closed": true,
+          "targets": {}
+        }
+      ],
+      "state": {
+        "closed": true,
+        "targets": {
+          "member:bob": {
+            "value": "read",
+            "clock": [1793008800000, 0],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          }
+        }
+      },
+      "digest": "47420b61537bc95b",
+      "rights": {
+        "bob": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        }
+      }
+    },
+    {
+      "name": "the close with its reason in one frame",
+      "frames": [
+        {
+          "closed": true,
+          "targets": {
+            "close-reason": {
+              "value": "finished",
+              "clock": [1793008800000, 0],
+              "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": true,
+        "targets": {
+          "close-reason": {
+            "value": "finished",
+            "clock": [1793008800000, 0],
+            "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+          }
+        }
+      },
+      "digest": "85f2a81ef37e01b8",
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "unknown"
+        }
+      }
+    },
+    {
+      "name": "a reason before the close is held, and the close follows",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "close-reason": {
+              "value": "continued",
+              "clock": [1793008800000, 0],
+              "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+            }
+          }
+        },
+        {
+          "closed": true,
+          "targets": {}
+        }
+      ],
+      "state": {
+        "closed": true,
+        "targets": {
+          "close-reason": {
+            "value": "continued",
+            "clock": [1793008800000, 0],
+            "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+          }
+        }
+      },
+      "digest": "2f959e9f812ea6d2",
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "unknown"
+        }
+      }
+    },
+    {
+      "name": "two reasons for the close: the greater clock holds",
+      "frames": [
+        {
+          "closed": true,
+          "targets": {
+            "close-reason": {
+              "value": "continued",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": true,
+          "targets": {
+            "close-reason": {
+              "value": "capacity-conflict",
+              "clock": [1793008801000, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": true,
+        "targets": {
+          "close-reason": {
+            "value": "capacity-conflict",
+            "clock": [1793008801000, 0],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          }
+        }
+      },
+      "digest": "a2ce48ce41db9ac6",
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "unknown"
+        }
+      }
+    },
+    {
+      "name": "a tie on the reason for the close: the greater string in code point order",
+      "frames": [
+        {
+          "closed": true,
+          "targets": {
+            "close-reason": {
+              "value": "continued",
+              "clock": [1793008800000, 0],
+              "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+            }
+          }
+        },
+        {
+          "closed": true,
+          "targets": {
+            "close-reason": {
+              "value": "finished",
+              "clock": [1793008800000, 0],
+              "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": true,
+        "targets": {
+          "close-reason": {
+            "value": "finished",
+            "clock": [1793008800000, 0],
+            "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+          }
+        }
+      },
+      "digest": "85f2a81ef37e01b8",
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "unknown"
+        }
+      }
+    },
+    {
+      "name": "a tie on the reason for the close by code points, not UTF-16 code units: U+1F600 holds over U+FF61",
+      "frames": [
+        {
+          "closed": true,
+          "targets": {
+            "close-reason": {
+              "value": "｡",
+              "clock": [1793008800000, 0],
+              "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+            }
+          }
+        },
+        {
+          "closed": true,
+          "targets": {
+            "close-reason": {
+              "value": "😀",
+              "clock": [1793008800000, 0],
+              "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": true,
+        "targets": {
+          "close-reason": {
+            "value": "😀",
+            "clock": [1793008800000, 0],
+            "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+          }
+        }
+      },
+      "digest": "7a4f1f572b622460",
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "unknown"
+        }
+      }
+    },
+    {
+      "name": "a tie on the reason for the close by code points, not UTF-16 code units: U+1F600 holds over U+FFFD",
+      "frames": [
+        {
+          "closed": true,
+          "targets": {
+            "close-reason": {
+              "value": "�",
+              "clock": [1793008800000, 0],
+              "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+            }
+          }
+        },
+        {
+          "closed": true,
+          "targets": {
+            "close-reason": {
+              "value": "😀",
+              "clock": [1793008800000, 0],
+              "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": true,
+        "targets": {
+          "close-reason": {
+            "value": "😀",
+            "clock": [1793008800000, 0],
+            "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+          }
+        }
+      },
+      "digest": "7a4f1f572b622460",
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "unknown"
+        }
+      }
+    },
+    {
+      "name": "an application's reason for the close, named as an extension",
+      "frames": [
+        {
+          "closed": true,
+          "targets": {
+            "close-reason": {
+              "value": "com.example.moved-elsewhere/1",
+              "clock": [1793008800000, 0],
+              "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": true,
+        "targets": {
+          "close-reason": {
+            "value": "com.example.moved-elsewhere/1",
+            "clock": [1793008800000, 0],
+            "device": "Q0FGRS1jcmVhdG9yLTAwMQ"
+          }
+        }
+      },
+      "digest": "7c763deca81b2962",
+      "rights": {
+        "bob": {
+          "document": "unknown",
+          "com.example.comments/1": "unknown"
+        }
+      }
+    },
+    {
+      "name": "a frame without the close does not reopen",
+      "frames": [
+        {
+          "closed": true,
+          "targets": {}
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": true,
+        "targets": {
+          "member:bob": {
+            "value": "write",
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "f419e816c1acf968",
+      "rights": {
+        "bob": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "a MemberId with dots and one beyond ASCII",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:@bob:example.org": {
+              "value": "read",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:zoë": {
+              "value": "write",
+              "clock": [1793008800000, 1],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "member:@bob:example.org": {
+            "value": "read",
+            "clock": [1793008800000, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          },
+          "member:zoë": {
+            "value": "write",
+            "clock": [1793008800000, 1],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      },
+      "digest": "06a3642fb7245c35",
+      "rights": {
+        "@bob:example.org": {
+          "document": "read",
+          "com.example.comments/1": "read"
+        },
+        "zoë": {
+          "document": "write",
+          "com.example.comments/1": "write"
+        }
+      }
+    },
+    {
+      "name": "several targets from two devices in frames of several registers",
+      "frames": [
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": "write",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            },
+            "member:carol": {
+              "value": "read",
+              "clock": [1793008800000, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            },
+            "pace": {
+              "value": 30000,
+              "clock": [1793008800000, 1],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:carol": {
+              "value": "write",
+              "clock": [1793008800010, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            },
+            "layer:com.example.comments/1:member:carol": {
+              "value": "read",
+              "clock": [1793008800010, 1],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        },
+        {
+          "closed": false,
+          "targets": {
+            "member:bob": {
+              "value": null,
+              "clock": [1793008800020, 0],
+              "device": "AAAAAAAAAAAAAAAAAAAAAA"
+            },
+            "pace": {
+              "value": 60000,
+              "clock": [1793008800005, 0],
+              "device": "BBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        }
+      ],
+      "state": {
+        "closed": false,
+        "targets": {
+          "layer:com.example.comments/1:member:carol": {
+            "value": "read",
+            "clock": [1793008800010, 1],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          },
+          "member:bob": {
+            "value": null,
+            "clock": [1793008800020, 0],
+            "device": "AAAAAAAAAAAAAAAAAAAAAA"
+          },
+          "member:carol": {
+            "value": "write",
+            "clock": [1793008800010, 0],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          },
+          "pace": {
+            "value": 60000,
+            "clock": [1793008800005, 0],
+            "device": "BBBBBBBBBBBBBBBBBBBBBB"
+          }
+        }
+      },
+      "digest": "d252297caf1a202f",
+      "rights": {
+        "bob": {
+          "document": "revoked",
+          "com.example.comments/1": "revoked"
+        },
+        "carol": {
+          "document": "write",
+          "com.example.comments/1": "read"
+        },
+        "dave": {
+          "document": "unknown",
+          "com.example.comments/1": "unknown"
+        }
+      }
+    }
+  ]
+}

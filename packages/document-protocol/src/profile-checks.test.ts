@@ -123,7 +123,7 @@ describe("CRDT bytes the profile cannot decode (FRM-6, FRM-7, PRF-1)", () => {
     await port.send(
       DOCUMENT_ID,
       "bob",
-      frame({ kind: "edit", update: bytesToBase64(update.slice(0, -1)), due: 0 }),
+      frame({ kind: "edit", update: bytesToBase64(update.slice(0, -1)) }),
     );
     await creator.sync();
     expect(getPlainText(getFragment(creator.document))).toBe("Base");
@@ -213,8 +213,9 @@ describe("CRDT bytes the profile cannot decode (FRM-6, FRM-7, PRF-1)", () => {
       frame({
         kind: "resync-request",
         requestId: "00000000000000aa",
-        control: null,
+        controlClock: null,
         controlDigest: null,
+        all: false,
         force: true,
         stateVector: NOT_A_STATE_VECTOR,
         stateDigest: "0000000000000000",
@@ -244,7 +245,7 @@ describe("CRDT bytes the profile cannot decode (FRM-6, FRM-7, PRF-1)", () => {
       "bob",
       frame({
         kind: "heartbeat",
-        control: null,
+        controlClock: null,
         controlDigest: null,
         stateVector: NOT_A_STATE_VECTOR,
         stateDigest: "0000000000000000",
@@ -266,7 +267,7 @@ describe("CRDT bytes the profile cannot decode (FRM-6, FRM-7, PRF-1)", () => {
     await port.send(
       DOCUMENT_ID,
       "bob",
-      frame({ kind: "edit", update: bytesToBase64(new Uint8Array([...update, 0])), due: 0 }),
+      frame({ kind: "edit", update: bytesToBase64(new Uint8Array([...update, 0])) }),
     );
     await creator.sync();
     expect(alice.reported).toEqual([
@@ -283,7 +284,7 @@ describe("CRDT bytes the profile cannot decode (FRM-6, FRM-7, PRF-1)", () => {
       "bob",
       frame({
         kind: "heartbeat",
-        control: null,
+        controlClock: null,
         controlDigest: null,
         stateVector: bytesToBase64(trailing),
         stateDigest: "0000000000000000",
@@ -342,7 +343,6 @@ describe("a rejection names its sender (FRM-7, VER-4)", () => {
         kind: "edit",
         documentId: DOCUMENT_ID,
         update: "AAA=",
-        due: 0,
       }),
     );
     await creator.sync();
@@ -382,8 +382,9 @@ describe("answering requests one at a time (RSY-9, §1.7 item 11)", () => {
       frame({
         kind: "resync-request",
         requestId: "00000000000000bb",
-        control: null,
+        controlClock: null,
         controlDigest: null,
+        all: false,
         force: true,
         stateVector: bytesToBase64(Y.encodeStateVector(odd)),
         stateDigest: "0000000000000000",
@@ -405,6 +406,63 @@ describe("answering requests one at a time (RSY-9, §1.7 item 11)", () => {
       }),
     ]);
     // Reported once: the request is not kept to fail again.
+    await creator.sync();
+    expect(alice.reported).toHaveLength(1);
+  });
+
+  it("reports, once and with the request it was for, an answer the profile fails to compute, and still answers the next", async () => {
+    // A profile that compares every state vector but fails on one while computing the state since it.
+    const base = profileFor(YJS_PARAGRAPHS_1);
+    const FLAKY: DocumentProfile = {
+      ...base,
+      id: "com.example.flaky/1",
+      encodeStateSince: (document, stateVector) => {
+        if (Y.decodeStateVector(stateVector).has(4242)) {
+          throw new Error("this profile cannot compute the state since client 4242");
+        }
+        return base.encodeStateSince(document, stateVector);
+      },
+    };
+    const options = { ...OPTIONS, profile: FLAKY.id, profiles: [FLAKY] };
+    const port = new InMemoryMessengerPort();
+    const alice = reporter();
+    const creator = await DocumentEngine.create(DOCUMENT_ID, "alice", port, alice.onError, options);
+    creator.edit((fragment) => insertPlainText(fragment, 0, "Base"));
+    await creator.sync();
+    const odd = new Y.Doc();
+    odd.clientID = 4242;
+    odd.getText("x").insert(0, "x");
+    await port.send(
+      DOCUMENT_ID,
+      "mallory",
+      frame({
+        kind: "resync-request",
+        requestId: "00000000000000cc",
+        controlClock: null,
+        controlDigest: null,
+        all: false,
+        force: true,
+        stateVector: bytesToBase64(Y.encodeStateVector(odd)),
+        stateDigest: "0000000000000000",
+      }),
+    );
+    await creator.setMembership("carol", "write");
+    const carol = await DocumentEngine.join(DOCUMENT_ID, "carol", port, () => {}, {
+      ...options,
+      creatorMemberId: "alice",
+    });
+    await expect(creator.sync()).resolves.toBeDefined();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await carol.sync();
+    expect(carol.hasCompletedBootstrap).toBe(true);
+    expect(getPlainText(getFragment(carol.document))).toBe("Base");
+    expect(alice.reported).toEqual([
+      expect.objectContaining({
+        context: "broadcast",
+        message: expect.stringMatching(/00000000000000cc.*mallory.*client 4242/),
+      }),
+    ]);
+    // Reported once: the request is let go, not kept to fail again.
     await creator.sync();
     expect(alice.reported).toHaveLength(1);
   });

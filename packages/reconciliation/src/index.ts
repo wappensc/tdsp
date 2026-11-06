@@ -1,5 +1,6 @@
 import * as Y from "yjs";
 import { paragraphTexts } from "./attribution";
+import { stateVectorWithinBounds, updateWithinBounds } from "./update-bounds";
 
 /**
  * The document model of the profile `yjs-paragraphs/1` (SPECIFICATION.md Appendix A): a thin
@@ -138,13 +139,50 @@ export function transact(doc: ReconciledDocument, mutator: () => void, origin?: 
   doc.transact(mutator, origin);
 }
 
+/** A delete set by client: each client's ranges, ascending and merged. */
+type Deletions = Iterable<
+  readonly [number, readonly { readonly clock: number; readonly len: number }[]]
+>;
+
 /**
- * What `doc` deleted, canonically (Appendix A): its state since its own state vector, an update
- * of no structs and its whole delete set, the same bytes for the same state whatever the order
- * the updates came in, merged or not, garbage-collected or not (verified for each of these).
+ * What `doc` has applied of deletions, from its items (Appendix A, LOS-24): nothing it holds for
+ * missing predecessors (LOS-23). Yjs's `encodeStateAsUpdate` adds those held structs and ranges,
+ * so a digest over it would differ from that of every replica holding the same.
+ */
+function appliedDeletions(doc: ReconciledDocument): Deletions {
+  return Y.createDeleteSetFromStructStore(doc.store).clients;
+}
+
+/**
+ * An update of no structs and `deletions`, as Yjs writes a delete set in update encoding version
+ * 1: `00`, the number of clients, then each client in descending order of its id with its ranges,
+ * every number a varuint (Appendix A). A client without ranges is left out.
+ */
+function encodeDeletionSet(deletions: Deletions): Uint8Array {
+  const clients = [...deletions]
+    .filter(([, items]) => items.length > 0)
+    .sort((a, b) => b[0] - a[0]);
+  const bytes: number[] = [0];
+  writeVarUint(bytes, clients.length);
+  for (const [client, items] of clients) {
+    writeVarUint(bytes, client);
+    writeVarUint(bytes, items.length);
+    for (const item of items) {
+      writeVarUint(bytes, item.clock);
+      writeVarUint(bytes, item.len);
+    }
+  }
+  return Uint8Array.from(bytes);
+}
+
+/**
+ * What `doc` deleted, canonically (Appendix A): an update of no structs and the delete set of
+ * its applied items, the same bytes for the same state whatever the order the updates came in,
+ * merged or not, garbage-collected or not (verified for each of these), and whatever it holds
+ * for missing predecessors (LOS-23).
  */
 export function encodeDeletions(doc: ReconciledDocument): Uint8Array {
-  return Y.encodeStateAsUpdate(doc, Y.encodeStateVector(doc));
+  return encodeDeletionSet(appliedDeletions(doc));
 }
 
 /**
@@ -160,29 +198,16 @@ export function encodeDeletionsWithin(
 ): Uint8Array {
   const counted = Y.decodeStateVector(stateVector);
   const clients: [number, { clock: number; len: number }[]][] = [];
-  for (const [client, items] of Y.decodeUpdate(encodeDeletions(doc)).ds.clients) {
+  for (const [client, items] of appliedDeletions(doc)) {
     const limit = counted.get(client) ?? 0;
-    const kept = items
-      .filter((item) => item.clock < limit)
-      .map((item) => ({ clock: item.clock, len: Math.min(item.len, limit - item.clock) }));
-    if (kept.length > 0) {
-      clients.push([client, kept]);
-    }
+    clients.push([
+      client,
+      items
+        .filter((item) => item.clock < limit)
+        .map((item) => ({ clock: item.clock, len: Math.min(item.len, limit - item.clock) })),
+    ]);
   }
-  // As Yjs writes a delete set in update encoding version 1: no structs, the number of clients,
-  // then each client in descending order of its id with its ranges, every number a varuint.
-  clients.sort((a, b) => b[0] - a[0]);
-  const bytes: number[] = [0];
-  writeVarUint(bytes, clients.length);
-  for (const [client, items] of clients) {
-    writeVarUint(bytes, client);
-    writeVarUint(bytes, items.length);
-    for (const item of items) {
-      writeVarUint(bytes, item.clock);
-      writeVarUint(bytes, item.len);
-    }
-  }
-  return Uint8Array.from(bytes);
+  return encodeDeletionSet(clients);
 }
 
 /** A variable-length unsigned integer as Yjs (lib0) writes one: seven bits a byte, lowest first. */
@@ -195,12 +220,33 @@ function writeVarUint(bytes: number[], value: number): void {
   bytes.push(rest);
 }
 
-export function encodeUpdate(doc: ReconciledDocument): Uint8Array {
-  return Y.encodeStateAsUpdate(doc);
+/**
+ * What `doc` applied since `stateVector`, or all it applied (Appendix A, "Updates a state vector
+ * lacks"): nothing it holds for missing predecessors (LOS-23), which would do nothing at the
+ * receiver but be held there as well. Yjs's `encodeStateAsUpdate` adds those held structs and
+ * ranges, and Yjs exports no writer without them, so they are set aside while it writes and put
+ * back unchanged; nothing runs in between.
+ */
+function encodeApplied(doc: ReconciledDocument, stateVector?: Uint8Array): Uint8Array {
+  const { pendingStructs, pendingDs } = doc.store;
+  doc.store.pendingStructs = null;
+  doc.store.pendingDs = null;
+  try {
+    return Y.encodeStateAsUpdate(doc, stateVector);
+  } finally {
+    doc.store.pendingStructs = pendingStructs;
+    doc.store.pendingDs = pendingDs;
+  }
 }
 
+/** The whole state `doc` applied, as one update (Appendix A, PRF-1 item 4). */
+export function encodeUpdate(doc: ReconciledDocument): Uint8Array {
+  return encodeApplied(doc);
+}
+
+/** What `doc` applied that `stateVector` lacks (Appendix A, PRF-1 item 4): an answer's update (RSY-8). */
 export function encodeUpdateSince(doc: ReconciledDocument, stateVector: Uint8Array): Uint8Array {
-  return Y.encodeStateAsUpdate(doc, stateVector);
+  return encodeApplied(doc, stateVector);
 }
 
 export function encodeStateVector(doc: ReconciledDocument): Uint8Array {
@@ -256,18 +302,29 @@ export function lacksUpdatesOf(doc: ReconciledDocument, remoteStateVector: Uint8
 }
 
 /**
- * Whether `stateVector` holds every item `update` inserts: for each client the update carries,
- * the state vector reaches the clock after its last struct (`Y.parseUpdateMeta`'s `to`). What an
- * update deletes no state vector counts, so an update that only deletes is held by every one.
+ * Of the clients `remoteStateVector` counts more items of than `doc` holds, the clock it names for
+ * each: whose updates a replica lacks, by its writer.
  */
-export function stateVectorHolds(stateVector: Uint8Array, update: Uint8Array): boolean {
-  const held = Y.decodeStateVector(stateVector);
-  for (const [client, clock] of Y.parseUpdateMeta(update).to) {
-    if ((held.get(client) ?? 0) < clock) {
-      return false;
+export function clientsAhead(
+  doc: ReconciledDocument,
+  remoteStateVector: Uint8Array,
+): Map<number, number> {
+  const local = Y.decodeStateVector(Y.encodeStateVector(doc));
+  const ahead = new Map<number, number>();
+  for (const [client, clock] of Y.decodeStateVector(remoteStateVector)) {
+    if ((local.get(client) ?? 0) < clock) {
+      ahead.set(client, clock);
     }
   }
-  return true;
+  return ahead;
+}
+
+/**
+ * Of each client `update` inserts items of, the clock after its last one (`Y.parseUpdateMeta`'s
+ * `to`): how far the update carries that writer. An update that only deletes names none.
+ */
+export function updateClocks(update: Uint8Array): Map<number, number> {
+  return new Map(Y.parseUpdateMeta(update).to);
 }
 
 /**
@@ -346,9 +403,14 @@ export function isEmptyStateVector(stateVector: Uint8Array): boolean {
  * `Y.applyUpdate` integrates an update's structs before it reads its delete set, so bytes that fail
  * there leave part of themselves in the document; checked first, nothing of them is applied
  * (FRM-6). Yjs reads an update as far as it goes and ignores what follows; a byte after it is
- * refused, so that one byte string has one reading (§4.4).
+ * refused, so that one byte string has one reading (§4.4). The bounds Yjs does not keep — no
+ * variable-length integer above 2^53 − 1, no JSON content or `Any` value nested more than 32 levels —
+ * are walked first, so Yjs's recursive reader never meets deeper nesting (Appendix A).
  */
 export function isUpdate(update: Uint8Array): boolean {
+  if (!updateWithinBounds(update)) {
+    return false;
+  }
   // Yjs's own reader, given a decoder whose position this one can see afterwards.
   let read: { readonly arr: Uint8Array; readonly pos: number } | undefined;
   class Watched extends Y.UpdateDecoderV1 {
@@ -368,8 +430,9 @@ export function isUpdate(update: Uint8Array): boolean {
 /**
  * Whether `stateVector` reads as a Yjs state vector to its last byte (PRF-1 items 3 and 9, Appendix A):
  * the number of entries, then a client id and a clock for each, every one a variable-length
- * unsigned integer. A responder keeps a request to answer later (RSY-9), so a vector that fails
- * only when it is compared would fail every answer after it.
+ * unsigned integer no larger than 2^53 − 1, which lib0 checks only between bytes. A responder keeps
+ * a request to answer later (RSY-9), so a vector that fails only when it is compared would fail
+ * every answer after it.
  */
 export function isStateVector(stateVector: Uint8Array): boolean {
   try {
@@ -377,30 +440,7 @@ export function isStateVector(stateVector: Uint8Array): boolean {
   } catch {
     return false;
   }
-  let at = 0;
-  const readVarUint = (): number | undefined => {
-    let value = 0;
-    let factor = 1;
-    while (at < stateVector.length) {
-      const byte = stateVector[at++] as number;
-      value += (byte & 0x7f) * factor;
-      if (byte < 0x80) {
-        return value;
-      }
-      factor *= 128;
-    }
-    return undefined;
-  };
-  const entries = readVarUint();
-  if (entries === undefined) {
-    return false;
-  }
-  for (let i = 0; i < entries * 2; i += 1) {
-    if (readVarUint() === undefined) {
-      return false;
-    }
-  }
-  return at === stateVector.length;
+  return stateVectorWithinBounds(stateVector);
 }
 
 export function applyUpdate(doc: ReconciledDocument, update: Uint8Array, origin?: unknown): void {

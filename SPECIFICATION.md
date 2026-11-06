@@ -1,6 +1,6 @@
 # TDSP — Together Document Sync Protocol
 
-**Specification · TDSP 2.0 (draft) · 24 October 2026**
+**Specification · TDSP 2.0 (draft) · 4 November 2026**
 
 ## 1. Introduction
 
@@ -13,7 +13,7 @@ There is no TDSP server, no WebSocket and no peer-to-peer connection: every
 byte of document data that passes between participants travels as a message of
 that messenger, and every participant's engine merges what arrives locally.
 
-Two consequences shape everything below:
+Three consequences shape everything below:
 
 - **Confidentiality and sender authentication are inherited, not added.** A
   TDSP document is exactly as confidential as the channel it rides on, and a
@@ -23,9 +23,23 @@ Two consequences shape everything below:
   which email is no conformant binding (EML-9).
 - **The transport is assumed to be poor.** Messages may be delayed by tens of
   seconds, duplicated, reordered, rate-limited, size-limited and lost, and a
-  newly joined participant may see nothing that was sent before it joined.
-  Every mechanism in this specification is built for that transport; a better
-  one simply converges faster.
+  newly joined participant may see nothing that was sent before it joined. Loss
+  and reordering are rare, though, and TDSP heals a loss at the next occasion —
+  the typical one, a lost last change, by the report that follows each phase of
+  writing ([§9.3](#93-the-report)). Every mechanism in this specification is built
+  for that transport; a better one simply converges faster.
+- **The participants cooperate.** TDSP is a protocol for a small group of people
+  who edit a document together, each running software that follows this
+  specification. It is built for what goes wrong without anyone intending it —
+  lost, duplicated and reordered messages, devices offline for days, crashes,
+  restored copies, clocks that are off — and assumes nothing worse of the
+  participants ([§15.2](#152-what-tdsp-assumes)). A participant whose software
+  ignores these rules can write what its permission forbids, change rights or
+  close the document for everyone, and TDSP neither prevents nor detects it
+  ([§15.4](#154-what-is-not-guaranteed)). Who takes part at all is the
+  messenger's to decide ([§6.6](#66-who-takes-part), LIF-9): a group protects
+  itself by removing such a participant from the channel and continuing in a new
+  document.
 
 The name is deliberately about the *document*, not the carrier: the carrier is
 replaceable ([§2.1](#21-layers)).
@@ -36,15 +50,21 @@ This is a draft of **TDSP 2.0**, the core of the protocol. It changes the wire o
 TDSP 1.x incompatibly, in four places, and keeps every use case 1.x covers
 ([§1.7](#17-what-must-stay)):
 
-- **Control state is a set of operations** ([§7](#7-control-state)), merged like
-  the content, instead of a numbered log with one writer. Each device of the
-  creator counts its own operations; the result depends on the set, not on the
-  order. 1.x's gap-free sequence, its outbox, its conflicts under one number and
-  its creator device that waits without control state go: a new device of the
-  creator decides at once ([§7.6](#76-a-new-device-of-the-creator)).
+- **Control state is a register per target** ([§7](#7-control-state)), merged
+  like the content, instead of a numbered log with one writer. Every device of the
+  creator decides under a tag of its own and orders each decision by a clock; of
+  two decisions on one target the later holds, and the result depends on the set,
+  not on the order. 1.x's gap-free sequence, its outbox, its conflicts under one
+  number go. Under the assumption of cooperating participants
+  ([§1.1](#11-what-tdsp-is)), any participant can bring a new device up to date,
+  its rights included: each passes on what reached it of the creator's decisions,
+  and the device merges it as it merges the creator's own
+  ([§7.5](#75-the-control-snapshot)). The creator's devices hold her state: a new
+  device of hers takes it only from another of them or from a backup, and where
+  none is left the document is closed and continued as a new one
+  ([§7.6](#76-a-new-device-of-the-creator)).
 - **No shared sync policy** ([§9.1](#91-pacing)): the creator sets one number for
-  everyone, the *pace*; everything else about pacing is each participant's own,
-  and every frame that owes a follow-up says when it will come (`due`).
+  everyone, the *pace*; everything else about pacing is each participant's own.
 - **Extension fields** ([§4.4](#44-decoding-and-rejection)): a field whose name
   contains `.` is ignored when unknown, unless the frame lists it in `crit`, so a
   later addition needs no new major version.
@@ -54,15 +74,16 @@ TDSP 1.x incompatibly, in four places, and keeps every use case 1.x covers
 
 The transport contract gains an optional cursor and a bridge instance id
 ([§3.2](#32-operations)), a fifth send failure, `needs-person`
-([§3.4](#34-send-failures)), and its transport profile becomes bounds and one
-suggested pacing ([§3.5](#35-transport-profile)); none of these travels between
-participants. An application may carry a document between one person's devices
-through another service (ARC-5), the one connection beyond the bridge that ARC-2
-allows. The bridges and the messenger bindings, and the optional local bridge
-interface, are documents of their own ([bindings/](bindings/)), versioned apart;
-their envelope is unchanged. What changed from 1.x, requirement by requirement, is
-[Appendix G](#appendix-g-changes-from-tdsp-1x). A later version changes the wire
-only as [§14](#14-versioning-and-extensibility) describes.
+([§3.4](#34-send-failures)), its transport profile becomes bounds and one suggested
+pacing ([§3.5](#35-transport-profile)), and a transport carries frames of at least
+4 MiB (TRN-23); none of these travels between participants. An application may carry
+a document between one person's devices through another service (ARC-5), the one
+connection beyond the bridge that ARC-2 allows. The bridges and the messenger
+bindings, and the optional local bridge interface, are documents of their own
+([bindings/](bindings/)), versioned apart; their envelope is unchanged. What changed
+from 1.x, requirement by requirement, is [Appendix
+G](#appendix-g-changes-from-tdsp-1x). A later version changes the wire only as
+[§14](#14-versioning-and-extensibility) describes.
 
 Until TDSP releases 2.0, frames and invitations of this draft carry a draft
 marker instead of the version `2` (VER-3), so that no draft frame passes for
@@ -75,15 +96,20 @@ behind it.
 
 This document is self-contained: every requirement states its reason. It
 depends on no other document except the standards it cites (RFC 2119, RFC 8174,
-RFC 3629, RFC 4648, RFC 5234, RFC 7493, RFC 8259, RFC 8785, FIPS 180-4 and the
-WHATWG URL Standard) and, for the one profile it defines, the Yjs encodings named
-in [Appendix A](#appendix-a-profile-yjs-paragraphs1); a bridge or adapter
+RFC 3629, RFC 4648, RFC 5234, RFC 7493, RFC 8259, RFC 8785, FIPS 180-4, the
+WHATWG URL Standard, and ECMAScript (ECMA-262) for what its `\s` and `JSON.parse`
+mean where [§11.3](#113-invitation-as-a-link) and [Appendix A](#appendix-a-profile-yjs-paragraphs1)
+name them) and, for the one profile it defines, Yjs update encoding
+version 1 as [Appendix A](#appendix-a-profile-yjs-paragraphs1) pins it; a bridge or adapter
 implementer also reads the binding of their messenger ([bindings/](bindings/)).
+[§14](#14-versioning-and-extensibility) lists each part's version, and which parts
+stay drafts after the release.
 A reference implementation exists; [Appendix F](#appendix-f-reference-implementation)
 names its parts. Where it deviates from this document, this document states the
-intended behaviour. No second, independently written implementation has yet been
-checked against the published test vectors ([§3.6](#36-conformance-suite)), so
-interoperability is specified, not yet demonstrated.
+intended behaviour. A second reading of the text that is no engine passes the
+published test vectors ([§3.6](#36-conformance-suite), Appendix F), but no second,
+independently written engine has yet exchanged frames with the reference, so
+interoperability between engines is specified, not yet demonstrated.
 
 ### 1.3 Requirement language
 
@@ -159,11 +185,13 @@ across a process boundary through it, and no one else.
 | **Piece** | A part of an update its profile split off, itself an update ([§9.4](#94-changes-larger-than-one-message)) |
 | **Layer** | Data beside a document's content — comments, review notes — that every engine keeps and passes on, named by a layer id ([§5.6](#56-layers)) |
 | **State vector** | A compact summary of which updates a CRDT replica has seen |
-| **Control state** | A document's membership map, rights on layers, closed flag and pace, set only by the creator, as a set of control operations ([§7](#7-control-state)) |
-| **Target** | What one control operation decides about: a member, a member's right on a layer, the close or the pace ([§7.1](#71-what-control-state-is)) |
-| **Creator device** | A device of the creator, named by a random **device tag**; a device that lost its state is a new device ([§7.2](#72-operations)) |
-| **Control operation** | One decision of one creator device about one target, numbered by that device's own **counter** ([§7.2](#72-operations)) |
-| **Control vector** | For each creator device, the highest counter held without a gap ([§7.4](#74-holes-and-the-control-vector)) |
+| **Control state** | A document's membership map, rights on layers, closed flag, pace and reason for the close, set only by the creator, as a register per target and a closed flag ([§7](#7-control-state)) |
+| **Target** | What a decision is about: a member, a member's right on a layer, the pace, or the reason for the close ([§7.1](#71-what-control-state-is)) |
+| **Creator device** | A device of the creator, named by a random **device tag**; a device that lost its state is a new device ([§7.2](#72-registers-and-the-clock)) |
+| **Decision, register** | One decision of one creator device about one target; a **register** holds the latest on its target, with the decision's value, clock and device ([§7.2](#72-registers-and-the-clock)) |
+| **Clock** | A pair `[ms, counter]` that orders decisions ([§7.2](#72-registers-and-the-clock)) |
+| **Control clock** | The greatest clock among the registers a participant holds ([§7](#7-control-state)) |
+| **Bootstrapped** | A device that holds the document's control state as it was passed on to it, or that it created: by creating the document, by merging an answer to its own request that carried one — on a device of the creator, only another device of the creator's —, by restoring a bootstrapped state — on a device that is not the creator's only as CTL-41 allows —, or, on a device of the creator, by being carried one from another device of the creator (ARC-5; RSY-14) |
 | **Pace** | The shortest interval between two messages one engine sends for a document; set by the creator ([§9.1](#91-pacing)) |
 | **Pacing** | The five numbers that govern when an engine sends; each participant's own ([§9.1](#91-pacing)) |
 | **Transport profile** | A bridge's statement of its messenger's bounds and suggested pacing ([§3.5](#35-transport-profile)) |
@@ -183,17 +211,33 @@ across a process boundary through it, and no one else.
   No message this specification defines needs more than a handful of levels.
 - Base64 is the standard alphabet with padding (RFC 4648 §4), and only its
   canonical form: the bits the padding discards are zero, so one text encodes one
-  byte string. A device tag is base64url without padding (RFC 4648 §5).
+  byte string. A device tag is base64url without padding (RFC 4648 §5) and the
+  one exception to that form: 22 characters of its alphabet, compared as a
+  string, the four bits its last character carries beyond 16 bytes unchecked.
 - Strings are **UTF-8** (RFC 3629). A length "in bytes" is the length of that
   UTF-8 encoding; a length "in characters" counts Unicode code points.
-- An integer field is a JSON number without a fraction or an exponent.
+- An integer field is a JSON number written as digits alone, without a sign, a
+  fraction or an exponent: `-0`, `1.0` and `1e3` are none.
 - A grammar is ABNF (RFC 5234).
-- A duration named `…Ms` is in milliseconds.
+- A duration named `…Ms` is in milliseconds; SND-25 says on which clock it is
+  measured.
 
 - **JSN-1** · *all* — A receiver of a JSON text this specification defines SHOULD
   find out in one pass over the text whether it nests deeper than 32 levels,
   before it hands the text to a parser that recurses once per level.
   *Rationale:* such a parser can exhaust its stack on a few kilobytes.
+- **SND-25** · *engine* — An engine MUST measure every duration and wait this
+  specification sets — a floor, a back-off, a request's expiry, a turn, a wait for
+  evidence, how long something is kept — on a clock that does not run back, not as
+  the difference of two wall-clock readings. A jump of the wall clock forward MAY
+  count as time that passed. Only CTL-45's control clock reads the wall clock
+  itself, by rules of its own for a wall clock that jumps back; what an engine
+  reports to its application it MAY state on the wall clock.
+  *Rationale:* a time service may set the wall clock back. Measured as the
+  difference of two wall-clock readings, every such span would last as long again
+  as the clock went back: on a wall clock set back an hour, a request would stay
+  outstanding, a turn come and evidence count an hour late, and the next message,
+  a decision included, wait that hour.
 
 ### 1.7 What must stay
 
@@ -213,8 +257,9 @@ against.
    invitation as a link or a message.
 5. **Loss, duplicates, reordering**: convergence, loss evidence, healing by
    resync; no acknowledgements.
-6. **One member on several devices**, the creator included; an own device brings
-   a new device up to date while the creator is offline.
+6. **One member on several devices**, the creator included; any participant
+   brings a new device up to date while the creator is offline, its rights
+   included.
 7. **Persistence**: the creator restarts with its control state; any member
    restarts with persisted content shown at once; undistributed changes stay
    visible.
@@ -348,31 +393,28 @@ the bridge.** Permissions are such a rule. A message size limit is a fact.
   and MUST use for it only storage through which no one but the person, and the
   provider of that storage, reads or writes the document. An application that
   carries the control state of a device of the creator MUST have the receiving
-  device continue under a new tag of its own (CTL-20),
-  never under a tag the carried state holds: it gives that state to its engine as
-  a snapshot carried from another device of the creator (CTL-25), not as the
-  device's own persisted state (CTL-26), and with it whether that state was a
-  basis there (CTL-28).
-  *Rationale:* a person's own devices are one participant, so ARC-1's reason —
-  that confidentiality and sender authentication between participants come from
-  the messenger — does not reach them; a person who uses several devices needs
-  their documents on each, and a messenger without history cannot bring a new
-  device up to date by itself. What the other service changes is where a copy
-  lies, and TDSP protects nothing beyond the channel
-  ([§15.4](#154-what-is-not-guaranteed)): the person has to know which service
-  that is. A device that went on under a tag the carried state holds would decide
-  under one tag with the device the state came from; CTL-24 notices that only once
-  one of them receives what the other issued under it — and where both decided
-  first, as a collision, which perhaps only members see (CTL-31) — and then
-  demands a new tag anyway. The carried state is the creator's word only as far as
-  the service keeps it so, not because a messenger authenticated it: whoever can
-  write there, its provider included, can hand the creator's device operations
-  it then passes on as its own ([§15.3](#153-what-tdsp-enforces-itself)). A
-  member's control state is the creator's operations as its engine received them;
+  device continue under a new tag of its own (CTL-20), never under a tag the carried
+  state holds: it gives that state to its engine as a snapshot carried from another
+  device of the creator (CTL-25), not as the device's own persisted state (CTL-26),
+  and with it whether that state was bootstrapped there (RSY-14).
+  *Rationale:* a person's own devices are one participant, so ARC-1's reason — that
+  confidentiality and sender authentication between participants come from the
+  messenger — does not reach them; a person who uses several devices needs their
+  documents on each, and a messenger without history cannot bring a new device up to
+  date by itself. What the other service changes is where a copy lies, and TDSP
+  protects nothing beyond the channel ([§15.4](#154-what-is-not-guaranteed)): the
+  person has to know which service that is. A device that went on under a tag the
+  carried state holds would decide under one tag with the device the state came
+  from: the two would meet where both decide at one clock, which CTL-22 settles
+  alike for every receiver, though their registers still converge. A tag of its own
+  spares that and costs nothing. The carried state holds the creator's decisions
+  only as far as the service keeps it so, not because a messenger authenticated it:
+  whoever can write there, its provider included, can hand the creator's device
+  registers it then passes on as its own ([§15.3](#153-what-tdsp-enforces-itself)).
+  A member's control state is the creator's registers as its engine received them;
   carried through another service it would be that service's word, and a member's
-  engine takes control state only from the channel (CTL-25), from the creator or
-  from another device of its own member (RSY-8), or, on the same device, from what
-  it persisted (CTL-39).
+  engine takes control state only from the channel (CTL-25) or, on the same device,
+  from what it persisted (CTL-39).
 
 ### 2.2 Two wrappers, two readers
 
@@ -383,7 +425,7 @@ Confusing them is the most common way to get this stack wrong.
   messenger message   (a Signal group text · a Matrix event · an email)
   └── envelope   {"tdsp":1,"kind":"frame","documentId":"…","frame":"<the frame as a JSON string>"}
       │          read by the BRIDGE: routing
-      └── frame  {"tdsp":2,"kind":"edit","documentId":"…","update":"<Base64>","due":30000}
+      └── frame  {"tdsp":2,"kind":"edit","documentId":"…","update":"<Base64>"}
           │      read by the ENGINE: verification and interpretation
           └── update   opaque CRDT bytes, read by the document's PROFILE
 ```
@@ -412,25 +454,28 @@ observes:
 | Creates the document and binds it to a channel | Joins a document they were invited to |
 | Grants, changes and revokes `read`/`write`, on the document and on its layers ([§7](#7-control-state)) | Edits, if permitted |
 | Closes the document ([§6.4](#64-closing-a-document)) | Observes that it is closed |
-| Issues control operations, from any of its devices, each counting its own | Merges them, and notices a hole in a device's count |
+| Decides, from any of its devices; the later decision holds | Merges them by their clocks |
 | Sets the pace: the shortest interval anyone sends at ([§9.1](#91-pacing)) | Keeps to it and to their own bridge's bounds; the rest of their pacing is their own |
-| Answers every member's resync requests, every joiner's bootstrap included ([§8](#8-bootstrap-and-resync)) | Asks; answers the creator's requests, and those of another device of its own member ([§8.3](#83-who-answers)) |
+| Answers every request at once, every joiner's bootstrap included ([§8](#8-bootstrap-and-resync)) | Asks; answers its own member's devices at once, and anyone's after a wait when asked by all ([§8.3](#83-who-answers)) |
 
 The gain is that **membership integrity reduces to one comparison**: does a
 delivery's authenticated sender equal the one creator identity every
 participant learned from the invitation? There is no consensus protocol, no
-shared server and no key agreement about who may decide.
+shared server and no key agreement about who may decide. Authority means whose
+decisions cooperating engines follow, not protection against a participant who
+ignores them ([§1.1](#11-what-tdsp-is), [§15.4](#154-what-is-not-guaranteed)).
 
 The cost is stated as plainly: **the creator is a single point of
-availability.** While the creator is offline, nobody can join but on another
-device of a member who holds the document, nobody can be granted access, and a
-participant with a gap can be healed only by another device of its own member.
-Each of those is a delay, not a loss: the participants who already hold the
-document keep converging among themselves. Letting every member answer every
-resync request would change the engine's rules of [§8.3](#83-who-answers) alone
-and needs no wire change. A creator who lost every device but not the messenger
-account is not lost as the creator: a new device decides at once
-([§7.6](#76-a-new-device-of-the-creator)).
+availability.** While the creator is offline, nobody can be granted anything. A
+new device is brought up by any participant who holds the document, asked by all
+([§8.3](#83-who-answers)), with the content and what that participant holds of the
+creator's decisions ([§7.5](#75-the-control-snapshot)); a decision that reached no
+one online reaches it later. That is a delay, not a loss: the participants who
+already hold the document keep converging among themselves. A creator who lost a
+device is not lost as the creator: a new device of hers is brought up by another
+of her devices, or from a backup ([§7.6](#76-a-new-device-of-the-creator)). Her
+devices hold the document's rights; one who lost every device and every backup
+closes the document and continues in a new one (CTL-46).
 
 ## 3. The transport contract
 
@@ -496,11 +541,17 @@ type Permission = "read" | "write" | "creator";
 | `channelMembers(channelId)` → `MemberId[]` | Optional. The members of a channel this account belongs to, as the messenger reports them at the moment of the call (TRN-17); `channelId` as `listChannels` names it, so it can be asked before a document is bound |
 | `sendInvitation(documentId, sender, text)` → `DeliveryId` | Optional. Sends a human-readable invitation ([§11](#11-invitations)) into the document's bound channel as `sender`, who must be the bridge's own account (BRG-16) and the document's creator (the invite route of the [local bridge interface](bindings/local-bridge-interface.md#126-the-local-bridge-interface-optional)). A binding whose invitation *is* how its channel begins — email: the thread's root message — has no separate step and omits it |
 
+Creating a channel or changing its members is no operation of this contract:
+where an application does it ([§6.6](#66-who-takes-part), LIF-9), it does so
+through its bridge's own provisioning, as it binds a channel.
+
 - **TRN-5** · *adapter* — `createDocument` MUST NOT change the membership,
   permissions or configuration of any existing channel.
-  *Rationale:* TDSP never administers a channel that people set up; doing so
-  would need powers the participants did not grant and would make TDSP
-  responsible for access control it cannot enforce.
+  *Rationale:* binding a document administers no channel. Changing a channel people
+  set up as a side effect would need powers the participants did not grant and
+  would make TDSP responsible for access control it cannot enforce; where an
+  application creates a channel or changes its members, it does so deliberately,
+  through its bridge's own operations on the channel (§6.6, LIF-9).
 - **TRN-6** · *adapter* — `send` MUST resolve only after the messenger has
   accepted the message, and MUST otherwise reject with a classified failure
   ([§3.4](#34-send-failures)).
@@ -527,8 +578,8 @@ type Permission = "read" | "write" | "creator";
   can be offered again (BRG-17), processing a frame a second time MUST NOT change
   the document or control state again:
   - content is a CRDT;
-  - control state is a set of operations, in which an operation already held is
-    inert (CTL-6);
+  - control state is registers, of which merging one again changes nothing
+    (CTL-6);
   - a decline is reported once per sender (DCL-3);
   - an overlay is adopted once (RSY-15).
 
@@ -665,10 +716,12 @@ for the person where only the person can help (TRN-20).
 - **TRN-20** · *engine* — An engine MUST keep a change whose send was refused as
   `needs-person`, as for a reason worth retrying (SND-6), MUST expose, beside the
   states of SND-10, that sending waits for the person, with the transport's
-  message, and MUST NOT report the change as dropped. After such a refusal it MUST
-  NOT send anything — no message of any kind — sooner than its longest back-off
-  ([Appendix B](#appendix-b-recommended-values)), unless its application asks it to
-  send now (TRN-22).
+  message, and MUST NOT report the change as dropped. After such a refusal of any
+  message it MUST NOT send anything — no message of any kind — sooner than its
+  longest back-off ([Appendix B](#appendix-b-recommended-values)), unless its
+  application asks it to send now (TRN-22); where it keeps nothing of the message
+  refused (SND-20), it MUST still expose that sending waits for the person, with the
+  transport's message, while that wait lasts.
   *Rationale:* the refusal does not pass by waiting, so the back-off of SND-7 would
   only spin, offering the messenger the same refused message again and again; it
   passes once the person trusts the identity, confirms the device, signs in or
@@ -707,8 +760,9 @@ participant who chose none:
   refused, or a shorter one, beyond which the messenger's own refusals, with the
   wait they name, do the rest (SND-7, SND-9).
 - `bounds.maxBytes` — the largest frame, in bytes of its UTF-8 text, one message
-  can carry, attachments included where the binding has them. Larger changes are
-  sent as pieces ([§9.4](#94-changes-larger-than-one-message)). `null` for none.
+  can carry, attachments included where the binding has them; at least 4 MiB
+  (TRN-23). Larger changes are sent as pieces
+  ([§9.4](#94-changes-larger-than-one-message)). `null` for none.
 - `pacing` — a complete pacing ([§9.1](#91-pacing)): all five values, `null` only
   for `maxIntervalMs` or `maxChars` without a limit. A suggestion, unlike the
   bounds. Named presets, their labels and descriptions belong to the application,
@@ -727,10 +781,26 @@ leaving a field out.
   every field closes the quiet version of the same fault: a misspelled optional
   field would otherwise read as "no bound".
 - **TRN-14** · *engine* — An engine MUST obtain the transport profile, if the adapter
-  offers one, before it sends its first frame, and MUST fail the creation or join
-  of a document if that fails.
+  offers one, before it registers a document it creates (`createDocument`) or sends
+  its first frame, and MUST fail the creation or join of a document if that fails.
   *Rationale:* same as TRN-13; an engine that starts sending before it knows the
-  floor can exhaust a provider's budget in its first minute.
+  floor can exhaust a provider's budget in its first minute; one that registers a
+  document before it knows the transport may leave it registered where it fails.
+- **TRN-23** · *adapter, engine* — A transport MUST carry frames of at least 4 MiB
+  (4 194 304 bytes): its profile's `bounds.maxBytes` MUST be `null` or at least
+  that. An engine MUST fail the creation or join of a document on a transport whose
+  profile states less, with an error of its own that names the bound, before it
+  registers the document (TRN-14).
+  *Rationale:* an answer carries its responder's control state whole (SND-18). A
+  device of the creator keeps what it decides within what one answer carries
+  (CTL-37), but two of her devices decide apart, and their merge may hold more than
+  either did — more than an answer of a small transport carries, and still within
+  what every receiver holds (CTL-30): nobody new could be bootstrapped, and nothing
+  would say so. At 4 MiB the most a receiver holds, 3 MiB, fits one answer with room
+  to spare (§7.4). Refused when the document is created or joined, a transport too
+  small is a fault its person sees at once, not one that shows only once the control
+  state has grown. Every binding of this version carries 4 MiB
+  ([bindings/](bindings/)).
 - **TRN-15** · *adapter* — An adapter that has no profile MUST return `undefined`
   (or not offer the operation); the engine then applies its own defaults
   ([Appendix B](#appendix-b-recommended-values)).
@@ -773,13 +843,38 @@ frames that must decode to a given kind and frames that must be rejected with a
 given reason from [§4.4](#44-decoding-and-rejection), each read by a receiver
 whose document has the profile the file names; `invitations-v2.json`
 for the link of [§11.3](#113-invitation-as-a-link); and `control-v2.json`,
-control operations and the rights their merge gives each member, in any order
-and as a snapshot ([§7](#7-control-state)). The bindings publish their own
+registers and the value their merge gives each target, in any order and as a
+snapshot ([§7](#7-control-state)), with the rights those registers give — the
+permissions, not what a closed document takes (LAY-5). The bindings publish their own
 ([bindings/](bindings/)). An implementation in another language shows it reads
 the wire as this specification does by passing them; the reference
 implementation checks itself against the same files. Until TDSP releases 2.0
-they carry the draft marker and are named `frames-draft-5.json`,
-`invitations-draft-5.json` and `control-draft-5.json` (VER-3).
+they carry the draft marker and are named `frames-draft-10.json`,
+`invitations-draft-10.json` and `control-draft-10.json` (VER-3).
+
+Beside them, in the same directory, it publishes **behaviour vectors**
+(informative), which fix no wire and are not in the wire lock:
+`clock-v2.json`, the algorithm of CTL-45 as pure functions; `digests-v2.json`,
+the control digest through its RFC 8785 text and the state digest from what a
+replica deleted (LOS-24, [Appendix A](#appendix-a-profile-yjs-paragraphs1));
+`updates-v2.json`, bytes that are or are not an update or a state vector of
+`yjs-paragraphs/1` (Appendix A, *Reading without applying*); and
+`flows-v2.json`, flows of several devices on one channel — their initial state,
+a fixed time, inputs in delivery order, and what each device must then show and
+must have sent — in five groups: answers to all, decisions of two devices of the
+creator, what bootstraps a device, bounds, Unicode and bytes, and healing at the
+next occasion. The file says how to run them, with fixed waits instead of random
+time, and each device's turn (RSY-20) and the place of its gaps' first tries
+(LOS-6) fixed instead of derived. An update sent in pieces is checked by its content
+and by each piece's bound, not by how many pieces it took or where they were cut
+(SND-17).
+The published vectors, the wire's and these, are what "checked against the
+vectors" means ([CONFORMANCE.md](CONFORMANCE.md)): an implementation that passes
+them reads, merges, digests, orders and recovers as this specification does,
+which is no exchange with a second engine. Until 2.0 they are named
+`clock-draft-10.json`, `digests-draft-10.json`, `updates-draft-10.json` and
+`flows-draft-10.json` (VER-3). [Appendix F](#appendix-f-reference-implementation)
+names a checker that reads them.
 
 ## 4. The payload frame
 
@@ -831,9 +926,9 @@ Any frame may also carry `crit` and extension fields ([§4.4](#44-decoding-and-r
 |---|---|---|
 | `edit` | any member permitted to write | A CRDT update, or one piece of one ([§9.4](#94-changes-larger-than-one-message)) |
 | `resync-request` | any member | What the requester already has ([§8](#8-bootstrap-and-resync)) |
-| `resync-response` | the creator; a member to the creator, and to another device of its own member ([§8.3](#83-who-answers)) | An update, a control snapshot and an attribution overlay |
-| `control` | a device of the creator only | One control operation: a member's permission, a member's right on a layer, the close, or the pace ([§7](#7-control-state)) |
-| `heartbeat` | any member | The sender's state vector and state digest — from a device of the creator also its control vector and control digest — and its stream and its number in it ([§9.3](#93-heartbeat)) |
+| `resync-response` | the creator; another device of the requester's own member; any member answering a request to all ([§8.3](#83-who-answers)) | An update, a control snapshot and an attribution overlay |
+| `control` | a device of the creator only | One or more registers, and the close flag ([§7](#7-control-state)) |
+| `heartbeat` | any member | A report: the sender's state vector and state digest — from a bootstrapped device of the creator also its control clock and control digest —, its stream and number, and optionally its last `edit`'s update again ([§9.3](#93-the-report)) |
 | `decline` | any member of the channel, joined or not | Why an invitation was declined ([§6.5](#65-declining-an-invitation)) |
 
 The `fragment` kind of TDSP 1.x is gone: a change larger than one message travels
@@ -843,21 +938,22 @@ as pieces, each an ordinary `edit` or `resync-response`
 ### 4.3 Kind-specific fields
 
 "Base64" is a string of Base64 text; "uint32" is a JSON integer from 0 to
-4 294 967 295, written without a fraction or an exponent; a "device tag" is 22
+4 294 967 295, written as an integer field ([§1.6](#16-notation)); a "device tag" is 22
 characters of base64url without padding, the encoding of 16 random bytes
-([§7.2](#72-operations)); a "control vector" is an object that maps device tags to
-uint32 counters, at most 64 of them ([§7.4](#74-holes-and-the-control-vector)), in
-which an entry of 0 counts as absent (FRM-14); a "stream tag" is 16 lowercase hex
-digits, chosen at random by an engine each time it starts (LOS-13); a "digest" is
-16 lowercase hex digits (LOS-24).
+([§7.2](#72-registers-and-the-clock)), read as §1.6 says: in its alphabet, its spare
+bits unchecked; a "clock" is an array of exactly two JSON
+integers `[ms, counter]`, `ms` from 0 to 2^48 − 1 and `counter` from 0 to 65 535
+(CTL-45); a "register" is an object of exactly `value`, `clock` and `device`
+(CTL-20); a "stream tag" is 16 lowercase hex digits, chosen at random by an engine
+each time it starts (LOS-13); a "digest" is 16 lowercase hex digits (LOS-24).
 
 | Kind | Field | Type | Meaning |
 |---|---|---|---|
 | `edit` | `update` | Base64, not empty | A CRDT update, or a piece of one ([§5](#5-document-profiles)) |
-| | `due` | uint32 | The milliseconds within which the sender will send another message at the latest; 0 for no promise (SND-14) |
 | `resync-request` | `requestId` | 16 lowercase hex digits | Random, chosen by the requester, new for every request; what the answer names (RSY-16) |
-| | `control` | control vector or `null` | The requester's control vector; `null` from anyone but a device of the creator until it is bootstrapped, and from a device of the creator until it has a basis (RSY-16, CTL-28) |
-| | `controlDigest` | digest or `null` | The digest of the requester's control state (LOS-12); `null` exactly when `control` is |
+| | `controlClock` | clock or `null` | The requester's control clock; `null` until it is bootstrapped (RSY-16, RSY-14) |
+| | `controlDigest` | digest or `null` | The digest of the requester's control state (LOS-24); `null` exactly when `controlClock` is |
+| | `all` | boolean | Whether any member may answer the request (RSY-16) |
 | | `force` | boolean | `true` when the requester needs an answer even if it seems to lack nothing: its history was truncated, or it gave up what it held for missing predecessors (LOS-8, LOS-9, LOS-23) |
 | | `stateVector` | Base64 | The requester's state vector |
 | | `stateDigest` | digest | The digest of what the requester deleted (LOS-12) |
@@ -865,7 +961,7 @@ digits, chosen at random by an engine each time it starts (LOS-13); a "digest" i
 | | `sequence` | uint32, at least 1 | This report's number in that stream (LOS-13) |
 | `resync-response` | `respondsTo` | 16 lowercase hex digits | The `requestId` of the request answered |
 | | `update` | Base64, not empty | The responder's state since the requester's state vector (RSY-8), or one piece of it; the update that holds nothing (PRF-1, item 4) where the requester lacks nothing, and in a piece that carries only the snapshot and the overlay (SND-18) |
-| | `control` | object or `null` | A control snapshot, in the layout of [§7.5](#75-the-control-snapshot), or `null`, as RSY-8 says: the creator's (`null` from a device of the creator without a basis, CTL-28, or in a capacity conflict, CTL-32); that of another device of the requester's own member (`null` before its bootstrap or in a capacity conflict); that of a member answering a device of the creator, which counts there as a control report only (CTL-27) |
+| | `control` | object or `null` | The responder's control snapshot, in the layout of [§7.5](#75-the-control-snapshot), or `null`, as RSY-8 says: `null` before its bootstrap (RSY-14) and in a capacity conflict (CTL-32) |
 | | `attribution` | object or `null` | The responder's attribution overlay, in the layout of [§5.4](#54-attribution-overlay); `null` for none |
 | | `stateVector` | Base64 or `null` | In an answer's last piece, the responder's state vector as it answered; `null` in the others (RSY-18) |
 | | `stateDigest` | digest or `null` | Beside `stateVector`, the digest of what the responder deleted; `null` exactly when `stateVector` is |
@@ -873,21 +969,21 @@ digits, chosen at random by an engine each time it starts (LOS-13); a "digest" i
 | | `sequence` | uint32, at least 1 | The answer's number in that stream, the same in every piece (LOS-13) |
 | | `piece` | uint32, at least 1 | This piece's number in the answer, 1, 2, 3, … in the order sent (LOS-14) |
 | | `pieces` | uint32 or `null` | In an answer's last piece, how many pieces the answer has — that piece's own number; `null` in the others, and exactly when `stateVector` is (RSY-18) |
-| `control` | `device` | device tag | The creator device that issued the operation |
-| | `counter` | uint32, at least 1 | That device's own count of its operations, 1, 2, 3, … |
-| | `target` | string | `member:<MemberId>` (the MemberId 1 to 255 bytes), `layer:<layer id>:member:<MemberId>` ([§5.6](#56-layers)), `close` or `pace` |
-| | `value` | see [§7.2](#72-operations) | For a member `"read"`, `"write"` or `null` (revoked); for a layer right `"read"`, `"write"` or `null` (inherit); for `close` `true`; for `pace` a uint32 of milliseconds |
-| | `seen` | control vector | What the device had seen of the creator's other devices when it issued the operation (CTL-22) |
-| | `due` | uint32 | As an `edit`'s (SND-14) |
-| `heartbeat` | `control` | control vector or `null` | A creator device's control vector; `null` from anyone else |
-| | `controlDigest` | digest or `null` | The digest of that device's control state (LOS-12); `null` exactly when `control` is |
+| `control` | `device` | device tag | The device of the creator that sends the frame |
+| | `targets` | object of 0 to 5 002 entries, whatever their targets | Each a target — `member:<MemberId>` (the MemberId 1 to 255 bytes), `layer:<layer id>:member:<MemberId>` ([§5.6](#56-layers)), `pace` or `close-reason` ([§7.3](#73-merging)) — mapped to a register (CTL-20): the registers the device decided with this frame, and any others it holds that it adds; never a target that names the creator |
+| | `closed` | boolean | The device's close flag after this frame; a frame whose `targets` is empty carries `true` |
+| | `controlClock` | clock or `null` | The device's control clock after this frame; `null` from a device of the creator that is not bootstrapped (RSY-14) |
+| | `controlDigest` | digest or `null` | The device's control digest after this frame (LOS-24); `null` exactly when `controlClock` is |
+| `heartbeat` | `controlClock` | clock or `null` | The control clock of a device of the creator that is bootstrapped; `null` from anyone else (SND-11, RSY-14) |
+| | `controlDigest` | digest or `null` | The digest of that device's control state (LOS-24); `null` exactly when `controlClock` is |
 | | `stateVector` | Base64 | The sender's state vector |
 | | `stateDigest` | digest | The digest of what the sender deleted (LOS-12) |
 | | `stream` | stream tag | The sender's stream (LOS-13) |
 | | `sequence` | uint32, at least 1 | This report's number in that stream (LOS-13) |
+| | `update` | Base64, not empty | optional, never `null`: the update of the sender's last `edit` frame, as it went out (SND-27) |
 | `decline` | `reason` | `"unsupported-profile"`, `"unsupported-version"`, `"declined"` or `"other"` | Why ([§6.5](#65-declining-an-invitation)) |
-| | `profiles` | array of profile ids, at most 16 | optional: the document profiles the sender implements |
-| | `text` | string, at most 500 characters | optional: a human-readable explanation |
+| | `profiles` | array of profile ids, at most 16 | optional, never `null`: the document profiles the sender implements |
+| | `text` | string, at most 500 characters | optional, never `null`: a human-readable explanation |
 
 - **FRM-5** · *engine* — A sender MUST write exactly the fields its frame's kind
   defines — the common ones, every required one, and an optional one only where
@@ -896,15 +992,8 @@ digits, chosen at random by an engine each time it starts (LOS-13); a "digest" i
   *Rationale:* a layout with a single reading of its defined fields is what lets
   two independent implementations interoperate; where something new is needed, an
   extension field says so by its name instead of hiding in an undefined one.
-- **FRM-14** · *engine* — A sender MUST NOT write an entry of 0 in a control
-  vector: a device of which it holds no counter without a gap is absent from it. A
-  receiver MUST read an entry of 0 as absent: it holds, passes on and digests
-  nothing for it, and does not count the device against the bound of CTL-30.
-  *Rationale:* an entry of 0 and no entry say the same. But the control digest
-  (LOS-12) is computed over the vectors a participant holds, so one that kept the 0
-  would hold another spelling of the same state than one that never saw it, and
-  their digests would differ — evidence of a divergence that is not there.
-  Rejecting the frame instead would refuse a decision for a spelling of nothing.
+
+FRM-14 is withdrawn.
 
 ### 4.4 Decoding and rejection
 
@@ -917,11 +1006,11 @@ report — and a test — can tell a version mismatch from a malformed message:
 | `not-json` | The payload is not valid UTF-8, not valid JSON, not a JSON object, or not I-JSON: an object names a member twice, or a string holds an unpaired surrogate; or it nests arrays and objects more than 32 deep ([§1.6](#16-notation)) |
 | `unsupported-version` | `tdsp` is missing or is not 2 (until TDSP releases 2.0, not the draft marker of VER-3) |
 | `unknown-kind` | `kind` is not one of §4.2 |
-| `missing-field` | A field the kind requires is absent |
-| `invalid-field` | A field has the wrong type or a value the layout forbids — an integer out of range, Base64 that does not decode or is not in its canonical form ([§1.6](#16-notation)), an empty `update`, an `update` or `stateVector` the document's profile does not read as exactly one update or state vector (PRF-1, item 9; bytes after a complete one included), a device tag that is not 22 base64url characters, an unknown `target`, a `value` its target cannot take, a control vector with more than 64 entries, an unknown `reason`, an overlong `text`, a `crit` that is not a list of 1 to 16 distinct names of extensions the frame carries, an answer's `pieces` that is not `null` and differs from its `piece`, a `pieces` without `stateVector` or a `stateVector` without `pieces`, a snapshot or overlay that breaks its layout (§5.4, §7.5) — or the frame, a snapshot or an overlay has a field whose name has no `.` and that its layout does not define; or an extension the receiver implements and `crit` names has a value its definition forbids (FRM-16) |
+| `missing-field` | A field the kind requires is absent — in the frame, a snapshot, a register, an overlay or one of its ranges |
+| `invalid-field` | A field has the wrong type or a value the layout forbids — an integer out of range, Base64 that does not decode or is not in its canonical form ([§1.6](#16-notation)), an empty `update`, an `update` or `stateVector` the document's profile does not read as exactly one update or state vector (PRF-1, item 9; bytes after a complete one included), a device tag that is not 22 base64url characters, an unknown `target`, a `value` its target cannot take, a clock that is not an array of exactly two integers in their ranges, a register, a snapshot or an overlay that is not an object, a register with a field besides `value`, `clock` and `device` (extension fields aside), a `control` frame without registers and without `closed: true`, a `controlClock` and `controlDigest` of which only one is `null`, an unknown `reason`, an overlong `text`, a `crit` that is not a list of 1 to 16 distinct names of extensions the frame carries, an answer's `pieces` that is not `null` and differs from its `piece`, a `pieces` without `stateVector` or a `stateVector` without `pieces`, a snapshot or overlay that breaks its layout (§5.4, §7.5) — or the frame, a snapshot or an overlay has a field whose name has no `.` and that its layout does not define; or an extension the receiver implements and `crit` names has a value its definition forbids (FRM-16) |
 | `unsupported-extension` | `crit` names an extension the receiver does not implement (FRM-10) |
 | `document-mismatch` | The frame's documentId is not the document the delivery was routed to |
-| `profile-mismatch` | A `resync-response`'s control snapshot that counts for the receiver (CTL-25) names a profile other than the document's (CTL-10) |
+| `profile-mismatch` | A `resync-response`'s control snapshot that the receiver would merge (CTL-25) names a profile other than the document's (CTL-10) |
 
 - **FRM-6** · *engine* — A receiver MUST reject a frame for each condition in the
   table above and MUST NOT apply any part of a rejected frame, attempt a partial
@@ -959,14 +1048,13 @@ report — and a test — can tell a version mismatch from a malformed message:
   wire, and an order would make every implementation check fields in one sequence
   for nothing. The test vectors give each rejected frame one fault.
 - **FRM-9** · *engine* — A field whose name contains `.` is an **extension**. A
-  receiver MUST ignore an extension it does not implement — in a frame, a control
-  snapshot, a snapshot's target entries and operations, and an attribution overlay
-  alike, wherever a layout names its fields — and MUST NOT let it change how it
-  reads any defined field. The keys of an object whose keys are data are not field
-  names: a snapshot's `targets`, a control vector and an overlay's
-  `lastEditBySender` are keyed by targets, device tags and MemberIds, and a target
-  such as `member:@bob:example.org` is a target, not an extension, though it
-  contains `.`.
+  receiver MUST ignore an extension it does not implement — in a frame, a
+  snapshot, its registers, and an attribution overlay alike, wherever a layout
+  names its fields — and MUST NOT let it change how it reads any defined field. The
+  keys of an object whose keys are data are not field names: a snapshot's and a
+  `control` frame's `targets` and an overlay's `lastEditBySender` are keyed by
+  targets and MemberIds, and a target such as `member:@bob:example.org` is a
+  target, not an extension, though it contains `.`.
   *Rationale:* closed layouts make every addition a wire break, and a protocol that
   can grow only by major version collects wishes until the break is big enough. A
   name with `.` cannot collide with a field this specification defines, which never
@@ -1027,9 +1115,9 @@ report — and a test — can tell a version mismatch from a malformed message:
   carries it: an engine MUST NOT keep it as document or control state, and MUST NOT
   write an extension it received into a frame of its own, a snapshot or an overlay;
   it writes only what its own application gives it (FRM-12 says what that means
-  for answers). Below a frame's top level — in a snapshot, its targets and
-  operations, and an overlay — this version defines no place for an extension an
-  engine implements; there, every extension is ignored (FRM-9).
+  for answers). Below a frame's top level — in a snapshot, its registers, and an
+  overlay — this version defines no place for an extension an engine implements;
+  there, every extension is ignored (FRM-9).
   *Rationale:* ignoring is not passing on: an extension that rode along in state
   would reach, in a relayed snapshot (CTL-25), receivers that never saw the frame
   it came with, and a receiver that does not implement it would have dropped it on
@@ -1040,17 +1128,15 @@ report — and a test — can tell a version mismatch from a malformed message:
 A real `edit` frame for documentId `doc-a1b2c3`, produced by the reference
 encoder, which until TDSP releases 2.0 writes the draft marker where this shows
 `2` (VER-3). Its update is the whole state of a new `yjs-paragraphs/1` document
-whose first paragraph holds "Hi" — one Yjs client, clocks 0 to 3; its sender will
-send again within 30 seconds at the latest:
+whose first paragraph holds "Hi" — one Yjs client, clocks 0 to 3:
 
 ```json
-{"tdsp":2,"kind":"edit","documentId":"doc-a1b2c3","update":"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=","due":30000}
+{"tdsp":2,"kind":"edit","documentId":"doc-a1b2c3","update":"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA="}
 ```
 
-The Yjs update is 50 bytes and its Base64 text 68; the frame is 142 bytes, the
-other 74 being the field names, the kind, the documentId, the promise and JSON
-punctuation. [Appendix D](#appendix-d-example-frames) has one frame of each other
-kind.
+The Yjs update is 50 bytes and its Base64 text 68; the frame is 130 bytes, the
+other 62 being the field names, the kind, the documentId and JSON punctuation.
+[Appendix D](#appendix-d-example-frames) has one frame of each other kind.
 
 ## 5. Document profiles
 
@@ -1088,11 +1174,13 @@ This specification defines one profile, `yjs-paragraphs/1`, in
      with duplicates, yields the same state (convergence), and an update whose
      causal predecessors are missing is held rather than rejected;
   2. how to tell that updates are being held for **missing predecessors**, and,
-     where the CRDT allows it, whose; how many bytes they take, and how to give them
-     up (LOS-23);
+     where the CRDT allows it, whose, and how far an update carries each writer —
+     the position of a gap of that writer (LOS-25); and always how many bytes they
+     take, and how to give them up (LOS-23);
   3. a **state vector** encoding that summarises which updates a replica holds;
-  4. how to encode **the updates a state vector lacks** — where the empty state
-     vector yields the full state — and how to tell whether a state vector holds
+  4. how to encode **the updates a state vector lacks** of those a replica applied,
+     not those it holds for missing predecessors — where the empty state vector
+     yields the full state — and how to tell whether a state vector holds
      updates a replica lacks; and the **update that holds nothing**: the full state
      of a replica that holds nothing, which every replica applies without change,
      and which is not empty;
@@ -1190,7 +1278,8 @@ The layout is closed: an overlay has exactly `ranges` and `lastEditBySender`; ea
 range has exactly `start`, `end` (uint32) and `authorId` (a MemberId, 1–255 UTF-8
 bytes, or `null`); the first range starts at 0, each further range starts where
 the previous one ended, and no range is empty (`end > start`), so the ranges
-neither overlap nor leave a gap. Every value of `lastEditBySender` is a uint32,
+neither overlap nor leave a gap; `ranges` may be empty (`[]`), as for an
+empty projection. Every value of `lastEditBySender` is a uint32,
 keyed by a MemberId. An overlay that breaks this rejects the whole frame (FRM-6).
 
 - **ATR-1** · *engine* — When the answer to a request the engine made while it
@@ -1311,7 +1400,7 @@ announcement.
   what the reader does instead of guessing.
 
 The creator may give a member a **right on a layer** that differs from the
-member's permission on the document: `read` or `write`, as a control operation on
+member's permission on the document: `read` or `write`, as a decision on
 the target `layer:<layer id>:member:<MemberId>` ([§7](#7-control-state)), or
 `null` to let the member **inherit** its permission on the document there again. A
 member that may only read the content can so be allowed to comment, and one that
@@ -1335,9 +1424,12 @@ may write the content kept from a layer.
   exception must not let it go on writing.
 - **LAY-6** · *engine* — An engine MUST refuse to send an `edit` of its own —
   reporting the refusal, not retrying it, as CTL-13 — that changes:
-  - a layer on which its permission is explicitly `read`;
-  - the content, while its permission on the document is explicitly `read`;
-  - anything, while its permission on the document is revoked.
+  - a layer on which its permission is `read`;
+  - the content, while its permission on the document is `read`;
+  - anything, while its permission on the document is revoked;
+
+  a permission that no register gives counting as `read` once the engine is
+  bootstrapped (CTL-13).
 
   *Rationale:* as with the permission on the document, receivers do not reject an
   edit for its sender's right on a layer (CTL-7): grant and change are unordered,
@@ -1407,20 +1499,19 @@ and the engine bootstraps ([§8](#8-bootstrap-and-resync)).
   accepted (CTL-5, RSY-12); the engine would silently never converge.
 - **LIF-5** · *application* — A creator resuming its own document after a restart
   MUST rejoin it as creator with its persisted control state (CTL-26), and MUST
-  NOT create it anew. An application MUST:
+  NOT create it anew while it holds that state. An application MUST:
   - persist that it creates a document — its documentId, and that it is the
     creator — before it creates the engine that sends the initial state;
-  - resume a document so marked for which it persisted no control state as a
-    device of the creator without control state (CTL-27).
+  - create a document so marked for which it persisted no control state anew,
+    under its documentId: by CTL-26 and CTL-38 nothing of it went out.
 
   *Rationale:* creating anew seeds an empty document over real content and
-  starts a control state that knows none of the creator's earlier decisions.
-  CTL-26 persists operations, and creating a document issues none: an application
-  that stopped between the initial state going out and the first state it
-  persisted would otherwise not know the document existed, and create it again:
-  a second initial state, and a control state that starts anew. Resumed without
-  control state, the device decides at once and is shown unconfirmed until it has
-  a basis (CTL-28).
+  starts a control state that knows none of the creator's earlier decisions. A
+  document marked as created for which no control state was persisted sent nothing
+  (CTL-26, CTL-38): created anew, under the same documentId and in the same
+  channel, it loses nothing; resumed as a device that is not bootstrapped, it would
+  wait for an answer no one can give (RSY-14). With the mark, a stop before then
+  leaves a document the application creates anew, never one it forgets or joins.
 
 An application may also persist a document's content and show it at once after a
 restart, and any participant's control state (CTL-39); TDSP requires only the
@@ -1432,57 +1523,112 @@ creator's (CTL-26).
     reached when the content was taken — never one ahead of the control state the
     application restores with the content (CTL-40);
   - with a transport that offers `instance` (TRN-19), the instance its engine held
-    with that cursor.
+    with that cursor;
+  - when its engine began the last read for the document that reached the
+    messenger and whose deliveries the content holds, or an earlier time, by the
+    device's clock — not when the content was taken.
 
-  While its engine holds *history truncated* evidence (LOS-8, LOS-9), it SHOULD
+  A read that a bridge answered from what it held while it could not reach its
+  messenger (TRN-7) does not count; where the application cannot tell, it persists
+  an earlier time it can vouch for — the start of a read after which the messenger
+  accepted a send, say —, or one so early that the next start counts as a return
+  (RSY-21). While its engine holds *history truncated* evidence (LOS-8, LOS-9), it SHOULD
   keep the cursor and instance it persisted last rather than persist new ones.
-  *Rationale:* with the cursor the restarted engine reads on from there and learns
-  whether its transport still holds everything since. It compares the instance
-  with the transport's at its first read (LOS-9), so a bridge that may have lost
-  something while the application was gone shows it, and one that kept everything
-  does not. While the evidence lasts, a new instance would read as the one the
-  cursor was read under, and a restart before the evidence ends would read on past
-  the loss.
+  When it starts the engine from persisted content, it SHOULD tell it that time,
+  how long its transport keeps a message for a device that is away, where its
+  binding or the application knows it, and that it had unbound the document from
+  its channel since, where it did (RSY-21). While the engine runs, an application
+  that knows how long its transport keeps a message SHOULD tell the engine when a
+  read reaches the messenger again after the last read that did began longer ago
+  than that — counted from that read's start or from an earlier time, as above
+  (RSY-21).
+  *Rationale:* with the cursor a restarted engine reads on and learns whether its
+  transport still holds everything since; with the instance, compared at its first
+  read (LOS-9), a bridge that may have lost something meanwhile shows it. While
+  that evidence lasts, a new instance would read as the one the cursor was read
+  under, and a restart would read on past the loss. Where the transport cannot tell
+  what it no longer holds, the time and how long it keeps tell the engine that it
+  may lack something, and an unbound document received nothing at all (RSY-21).
+  The content may be taken after the last read that reached the messenger — the
+  person typed on through an outage, or a bridge answered from its window —, so the
+  time it was taken could hide a return; counted from the start of that read, or
+  earlier, the absence is at least as long as it was. The same time tells a running
+  engine of an absence it cannot see by itself (RSY-1, LIF-12).
+- **LIF-12** · *application* — An application SHOULD tell its engine when it stops
+  using the document — its person closes it, or the application ends — and before
+  its device sleeps, so that a report owed goes as soon as it may (SND-11). While
+  the engine runs, it SHOULD tell it, once a read reaches the messenger again, how
+  long before that the last read that did began, counted as LIF-8 counts it
+  (RSY-1, RSY-21). It SHOULD offer its person to synchronise now: to send what
+  waits and make a request of its own (RSY-3), which wakes every resting gap
+  (LOS-26).
+  *Rationale:* a device closed or put to sleep before its report went keeps it owed
+  until it opens the document again (SND-28), and the others meanwhile miss a last
+  change they may have lost. A running engine cannot see that its device slept or
+  had no network (RSY-1, RSY-21). A gap rests after its tries (LOS-6), and the
+  person may know what the engine cannot — that another device is online again —;
+  synchronising now is their way to ask.
 
-After a restart:
-
-- the restarted engine still sends a resync request when it joins (RSY-1);
-- a non-creator edits only once bootstrapped, possibly by its own restored
-  control state and its first read (CTL-41); until then its application prevents
-  typing, or holds what the person types outside the engine's document (CTL-42);
-- persisted content can hold changes that never reached anyone else (SND-8).
+After a restart the engine asks as RSY-1 says and sends a report it owed
+(SND-28); anyone but the creator edits only once bootstrapped (CTL-41), its
+application holding what the person types until then (CTL-42); persisted content
+can hold changes that never reached anyone else (SND-8).
 
 ### 6.4 Closing a document
 
 Closing marks a document as finished. It is the only lifecycle transition after
-creation, and it is a control operation ([§7](#7-control-state)).
+creation, and it is a decision of the creator ([§7](#7-control-state)).
 
 - **LIF-6** · *engine, application* — After it has applied a close, an engine MUST
-  NOT send `edit` frames of its own, and a device of the creator MUST NOT issue
-  further control operations; one it issued before and has not yet sent it still
-  sends (CTL-26). The engine MUST still:
-  - apply every valid `edit` frame it receives — an edit sent before the close may
-    arrive after it;
-  - send heartbeats;
+  NOT send `edit` frames of its own, and a device of the creator MUST NOT make
+  further decisions but on the reason for the close (CTL-23); a frame it made
+  before and has not yet sent it still sends (CTL-26). The engine MUST still:
+  - apply every valid `edit` frame it receives, and every update a report carries
+    (SND-27) — an edit sent before the close may arrive after it;
+  - send its reports (SND-11), which carry again what it sent last before the
+    close (SND-27);
   - accept a `resync-response` as RSY-12 says;
   - answer resync requests as [§8](#8-bootstrap-and-resync) prescribes.
 
-  An application SHOULD show a closed document as still synchronising while its
+  A device of the creator that holds the close sends it again as LIF-11 says. An
+  application SHOULD show a closed document as still synchronising while its
   engine suspects a loss ([§10](#10-loss-detection)).
   *Rationale:* a close and the edits sent just before it are unordered on the
-  transport (TRN-10). Discarding an edit that arrives after the close would leave
-  two receivers of the very same messages with different documents for good — one
-  saw the edit first, the other the close. A close therefore ends *writing*, not
-  *delivery*: the content can still change briefly after it, until the last edits
-  sent before it have arrived. A fixed final text would need a cut across every
-  sender, which the protocol cannot make without acknowledgements it does not
-  have ([§3.3](#33-delivery-semantics)). Heartbeats continue because only a
-  heartbeat reveals the loss of the close itself, or of an edit sent just before
-  it (LOS-10, LOS-11).
+  transport (TRN-10): discarding an edit that arrives after the close would leave
+  two receivers of the same messages with different documents for good. A close
+  therefore ends *writing*, not *delivery*; a fixed final text would need a cut
+  across every sender, and acknowledgements the protocol does not have
+  ([§3.3](#33-delivery-semantics)). Reports go on, since the one that ends the last
+  phase carries its last message again (SND-27), and a device of the creator gives
+  the close again to whoever writes on (LIF-11).
 - **LIF-7** · *engine* — A close is permanent: nothing — no control frame and no
-  control snapshot — reopens a closed document.
+  control snapshot — reopens a closed document. Its reason (CTL-23) may change
+  after it, and reopens nothing.
   *Rationale:* a reopen would be one more thing a forged or replayed message
-  could do; a person who wants to continue creates a new document.
+  could do; a person who wants to continue creates a new document, which the
+  reason `continued` tells the others.
+- **LIF-11** · *engine* — A device of the creator that holds the document closed
+  and reads an `edit` frame it did not send itself MUST send its close again: a
+  `control` frame under its own tag (CTL-20) with `closed: true`, the register on
+  `close-reason` it holds, if any, and its control clock and control digest as
+  RSY-14 says. It is no decision: it raises no clock (CTL-45), and a device that
+  has no tag yet takes one and persists it as for a decision (CTL-26). It MUST send
+  it at most once per member that wrote in 10 minutes
+  ([Appendix B](#appendix-b-recommended-values)), and at most once per read,
+  however many wrote in it: the one it sends serves every member that wrote in that
+  read, and counts as the one in 10 minutes of each it was due for; an edit read in
+  its first read after it started (CTL-41) sends none.
+  *Rationale:* a member that lost the close, its repeat and the report after them
+  (SND-27) writes on, and no edit shows that a close came before it (TRN-10). A
+  device of the creator that sees it write gives the close again, in a frame every
+  receiver merges as a duplicate where it arrived before (CTL-6). Only a device of
+  the creator can: a member's answer names a request (RSY-16), a member's report
+  states no control clock (SND-11), and a `control` frame is the only kind that
+  carries the close itself. Once per member in 10 minutes bounds what a writer whose
+  messages keep getting lost costs; one frame reaches everyone, so one per read
+  serves all who wrote in it. What a first read after a start brings may have been
+  written long before, by members that hold the close since; a member that still
+  writes without it writes again.
 
 There is no deletion. Removing a document from participants' devices cannot be
 done by a message, and "prevent future retrieval" presupposes a stored history
@@ -1493,8 +1639,7 @@ the transport contract does not have ([§3.3](#33-delivery-semantics)).
 A joiner that cannot or will not take part says so in the channel, so that the
 other participants' applications — the creator's above all — can at least see it.
 The typical case is a profile the joiner's engine does not implement: the creator
-can then invite again, with a new document of a profile the joiner implements,
-since a document's own profile never changes.
+can then invite again, with a new document of a profile the joiner implements.
 
 - **DCL-1** · *application* — An application:
   - whose engine does not implement an invitation's profile SHOULD send a `decline`
@@ -1506,11 +1651,9 @@ since a document's own profile never changes.
   A person who does not want to join MAY decline with the reason `declined`.
   *Rationale:* without a message nobody learns why a participant never appears;
   with the list of implemented profiles the creator knows what to invite with. A
-  `decline` reaches the creator only in a version both engines implement: the
-  creator's engine rejects one written in another version (VER-1), and a reader
-  cannot learn the document and channel from an invitation of a version it does not
-  read. The reason `unsupported-version` is defined, and a receiver accepts it, but
-  this version gives an application no case in which to send it.
+  `decline` reaches the creator only in a version both engines implement (VER-1),
+  and an invitation one cannot read names no document and channel to answer in;
+  so `unsupported-version`, defined and accepted, has no case to be sent in yet.
 - **DCL-2** · *engine* — An engine MUST offer a decline operation that needs no
   join: given the documentId, the decliner's own MemberId and a transport whose
   bridge has the document bound, it sends exactly one `decline` frame — through
@@ -1525,9 +1668,8 @@ since a document's own profile never changes.
   text changed.
   *Rationale:* a decline is information, not authority, and anyone in the channel
   can send one; reporting each sender once keeps a forged or repeated decline
-  from flooding what a person sees. An engine keeps no state of a decline (DCL-2),
-  so after a restart it cannot know what it reported before; what a person saw is
-  the application's to remember.
+  from flooding what a person sees. The engine keeps no state of a decline (DCL-2),
+  so what a person saw before a restart is the application's to remember.
 - **DCL-4** · *application* — An application MUST present a decline's `text` as the
   sender's own words and MUST NOT act on a decline automatically beyond showing
   it.
@@ -1539,398 +1681,428 @@ calls `decline(documentId, memberId, transport, { reason, profiles?, text? })`;
 the engine reports each received decline through a notification the application
 registers when it creates or joins the document.
 
+### 6.6 Who takes part
+
+Who takes part in a document is the channel's: the messenger delivers every frame
+to the members of the document's channel and to no one else ([§3.2](#32-operations)),
+and whoever it removes from the channel receives nothing new, whatever any engine
+does ([§15.2](#152-what-tdsp-assumes)). Who of them may write is the creator's
+control state ([§7](#7-control-state)). Neither the engine nor the transport
+contract creates a channel or changes its members (TRN-5); an application may,
+through what its bridge offers on the channel itself
+([bindings §12.5](bindings/bridges.md#125-what-a-bridge-does-not-do)) — under the
+email binding, the creator's bridge starts the thread with the invitation
+([§1.5](#15-terminology)) —, and then keeps the two in step.
+
+- **LIF-9** · *application* — An application that adds a person to a document's
+  channel or removes one, where its messenger lets it, MUST keep the control state
+  in step: it MUST give a person it adds a permission before it sends that person
+  the invitation, and MUST revoke a person's permission (`null`) before or as it
+  removes the person from the channel, unless its engine refuses the revocation
+  (LIF-6, CTL-27). An application that lets its person revoke
+  a member SHOULD offer to remove that member from the channel with it. Where its
+  transport names a person's MemberId only once the person accepts the
+  messenger's own invitation to the channel, it MAY add the person before it can
+  give a permission: that invitation of the messenger is then neither the TDSP
+  invitation ([§11](#11-invitations)) nor its precondition. It MUST then decide the
+  person's permission as soon as the MemberId is known; until then the person
+  counts as unknown, which reads (CTL-13). An invitation sent into the channel
+  reaches everyone in it, so the application MUST send it only once every person
+  it is meant for holds a permission, except as follows.
+
+  *Invitation first.* Into a channel it made for the document as its creator, in
+  which everyone is a person the invitation is meant for, the application MAY send
+  the invitation before the permissions, and before the initial state once the
+  creator's control state is persisted (CTL-26), and MUST then give the
+  permissions right after the initial state; until a person's permission arrives,
+  the person reads (CTL-13).
+  *Rationale:* the channel is the boundary the messenger enforces (§15.2), while
+  within it rights are as strong as the participants' engines (§15.3). A permission
+  given before the invitation lets the joiner write once bootstrapped (CTL-13); a
+  revocation kept as a register tells a person added again by other means from one
+  the creator admitted (LIF-10). Where the messenger names a person only once it
+  accepted its invitation, the permission comes after, and the person reads until
+  then — the safe side. A revocation before the removal lets the person's devices
+  learn of it while they still read, and no more: a frame the messenger accepted
+  (TRN-6) is not one a device received or showed (SIG-4), and what the person sees
+  after the removal is the messenger's. Where the engine refuses the revocation —
+  the document closed (LIF-6), or a device of the creator before its bootstrap
+  (CTL-27) —, the removal stands alone. In a channel made for the document nobody
+  can read the invitation who is not meant to, and sent first it is the first thing
+  its members see; a joiner faster than the permissions reads until they arrive.
+  Sent after the control state is persisted, an invitation whose initial state a
+  stop held back leaves a document its creator resumes (LIF-5), never one it creates
+  anew, and one whose initial state failed, a document its engine sends again
+  (SND-20).
+- **LIF-10** · *application* — An application whose transport offers
+  `channelMembers` (TRN-17) SHOULD compare the channel's members with the control
+  state its engine holds, once bootstrapped (RSY-14), and MUST then show the person as
+  an inconsistency:
+  - every channel member but the creator that no register on a member
+    (`member:<id>`) names;
+  - every member whose register gives `read` or `write` who is not in the channel;
+  - every channel member whose register on a member is revoked (`null`), but one
+    the application is removing from the channel at that moment, which it SHOULD
+    show as a removal under way.
+
+  It MUST NOT change the control state or the channel because of it without its
+  person's decision; for a revoked member in the channel it SHOULD offer to remove
+  that member again, or to admit it with a new permission. Where its binding cannot
+  add a member to the channel, or cannot remove one, it MUST show that instead and
+  SHOULD offer continuing in a new document (§6.2).
+  *Rationale:* where applications keep both in step (LIF-9), each inconsistency
+  arises only from a change made outside them, in the messenger, or from one that
+  was lost or failed; only a person can tell which and decide. A revoked member in
+  the channel matters most: its register keeps a cooperating engine from writing,
+  but the person still receives every frame (§15.2), and a modified engine of theirs
+  can still write (CTL-7); it arises where the removal failed after the revocation,
+  which LIF-9 allows, or where someone took the person back in the messenger. A
+  member being removed may still be listed for a moment. A person admitted again
+  holds a permission before its invitation (LIF-9), so it shows as not in the
+  channel until it joins, never as revoked. Before the bootstrap everyone would look
+  unnamed, and the creator has no register on a member (CTL-4). Where the binding
+  cannot remove a member, offering to would offer what cannot be done; a new
+  document is then the way to a channel without that member
+  ([§15.4](#154-what-is-not-guaranteed)).
+
 ## 7. Control state
 
 *How it works (informative).* Only the creator decides who may edit, whether the
-document is closed, and how often anyone sends. Each such decision is a **control
-operation** on one **target**: a member, a member's right on a layer, the close or
-the pace. The creator may decide from several devices; each device numbers its own
-operations 1, 2, 3, … under a random tag of its own, so two devices never compete
-for a number. A participant holds a set of operations and computes the control
-state from it, as it computes the document from its updates: within the bounds,
-in which order the operations arrived, and how often, changes nothing.
-
-- **Which decision holds.** Every operation names what its device had seen of the
-  creator's other devices (`seen`). A decision made in knowledge of another
-  supersedes it; of two made without knowledge of each other, the narrower holds —
-  for a member, revoked before `read` before `write` (§7.3).
-- **What is missing.** A device counts without gaps, so a missing number is a lost
-  operation, a *hole*. The highest number held without a gap, per device, is the
-  **control vector**; requests and the creator's heartbeats carry it, so that a
-  participant that lacks an operation can tell, and ask (§7.4).
-- **Bounds.** The creator's account can name devices and targets at will, so a
-  receiver bounds what it holds, and the creator's devices keep inside those
-  bounds — a new target only up to a third of the bytes. A receiver pushed over the
-  bytes anyway, over its bound on targets, or over 64 devices in a target's
-  `seen`, is in a *capacity conflict*: it stops writing for good, and a person can continue in a new
-  document (§7.4).
-- **Bootstrap.** The creator's answer to a request carries its operations as a
-  **snapshot**, and so does another device's answer to a device of its own member;
-  a receiver merges it as a union, and a union can never undo anything (§7.5).
-- **When devices disagree.** A device restored from a backup can issue a second
-  operation under a number it used before: receivers merge the two, and the device
-  moves on to a new tag. A new device of the creator decides at once; members tell
-  it which numbers exist, never what holds, and what only members hold it shows
-  until a person confirms (§7.6).
-- **Persisting, and refusing one's own edits.** A device of the creator persists an
-  operation before it sends it, or holds its messages until it has (§7.7). An
-  engine refuses to send an edit of its own that the control state does not allow,
-  and the application keeps such a change out of the engine's document (§7.8).
+document is closed, and how often anyone sends, from as many devices as it likes,
+each under a random tag of its own. The latest decision on each **target** — a
+member, a member's right on a layer, the pace, or why the document was closed — is
+a **register** carrying a **clock** (§7.2); beside the registers stands a one-way
+**closed** flag. Every participant keeps one register per target and merges
+registers as it merges updates: the greater clock holds, and order and repetition
+change nothing (§7.3). What a receiver holds is bounded (§7.4). An answer carries
+the answering device's registers as a **snapshot** (§7.5); a new device of the
+creator takes her state only from another of her devices or its own (§7.6). A
+decision is persisted before it is sent (§7.7), and an engine refuses to send an
+edit the control state does not allow (§7.8).
 
 ### 7.1 What control state is
 
-A document's control state is:
+A document's control state is a **register** per target — the latest decision on
+a member, on a member's right on a layer, on the pace, or on the reason for the
+close — and a **closed** flag. From them follow:
 
 - a **membership map** from MemberId to `read` or `write` — who may edit;
 - **rights on layers**: for a layer and a MemberId, `read` or `write`, where the
   creator set one; elsewhere the member's permission on the document holds on the
   layer (LAY-5);
-- a **closed** flag;
+- whether the document is **closed**;
 - the **pace**: the shortest interval, in milliseconds, between two messages one
   engine sends for the document ([§9.1](#91-pacing)); 0 while the creator set
-  none.
+  none;
+- the **reason for the close**: why the creator closed the document, shown once it
+  is closed (CTL-23).
 
-The creator is never in the membership map: its permission is `creator`, fixed
-(LIF-2). A member on whose target a revoking operation holds (CTL-23) is
-**revoked**; a MemberId the creator never named has an *unknown* permission.
-Revoked is not unknown: CTL-13 refuses a revoked member's edits as it refuses a
-reader's, and refuses nothing for an unknown permission after the bootstrap. Both
-are absent from the map.
+The targets are `member:<id>`, `layer:<layer id>:member:<id>`, `pace` and
+`close-reason`. A layer id holds no colon, so the first `:member:` after `layer:`
+ends it. The creator is
+never a target: its permission is `creator`, fixed (LIF-2). A member whose register
+holds `null` is **revoked**; a MemberId that no register on a member names has an *unknown*
+permission, which refuses its edits as `read` does (CTL-13). Revoked is not
+unknown: a register holds `null`, which tells a member the creator removed from one
+it has not named yet (LIF-10). Both are absent from the map.
 
-Control state is not a numbered log but a **set of control operations**, each
-issued by one device of the creator and aimed at one **target**: `member:<id>`,
-`layer:<layer id>:member:<id>`, `close` or `pace`. A layer id holds no colon, so
-the first `:member:` after `layer:` ends it. The set is merged the way the
-document's content is: the result depends on which operations a participant holds,
-not on the order they arrived in, and a duplicate is inert. Every device of the
-creator counts its own operations, so two devices never compete for a number, and
-a device that lost its state is simply a new device.
+Control state is merged as the content is: the result depends on which registers
+a participant received, not on their order, and merging one again changes nothing.
+A device of the creator that lost its state is simply a new device, under a tag of
+its own.
 
-- **CTL-1** · *engine* — Control state MUST be changed only as this section
-  prescribes: by the operations a device of the creator issues itself (CTL-21), by
-  applying operations from `control` frames and control snapshots, and by
-  restoring what was persisted (CTL-26, CTL-39).
+- **CTL-1** · *engine* — Control state MUST change only as this section prescribes:
+  by a decision a device of the creator makes itself (CTL-21), by merging registers
+  of `control` frames and snapshots (CTL-22, CTL-25), and by restoring what was
+  persisted (CTL-26, CTL-39).
   *Rationale:* a single path for authority is what makes it checkable.
 
-### 7.2 Operations
+### 7.2 Registers and the clock
 
-- **CTL-20** · *engine* — A control operation MUST carry:
-  - `device`, the tag of the creator device that issued it: 16 random bytes in
-    base64url without padding, generated once by that device and persisted with its
-    control state (CTL-26);
-  - `counter`, that device's own count of its operations;
-  - `target`;
-  - `value`: for a member `"read"`, `"write"` or `null` (revoked); for a layer right
-    `"read"`, `"write"` or `null` (inherit, LAY-5); for `close` `true`; for `pace` a
-    uint32 of milliseconds;
-  - `seen` (CTL-22), which names other creator devices only.
+- **CTL-20** · *engine* — A **register** holds the latest decision on one target:
+  `value` — for a member `"read"`, `"write"` or `null` (revoked); for a right on a
+  layer `"read"`, `"write"` or `null` (inherit, LAY-5); for `pace` a uint32 of
+  milliseconds; for `close-reason` a string of 1 to 128 UTF-8 bytes (CTL-23) —;
+  `clock`, the clock of the decision (CTL-45); and `device`, the tag
+  of the device of the creator that made it: 16 random bytes in base64url without
+  padding, generated once by that device and persisted with its control state
+  (CTL-26). A `control` frame MUST carry the registers its device decided in it, at
+  least one unless it carries the close, and MAY carry other registers its device
+  holds.
+  *Rationale:* one register per target is all a receiver needs to keep, whatever
+  was decided before; the tag orders two decisions made at one clock (CTL-22). With
+  16 random bytes, the chance that two devices choose one tag is negligible.
+- **CTL-21** · *engine* — A device of the creator MUST give every decision on a
+  target a clock greater than its own clock, than the clock of every register it
+  holds on that target, and MUST hold a decision at once — as
+  a change of its own that is not yet sent, like typed text (SND-6), not only once a
+  send succeeded.
+  *Rationale:* a decision made in knowledge of another must hold over it wherever
+  both arrive, and a clock above every clock its device knew for that target says
+  so. What a device decided is as much its state as what it typed.
+- **CTL-45** · *engine* — A **clock** is a pair `[ms, counter]` of integers, `ms`
+  from 0 to 2^48 − 1 and `counter` from 0 to 65 535; one clock is greater than
+  another when its `ms` is, or both `ms` are equal and its `counter` is. A device of
+  the creator MUST keep a clock of its own, `own`, persist it with its control state
+  (CTL-26), and form it and the clock of each of its decisions (CTL-21) as this
+  algorithm says, with the **span** of 24 hours; where a decision's clock cannot be
+  formed, it MUST refuse the decision and tell its application:
 
-  A `control` frame, or a snapshot's operation, whose `seen` names its own `device`
-  with a counter above 0 is malformed and MUST be rejected (FRM-6); an entry of 0
-  is absent (FRM-14).
-  *Rationale:* a tag per device instead of one counter per document is what lets
-  several devices of the creator decide without a conflict; with 16 random bytes,
-  the chance that two devices choose one tag is negligible. A device's own earlier counters are
-  implied (CTL-22); an entry for them at or above the operation's own counter
-  would make the operation supersede itself, so that it held nowhere, and
-  rejecting it keeps every receiver reading it alike.
-- **CTL-21** · *engine* — A device of the creator MUST number its operations 1, 2,
-  3, … under its tag without gaps, and MUST hold an operation it issues at once —
-  as a change of its own that is not yet sent, like typed text (SND-6), not only
-  once a send succeeded.
-  *Rationale:* receivers see a missing counter as a lost message (LOS-10). An
-  operation that holds only after its send succeeds would show the person nothing
-  while the messenger is away, and what a device decided is as much its state as
-  what it typed.
+  ```text
+  MAX_MS = 2^48 − 1    MAX_COUNTER = 65 535    SPAN = 86 400 000 (24 h)
+  now     : the device's wall clock, in ms since 1970-01-01 UTC
+  next(c) = [c.ms, c.counter + 1]   if c.counter < MAX_COUNTER
+          = [c.ms + 1, 0]           else, if c.ms < MAX_MS
+          = none                    else
+  wall    = [min(max(floor(now), 0), MAX_MS), 0]
+  cap     = [min(wall.ms + SPAN, MAX_MS), MAX_COUNTER]      the end of the span
+  raise(c): own ← max(own, min(c, cap))
+
+  after restoring its control state (CTL-26) or merging registers (CTL-22,
+  CTL-25):                                raise(its control clock)
+  deciding on a target T (CTL-21):
+    C ← {wall, next(own)} ∪ {next(r.clock) : r a register it holds on T}
+    if none ∈ C: refuse the decision
+    clock ← max(C)
+    own   ← max(wall, next(own), min(clock, cap))
+  ```
+
+  Its control clock is the greatest clock among the registers it holds, `[0, 0]`
+  where it holds none (RSY-16). `own` never falls: a wall clock that jumps back
+  lowers `wall` and `cap`, not `own`, and each decision lies above the one before.
+  A clock lies beyond the span when it is greater than `cap`, that is when its `ms`
+  exceeds `wall.ms + SPAN`; `raise` never takes `own` there, and only a decision's
+  `next(own)` may, one step per decision. A receiver MUST NOT refuse, drop or set
+  aside a register it merges (CTL-22, CTL-25) because its clock lies ahead of the
+  receiver's own time.
+  *Rationale:* a clock above every clock its device has seen on a target orders each
+  decision after everything that device knew of it, however far the wall clocks
+  disagree; the wall clock makes the later of two concurrent decisions hold where
+  the clocks are roughly right. The span keeps one register far ahead — from a
+  clock that is off, or a broken application of the creator — from dragging every
+  clock of the creator along: only a decision on that register's own target lies
+  further ahead, and made in knowledge of it, it still holds over it. Every decision
+  raises `own`, so no two decisions of a device on one target share a clock. Two
+  integers stay exact in every JSON parser. A receiver that filtered registers by
+  its own time would hold what another does not, for good. A clock at the end of
+  its range orders no further decision; the person continues in a new document
+  (§6.2). Restore and merge raise `own` alike: a register beyond the span when it
+  came lifts `own` once the wall clock has caught up.
 - **CTL-4** · *engine* — A participant other than the creator MUST NOT send a
-  `control` frame; an operation on a member or on a member's right on a layer MUST
+  `control` frame; a register on a member or on a member's right on a layer MUST
   NOT name the creator and MUST NOT carry the permission `creator` (the wire has no
   value for it).
   *Rationale:* the creator's role is fixed (LIF-2) and cannot be granted,
   transferred or revoked.
-- **CTL-5** · *engine* — A receiver MUST apply a control operation if and only if
-  (a) the `Delivery.sender` of the frame that carries it is exactly the document's
-  creator, and (b) it does not name the creator. The comparison of sender and
-  creator is exact equality of MemberIds. Device tags MUST be compared only within
-  the creator's MemberId; they authenticate nothing.
+- **CTL-5** · *engine* — A receiver MUST take a register into its control state if
+  and only if it does not name the creator and it comes (a) in a `control` frame
+  whose `Delivery.sender` is exactly the document's creator, or (b) in a snapshot
+  it merges (CTL-25). The comparison of sender and creator is exact equality of
+  MemberIds; device tags only order registers (CTL-22) and authenticate nothing.
   *Rationale:* (a) is the whole membership-integrity design: the messenger vouches
-  for the sender, and a tag only tells the creator's own devices apart.
+  for the sender. A snapshot is what its sender holds of the creator's registers,
+  which cooperating participants pass on as they received them (§1.1, CTL-25).
 - **CTL-6** · *engine* — A receiver MUST reject — and report — a control frame from
-  anyone but the creator, an operation that names the creator, and every control
-  frame while it does not know the creator. An operation it already holds is
-  inert.
+  anyone but the creator, a control frame with a register that names the creator,
+  and every control frame while it does not know the creator. Merging a register it
+  already holds changes nothing.
   *Rationale:* a frame from a non-creator is an anomaly worth seeing; a duplicate
-  is the expected result of a re-offered message, which the set makes harmless.
-- **CTL-7** · *engine* — An engine MUST NOT reject an `edit` frame because its sender
-  lacks `write` permission in the receiver's current control state.
+  is the expected result of a re-offered message, which merging makes harmless.
+- **CTL-7** · *engine* — An engine MUST NOT reject an `edit` frame, nor the update
+  a report carries (SND-27), because its sender lacks `write` permission in the
+  receiver's current control state.
   *Rationale:* a grant and the first edit made under it are unordered on the
-  transport; rejecting on a grant that has not arrived yet would create a
-  permanent gap in the document. Permissions are enforced by the sender's own
-  engine (CTL-13), which is what honest participants run (§15.2).
+  transport; rejecting on a grant not yet arrived would leave a permanent gap.
+  Permissions are enforced by the sender's own engine (CTL-13), which cooperating
+  participants run (§1.1, §15.2). A report carries again only an update that went
+  out (SND-27), so it opens no way past CTL-13; judged by the receiver's rights,
+  receivers that learnt of a revocation at different times would diverge.
 
 ### 7.3 Merging
 
-Of two operations on one target, the later one should win when its device knew
-the earlier, and the narrower when neither knew the other: the creator wanted at
-most what one of its devices wanted. A Lamport clock orders totally and cannot
-tell "concurrent" from "later": with "the higher clock wins", the wider of two
-concurrent decisions holds whenever its clock happens to be the higher one. A
-version vector per operation tells the two apart, and costs nothing while the
-creator uses one device.
+Of two decisions on one target, the one made in knowledge of the other should
+hold: every device of the creator gives a decision a clock above everything it
+holds of that target (CTL-21), so the greater clock says it. Of two made without
+knowledge of each other, the later by the deciding devices' clocks holds; only one
+device deciding twice at one clock leaves a tie, which every receiver breaks alike.
 
-- **CTL-22** · *engine* — An operation O **supersedes** an operation P on the same
-  target if and only if O's device had seen P when it issued O, or P is an earlier
-  operation of O's own device. Every operation MUST carry `seen`: for each other
-  creator device, the highest counter its device had seen from it without a gap;
-  its own device's earlier counters are implied. A receiver MUST keep, per target,
-  the element-wise maximum of what its operations had seen, each one's own
-  `counter − 1` included, and MUST treat an operation as superseded exactly when
-  that maximum covers its counter.
-  *Rationale:* "seen" is what makes a decision a decision about what came before.
-  A vector errs to the narrower side only when its device had a hole, and keeps at
-  most one operation per creator device and target; naming the superseded
-  operations instead would keep every replaced id until the holes heal.
-- **CTL-23** · *engine* — The value of a target MUST be the narrowest value among
-  the operations on it that no other operation on it supersedes:
-  - for a member, revoked before `read` before `write`;
-  - for a right on a layer, `read` before inherit (`null`) before `write`;
-  - for `pace`, the longest interval.
+- **CTL-22** · *engine* — Of two registers on one target, the one with the greater
+  clock MUST hold; at equal clocks, the one whose `device` comes later in Unicode
+  code point order; at equal clock and `device`, the one with the narrower value
+  (CTL-23). A receiver MUST keep per target only the register that holds, and the
+  result MUST depend only on the set of registers it received, not on their order
+  or on duplicates.
+  *Rationale:* a decision made in knowledge of another holds over it (CTL-21); of
+  two concurrent ones the later by the deciding devices' clocks holds, not the
+  narrower: within the channel rights are as strong as the participants' engines
+  (§15.3), and who takes part is the channel's (§15.2). The order is total, so
+  every receiver of the same registers holds the same. Equal clock and tag mean one
+  device decided twice at one clock — a state put back from a backup —, and the
+  narrower value gives every receiver the same result.
+- **CTL-23** · *engine, application* — Where CTL-22 needs the narrower of two
+  values, it MUST order them so: for a member, revoked (`null`) before `read`
+  before `write`; for a right on a layer, `read` before inherit (`null`) before
+  `write`; for `pace`, the longer interval before the shorter; for `close-reason`,
+  the greater string in Unicode code point order before the smaller. The close is
+  no register but a flag, which holds once a device of the creator set it, which a
+  receiver takes only as CTL-5 says, and which nothing undoes (LIF-7). Why the
+  creator closed the document is the register on `close-reason`:
+  - A device of the creator MUST set as its value only a code of the table below,
+    or an application's own reason (`application-reason` below, such as
+    `com.example.moved/1`), of at most 128 UTF-8 bytes.
+  - It MUST set it only in the `control` frame that carries its close, or once it
+    holds the document closed; before, its engine MUST refuse it as `not-closed`
+    and tell its application.
+  - A receiver MUST take a register on `close-reason` whose value is a string of 1
+    to 128 UTF-8 bytes as it takes every register (CTL-5, CTL-22), whatever the
+    value names and whether it holds the document closed or not; any other value
+    breaks the layout of its frame or snapshot.
+  - An engine MUST NOT present a register on `close-reason` to its application as
+    the reason for the close (`closeReason`), and an application MUST NOT show one,
+    before the document is closed. An application SHOULD show a reason it does not
+    know as a close without a known reason.
 
-  `close` holds once any operation sets it and MUST NOT be undone (LIF-7). The
-  result MUST depend only on the set of operations held, not on their order or on
-  duplicates.
-  *Rationale:* a decision made in knowledge of another stands, even when it is
-  wider; of two concurrent ones the narrower holds, so no more is granted than one
-  of the creator's devices wanted. Concurrent decisions about one member are rare,
-  and the creator sees the result. Revoked is the narrowest a member can be, so
-  concurrent `read` and revoke give revoked, which CTL-13 refuses. On a layer,
-  inherit means the permission on the document, which lies between `read` and
-  `write` wherever it lets the member write at all. Ordered so, the narrowest value
-  is the narrowest effective right whatever the permission on the document is; and
-  a reset to inherit made in knowledge of a restriction supersedes it (CTL-22),
-  while one made concurrently loses to it.
-- **CTL-24** · *engine* — Two different operations under one `(device, counter)`
-  on one target MUST be merged into one, which takes the narrowest of their values
-  (CTL-23) and, for each other device, the highest counter either had seen. A
-  receiver MUST report as an anomaly an operation that arrives — as a frame or in a
-  snapshot — under a device and counter at which it holds another operation as one
-  of a target's unsuperseded operations; it MAY forget such a place once nothing
-  there is unsuperseded any more. A device of the creator MUST stop issuing under
-  its tag, and continue under a new one, when it receives an operation under its
-  own tag that is not one it holds as it issued it:
-  - a counter above the last it issued;
-  - an operation that differs from one it has not yet sent;
-  - an operation that collides with one it holds, as above.
+  An application's reason is named as FRM-15 names an extension, in this grammar,
+  with `major` as in [§5](#5-document-profiles):
 
-  *Rationale:* a device restored from an old backup reuses its tag and counter.
-  Merging the two operations means nothing gets stuck and every participant
-  agrees; merging them into one means a target holds at most one operation per
-  device whatever a restored or broken device sends, which is what bounds a
-  snapshot's heads (§7.5). The narrowest value is what keeping both would give. A
-  superseded operation under a colliding place changes no value, so noticing
-  collisions only where something still holds keeps what a receiver remembers
-  bounded by what it holds (CTL-30), and makes a restored state, which holds only
-  what a snapshot carries, notice what a live one notices. A device that restarted
-  holds only its unsuperseded operations, not every one it sent (CTL-26), so a
-  collision with one of those, or a counter it never reached, is what it can
-  always tell; a new tag on any of them ends the collision for every later
-  decision.
+  ```abnf
+  application-reason = label 1*("." label) "/" major  ; at most 128 bytes
+  label              = 1*(%x61-7A / DIGIT / "-")      ; lowercase letters, digits, "-"
+  ```
 
-### 7.4 Holes and the control vector
+  *Rationale:* at a tie, the narrower value grants no more than either decision
+  did; ordered so on a layer, it is the narrower effective right whatever the
+  permission on the document (LAY-5). A reason grants nothing, so any order every
+  receiver applies alike will do, and a one-way flag needs none. As a register, a
+  reason merges alike everywhere and can still change after the close. One that
+  arrives without the close is taken all the same, so that what a receiver holds
+  depends only on the registers it received, and shown only once the close holds;
+  it stays part of the persisted control state (CTL-26, CTL-39). A receiver takes
+  any string: a later revision may define further codes (VER-5), and refusing one
+  would refuse its frame, the close with it. The codes hold neither `.` nor `/`, so
+  no application's reason reads as one; the grammar gives each one spelling, as §5
+  does to a profile id.
 
-A device's counters are gap-free, so a counter missing below one a participant
-holds is a lost operation — a **hole** (LOS-10). The **control vector** is, for
-every creator device that ever issued an operation, the highest counter held
-without a gap; a device of which no counter is held without a gap — one known only
-above a hole — is absent from it, never named with 0 (FRM-14). It is what requests
-and the creator's heartbeats carry ([§8.2](#82-requesting),
-[§9.3](#93-heartbeat)). The counters a participant holds
-above a hole it keeps beside the vector: an operation superseded there is in no
-target's heads any more, and only the counters show that it is held, and that the
-hole is one (§7.5).
+The codes of `close-reason`:
 
-What a receiver holds is bounded (CTL-30), in bytes as CTL-34 measures; what it
-keeps at the bound on devices is fixed, so that receivers of the same operations
-agree (CTL-35); a close is held whatever the bounds (CTL-36); and a device of the
-creator issues nothing a receiver would refuse (CTL-37). A receiver pushed over
-the bytes anyway, over its bound on targets, or over 64 devices in a target's
-`seen`, is in a capacity conflict (CTL-32).
+| Code | Why the creator closed the document |
+|---|---|
+| `finished` | The work on it is done; its content stays as the edits sent before the close leave it (LIF-6). |
+| `continued` | It goes on in a new document, created from its content ([§6.2](#62-creating-a-document)). |
+| `creator-state-lost` | Her devices no longer hold the document's rights (CTL-46). |
+| `capacity-conflict` | A device of the creator is in a capacity conflict (CTL-32), in which no one new can take part. |
 
-- **CTL-30** · *engine* — A receiver MUST bound what it holds of control state to:
-  - at most 64 creator devices — a device named only in what operations had seen
-    (`seen`) is none of them;
-  - at most 1 024 counters above a hole per device;
-  - at most 5 000 targets on members and on rights on layers together (a right on
-    a layer counts as a target of its own), beside which the close and the pace
-    always have room: 5 002 targets of every kind, as many as a snapshot carries
-    (§7.5);
-  - at most 3 MiB (3 145 728 bytes), measured as CTL-34 says.
+### 7.4 Bounds
 
-  It MUST refuse and report an operation beyond a bound, except as CTL-35 and CTL-36
-  say, and MUST NOT let it change the control state. An operation or a snapshot
-  that would bring it over the bytes, over the bound on targets, or a target's
-  `seen` over 64 devices, it MUST refuse as a whole: that is a capacity conflict
-  (CTL-32). It MUST NOT refuse, for the bound on counters above a hole, the
-  operation that fills the lowest hole of its device: the next counter after the
-  highest one it holds without a gap.
-  *Rationale:* the creator's account can name device tags and targets at will;
-  without bounds a forged or broken creator application could exhaust every
-  receiver's memory (§1.7, item 11). A hole wider than 1 024 is evidence enough,
-  and a resync fills it. The operation that fills the hole only shrinks what lies
-  above it; refusing it would let the bound block its own healing, so that only a
-  snapshot could still close the hole. A device named only in `seen` holds no
-  operation of its own here; counting it would let one operation push out the
-  devices whose operations a receiver holds. A target's `seen` grows with every
-  operation's, and devices that see different devices can name more than a
-  snapshot carries. Giving up the devices beyond 64 would make what supersedes what
-  depend on the order of arrival — an operation dropped as superseded while a
-  device was still named would be kept where it arrived after —, so beyond the
-  bound a receiver refuses, as beyond the bytes, and the conflict shows it. Honest
-  devices name only devices they hold, at most 64; only creator devices beyond 64
-  that do not agree on which they hold reach it. 3 MiB, and the close beside it, fit
-  the 4 MiB of every binding with room for the rest of the frame — an answer's
-  update goes in pieces of its own beside it (SND-17). 5 000 members are far more
-  than the small group TDSP serves (§1.1); a bound on their number keeps what a
-  receiver walks through, and every snapshot carries, fixed whatever their size.
-  Beyond it a receiver refuses as beyond the bytes: giving up one target for
-  another would take a right from someone without anyone seeing it, and devices
-  of the creator that each add members within what they may issue (CTL-37) can
-  reach the bound together, two adding 2 600 each, say. The close and the pace
-  keep their room, so that no bound keeps a document from being closed (CTL-36)
-  or the pace from being set. The bytes alone would allow more targets: a target
-  takes about 110 bytes at the least, so 1 MiB holds some 9 000.
-- **CTL-34** · *engine* — The bytes of CTL-30 and CTL-37 MUST be measured in the control
-  digest's form (LOS-24), without the close: the UTF-8 of the RFC 8785
-  serialisation of the object holding exactly the receiver's snapshot's `vector`,
-  `targets` and, where it has any, `aboveHoles` (§7.5), without `profile` and
-  without extension fields, where:
-  - `targets` leaves out `close`;
-  - `aboveHoles` leaves out the counter of an operation on `close`;
-  - `vector` names a device whose highest counter without a gap is that of its
-    operation on `close` with the counter below, and not at all where that is 0.
+What a receiver holds is bounded (CTL-30), in bytes as CTL-34 measures; the close
+and its reason lie outside every bound (CTL-36), and a device of the creator
+decides nothing a receiver would refuse (CTL-37). A receiver pushed over a bound
+anyway is in a capacity conflict (CTL-32).
 
-  *Rationale:* receivers at the bound must agree to the byte. "JSON without
-  whitespace" leaves the envelope of the object and the escapes open, and a frame's
-  own spelling is the sender's; the digest's form fixes both. The close is left out
-  because no bound may keep a document from being closed (CTL-36), and its counter
-  with it, so that the close of a device that has only just joined — its first
-  counter, a new entry in the vector — adds nothing either; where it fills a hole,
-  counters move from `aboveHoles` into the vector, which is shorter. So a receiver
-  that took the close as an operation and one that took it in a snapshot, restored
-  or as a joiner, measure the same state alike.
-- **CTL-35** · *engine* — At the bound on devices, for operations and snapshots
-  alike, a receiver MUST keep the devices whose tags come first in Unicode code
-  point order, giving up others it holds for them, and MUST refuse and report the
-  rest.
-  *Rationale:* keeping whatever came first at a bound would make what a receiver
-  holds depend on the order of arrival, so that receivers of the same operations
-  disagree; keeping the first in a fixed order makes it depend on the operations
-  alone (CTL-23). Beyond the bound on targets a receiver refuses instead, as
-  beyond the bytes (CTL-30, CTL-32).
-- **CTL-36** · *engine* — A receiver MUST hold a close, and pass it on, whatever the
-  bounds:
-  - also when the bound on devices gives up or refuses the device that issued it;
-  - also when its device holds as many counters above a hole as the bound allows —
-    it then holds the close without its counter;
-  - also in a snapshot it refuses as a whole (CTL-30), of which it then takes the
-    close alone.
+Every transport carries frames of at least 4 MiB (TRN-23), so an answer carries a
+control state at its bound with about 1 MiB to spare for the rest of the piece that
+carries it (SND-18): the responder's state vector above all (RSY-18), which gains
+an entry for every session that wrote (LOS-27). That room holds roughly 75 000 such
+sessions. This is an estimate, not a promise; it takes an entry at about 10.5 bytes
+— a client id of 8 bytes, as a 53-bit one takes, and a clock of 2 or 3 —, written in
+Base64 at 4 characters for 3 bytes, and about 600 bytes for the frame's other
+fields, the pace and the reason for the close among them. With the 32-bit client
+ids Yjs draws, an entry takes about 7 bytes and the room about 110 000 sessions; a
+control state far below its bound leaves room for several times as many. What
+decides is the bytes of the whole frame as encoded, not this count. Beyond it no
+answer of that responder carries its control state (SND-18), so it bootstraps
+nobody new, and a device of the creator decides nothing but a close without a
+reason (CTL-36, CTL-37); no state of the protocol marks it
+([§15.4](#154-what-is-not-guaranteed)).
 
-  Of the operations on `close` it MUST hold each device's latest only, of at most 64
-  devices (those whose tags come first in Unicode code point order), and no `seen`
-  for `close`. Whichever it keeps, the document stays closed (LIF-7).
+- **CTL-30** · *engine* — A receiver MUST bound the control state it holds to at
+  most 5 000 targets on members and on rights on layers together, beside which the
+  pace and the reason for the close always have room, and to at most 3 MiB
+  (3 145 728 bytes), measured as CTL-34 says. A `control` frame or a snapshot that
+  would bring it over either bound it MUST refuse as a whole — a capacity conflict
+  (CTL-32) —, taking its close and its reason all the same (CTL-36). The requests of its own it keeps are bounded as RSY-12 says.
+  *Rationale:* without bounds a broken application of the creator could exhaust
+  every receiver's memory (§1.7, item 11). Beyond them the merge would depend on
+  the order of arrival, so a receiver refuses rather than give up a target, which
+  would take a right from someone unseen. 3 MiB fit the 4 MiB every transport
+  carries (TRN-23), beside the rest of an answer (§7.4); 5 000 members are far more
+  than the small group TDSP serves (§1.1).
+- **CTL-34** · *engine* — The bytes of CTL-30 and CTL-37 MUST be measured
+  over the targets on members and on rights on layers that a control state holds,
+  each at a fixed width whatever its register: 14 bytes, those of
+  `{"targets":{}}`, and for each such target the UTF-8 of its name as RFC 8785
+  serialises a key, 1 for the colon and 86 for its register, and 1 for each comma
+  between two. 86 bytes are those of the longest register other than one on the
+  reason for the close, each register holding exactly `value`, `clock` and `device`
+  (LOS-24): a pace of 2^32 − 1 ms at the greatest clock. Neither the pace nor the
+  reason for the close is measured, as neither is counted (CTL-30), nor the close,
+  `profile` and extension fields.
+  *Rationale:* receivers at a bound must agree to the byte, whatever the order of
+  arrival: at a fixed width the measure depends only on which targets are held, and
+  a register on a target held — a revocation — never changes it. RFC 8785 fixes the
+  escapes of a name.
+- **CTL-36** · *engine* — The close lies outside every bound: a receiver MUST take
+  it from every `control` frame and snapshot whose registers it may take (CTL-5),
+  one it refuses for its bounds included (CTL-30), and a
+  device of the creator MUST be able to issue it whatever its control state holds
+  (CTL-37). The reason for the close (CTL-23) lies outside them too: a receiver MUST
+  take its register wherever it takes the close, in a capacity conflict too
+  (CTL-32), and a device of the creator MUST be able to set it with its close or
+  after it whatever its control state holds — but where an answer could no longer
+  carry it (CTL-37): there its engine MUST refuse the close with that reason, or
+  the reason after the close, as a whole, as `too-large`, and tell its
+  application, which may close without a reason.
   *Rationale:* nothing undoes a close (LIF-7), so no bound may leave a receiver
-  without one it was sent, and none may keep a document from being closed: a full
-  document is one that may need closing most, and a reserve of bytes for the close
-  would be used up by changes of the targets held and by unions as much. The close
-  is bounded by the devices instead, one operation of each, since a device issues
-  nothing after it (LIF-6). It is bounded by the devices it keeps a head of, not by
-  those that sent one, since a forged or broken creator application can name a new
-  device for every close, and a close that kept every head would hold more than
-  any snapshot carries. Which heads it keeps changes nothing of what it does, so
-  the first 64 in code point order are enough, as at the bound on devices; every
-  device a receiver holds that closed is among them (among the first 64 of all
-  devices named, it is among the first 64 of those that closed), so the measure
-  without the close stays exact (CTL-34). A close supersedes nothing but its own
-  device's earlier close, so it needs no `seen`, which would grow with every device
-  that closes.
-- **CTL-37** · *engine* — A device of the creator MUST NOT issue:
-  - an operation a receiver would refuse under CTL-30 and CTL-35, a member or a
-    right on a layer beyond the bound on targets among them;
-  - an operation that adds a target — a member or a right on a layer it does not
-    hold, or the first pace — and would bring its control state over 1 MiB
-    (1 048 576 bytes), measured as CTL-34 says;
-  - the close excepted, an operation after which a `resync-response` carrying its
-    control snapshot beside an update that holds nothing would exceed its
-    transport's `bounds.maxBytes` (SND-18).
-
-  It MUST refuse the action and tell its application why; refusing it is no
-  capacity conflict of its own. An operation on a target it holds — a revocation,
-  a change of a right — it issues up to the 3 MiB a receiver holds, while there is
-  room; the close always.
+  without one it was sent, or keep a document from being closed, and its reason
+  goes with it. Unlike the close, a reason adds to every answer, and a control
+  state no answer can carry bootstraps no one (SND-18).
+- **CTL-37** · *engine* — A device of the creator MUST NOT make a decision that a
+  receiver would refuse under CTL-30; one that adds a target — a member or a right
+  on a layer it holds no register for — and would bring its control state over
+  1 MiB (1 048 576 bytes), measured as CTL-34 says; or one, other than the close,
+  after which a `resync-response` carrying its snapshot beside an
+  update that holds nothing would exceed its transport's `bounds.maxBytes`
+  (SND-18). It MUST refuse the action and tell its application why; refusing it is
+  no capacity conflict of its own.
   *Rationale:* a control state no answer can carry could no longer bootstrap anyone
-  (SND-18), although every operation in it went out; the place to stop it is where
-  it would grow — but a document no joiner can bootstrap is still closed for
-  everyone who holds it. Two bounds in bytes keep the common case free of conflict:
-  devices of the creator that grow apart — up to three, each to 1 MiB of new
-  targets and changing little of what they hold — still merge within the 3 MiB a
-  receiver holds, as long as they add no more than 5 000 members and rights on
-  layers together; more devices, devices that change much of what they hold, or
-  more targets can reach the conflict (CTL-32). A device that refuses an action
-  holds what it held, so it is in no conflict. Changing the rights of a full
-  document is possible only while there is room; closing it always is. 1 MiB holds
-  hundreds of members even with long ids.
-- **CTL-32** · *engine, application* — A receiver that refuses an operation or a
-  snapshot of the creator because it would bring its control state over the bytes
-  of CTL-30, over its bound on targets, or a target's `seen` over its 64 devices,
-  is in a **capacity conflict**, for good. Its engine MUST report it, and from then
-  on:
-  - MUST take no operation on a member or a right on a layer it does not hold — the
-    close, the pace and operations on targets it holds it takes as before;
-  - MUST refuse every edit of its own as CTL-13 refuses a reader's, on a device of
-    the creator too;
-  - MUST NOT issue an operation on a member or a right on a layer it does not hold;
-  - MUST answer every request with `control: null`, but for a member's control
-    report to a device of the creator (RSY-8).
-
-  An answer whose snapshot it refused bootstraps nothing (CTL-13); its close it
-  holds all the same (CTL-36). An application that persists the control state
-  (CTL-26, CTL-39) MUST persist the conflict with it, and MUST show the conflict to
-  the person for as long as it lasts; it SHOULD offer to continue in a new document
-  created from the content (§6.2).
-  *Rationale:* within the bounds a union does not depend on the order of arrival;
-  beyond the bytes or the targets it does: two receivers of the same operations
-  can hold different parts of them, each the first that came. No rule bounds what a
-  receiver holds and keeps every decision too; cutting in a fixed order would take
-  rights from people without anyone seeing it. So this is no automatic convergence
-  but a state a person resolves. A receiver that could not hold a decision of the
-  creator may lack one about itself, so it stops writing; every receiver of a union
-  over the bytes or the targets reaches the conflict, in whatever order the
-  operations arrive, since none can hold them all. Taking no new target keeps it
-  from growing into what it refused; taking operations on what it holds keeps
-  revocations working. It hands on no control state, since it knows that what it
-  holds lacks something: a device it bootstrapped would write although it may lack
-  a decision about itself, and a joiner would hold less than the creator decided.
-  A control report is no authority (CTL-27), and lacking something it still shows
-  where operations collide (CTL-31). A conflict that a restart forgot would let it
-  write again on what it could not hold.
+  (SND-18), and the place to stop it is where it would grow. The 1 MiB, a third of
+  what a receiver holds, bounds bytes only: with names shorter than about 120 bytes
+  the 5 000 targets bind first, and two devices that each add 2 501 targets reach a
+  capacity conflict (CTL-32).
+- **CTL-32** · *engine, application* — A receiver that refuses a `control` frame or
+  a snapshot for the bounds of CTL-30 is in a **capacity
+  conflict**, for good. Its engine MUST report it, and from then on MUST take no
+  register on a member or on a right on a layer it holds none for — the close and
+  its reason, the pace and registers on targets it holds it takes as before —; MUST refuse every
+  edit of its own as CTL-13 refuses a reader's, on a device of the creator too; MUST
+  NOT decide on a member or a right on a layer it holds no register for; and MUST
+  answer every request with `control: null`, a device of the creator's included
+  (RSY-8). An answer whose snapshot it refused still bootstraps it (RSY-14), into
+  the conflict; its close and its reason it holds all the same (CTL-36). An
+  application that persists the control state (CTL-26, CTL-39) MUST persist the
+  conflict with it, MUST show it for as long as it lasts, and SHOULD offer to
+  continue in a new document created from the content (§6.2).
+  *Rationale:* every receiver of the same targets reaches the conflict in whatever
+  order they arrive (CTL-34). A receiver that could not hold a decision of the
+  creator may lack one about itself, so it stops writing; taking no new target
+  keeps it from growing, and taking registers on what it holds keeps revocations
+  working. It hands on no control state, which it knows lacks something. A
+  conflict a restart forgot would let it write again.
 
 ### 7.5 The control snapshot
 
-The creator's `resync-response` carries its control state as the frame's `control`
-object. A device answering another device of its own member passes on the control
-state it holds in the same layout (RSY-8):
+An answer carries its responder's control state as the frame's `control` object,
+from every responder that is bootstrapped and in no capacity conflict (RSY-8,
+CTL-32):
 
 ```json
 {
   "profile": "yjs-paragraphs/1",
-  "vector": { "Ms3dRk0ZyS7cH1qkM8fWNA": 3 },
+  "closed": false,
   "targets": {
-    "member:bob":   { "seen": { "Ms3dRk0ZyS7cH1qkM8fWNA": 1 },
-                      "heads": [ { "device": "Ms3dRk0ZyS7cH1qkM8fWNA", "counter": 2,
-                                   "value": "write", "seen": {} } ] },
-    "member:carol": { "seen": { "Ms3dRk0ZyS7cH1qkM8fWNA": 2 },
-                      "heads": [ { "device": "Ms3dRk0ZyS7cH1qkM8fWNA", "counter": 3,
-                                   "value": "read", "seen": {} } ] }
+    "member:bob":   { "value": "write", "clock": [1793008800000, 0], "device": "Ms3dRk0ZyS7cH1qkM8fWNA" },
+    "pace":         { "value": 30000,   "clock": [1793008800000, 1], "device": "Ms3dRk0ZyS7cH1qkM8fWNA" },
+    "member:carol": { "value": "read",  "clock": [1793008860000, 0], "device": "Ms3dRk0ZyS7cH1qkM8fWNA" }
   }
 }
 ```
@@ -1940,229 +2112,123 @@ The layout is closed for its defined fields (FRM-9):
 | Field | Required | Value |
 |---|---|---|
 | `profile` | yes | A profile id ([§5](#5-document-profiles)) |
-| `vector` | yes | The responder's control vector (§7.4) |
-| `targets` | yes | An object of at most 5 002 entries, each a target (`member:<MemberId>`, the MemberId 1–255 UTF-8 bytes; `layer:<layer id>:member:<MemberId>`; `close`; `pace`) mapped to an object with exactly `seen` and `heads`; never a member that is the creator, also not on a layer |
-| `targets.*.seen` | yes | A control vector of at most 64 devices: the element-wise maximum of what the target's operations had seen (CTL-22); for `close`, empty (CTL-36) |
-| `targets.*.heads` | yes | An array of at most 64 operations, the ones on the target nothing supersedes, at most one per device (CTL-24) (for `close`, each device's latest, of the 64 devices first in code point order, CTL-36), each with exactly `device`, `counter` (from 1), `value` (one the target can take) and `seen` (not naming its own `device`, CTL-20) |
-| `aboveHoles` | no | An object of at most 64 entries, each a device tag mapped to the counters the responder holds of that device above its entry in `vector` (above 0 where the vector names none, FRM-14): 1 to 1 024 of them, ascending without repeats, those of heads among them. Present exactly when the responder holds such a counter |
+| `closed` | yes | The sender's close flag |
+| `targets` | yes | An object of at most 5 002 entries — 5 000 members and rights on layers, the pace and the reason for the close —, each a target (`member:<MemberId>`, the MemberId 1–255 UTF-8 bytes; `layer:<layer id>:member:<MemberId>`; `pace`; `close-reason`) mapped to a register of exactly `value` (one the target can take), `clock` (CTL-45) and `device` (a device tag); never a member that is the creator, also not on a layer |
 
-A snapshot that breaks this layout — a defined field missing or of the wrong
-type, a field without `.` that is not listed, a member named twice in the JSON,
-the creator among the targets — rejects the whole `resync-response` (FRM-6).
+A snapshot that breaks this layout — a defined field missing (`missing-field`) or
+of the wrong type, a field without `.` that is not listed, a member named twice in
+the JSON, the creator among the targets — rejects the whole `resync-response`
+(FRM-6). The layout counts entries, not what they name: 5 002 targets on members,
+none on the pace or the reason, break no layout, only the bound of CTL-30.
 
-- **CTL-25** · *engine* — A receiver MUST merge a control snapshot with what it
-  holds as a union of operations:
-  - it keeps every head and everything a target's operations had seen (of the close,
-    what CTL-36 keeps), whatever the snapshot's `vector` names;
-  - it counts a head above the vector, and every counter in `aboveHoles`, as held
-    above a hole (§7.4);
-  - it leaves out only what CTL-30 and CTL-35 refuse.
-
-  It MUST apply a snapshot only from the creator, from another device of its own
-  member in an answer to its own request (RSY-12), or, on a device of the creator,
-  one its application carried to it from another device of the creator (ARC-5). It
-  MUST refuse a carried snapshot for which a `resync-response` carrying it would
-  be rejected (CTL-10, CTL-15). A snapshot need not be newer than what the receiver
-  holds.
-  *Rationale:* a snapshot is how a joiner on a history-less transport, or an engine
-  that found a hole, learns current state — no other member can forward it,
-  because it must come from the creator. A device of one's own member is the
-  exception: the messenger authenticates its MemberId like one's own, and whoever
-  controls an account controls all of its devices anyway. A snapshot carried
-  between the creator's devices is as much the creator's as the service that
-  carries it keeps it so (ARC-5). A union cannot undo anything, so a snapshot need
-  not be newer than what a receiver holds, and state with a hole may be passed on.
-  Merged so, a snapshot gives what its
-  operations applied as frames give, holes included: a joiner it bootstraps holds
-  the rights a member that received the same operations holds, and a state
-  restored from what it persisted (CTL-26, CTL-39) keeps the holes that keep it
-  from bootstrapping itself (CTL-41). A device known only by a head above the
-  vector, or only by what an operation had seen, is no device to drop: what it had
-  seen is what supersedes an operation that arrives later (CTL-22).
+- **CTL-25** · *engine* — A receiver MUST merge the snapshot of every
+  `resync-response` it accepts (RSY-12), whoever sent it, and, on a device of the
+  creator, one its application carried to it from another device of the creator
+  (ARC-5): register by register (CTL-22), and its close as CTL-23 says, whatever
+  its clocks, leaving out only what CTL-30 refuses. It MUST refuse a carried
+  snapshot for which a `resync-response` carrying it would be rejected (CTL-10,
+  CTL-15). A snapshot need not be newer than what the receiver holds.
+  *Rationale:* a snapshot is how a joiner on a history-less transport learns the
+  current state, passed on as it reached its responder (§1.1); the creator's
+  identity stays the only one whose `control` frames count (CTL-5). A merge never
+  takes back a register with a greater clock, so an older snapshot is harmless, and
+  a joiner it bootstraps holds the rights a member that received the same frames
+  holds. A carried snapshot is as much the creator's as its service keeps it
+  (ARC-5).
 - **CTL-10** · *engine* — A receiver MUST reject a `resync-response` whose snapshot
-  it would apply (CTL-25), the creator's or that of another device of its own
-  member, when the snapshot names a profile other than the document's — applying none of
-  it, update included — and MUST report it to its application.
+  it would merge (CTL-25) when the snapshot names a profile other than the
+  document's — applying none of it, update included — and MUST report it to its
+  application.
   *Rationale:* the profile a joiner learned from the invitation is only a claim of
-  whoever wrote the invitation; the creator's snapshot is where the creator
-  confirms it, a snapshot passed on by a device of one's own member passes that
-  confirmation on, and content of a different profile must never be applied.
+  whoever wrote the invitation; the snapshot of the answer that bootstraps it
+  (RSY-14) is where it learns the document's own, and content of a different
+  profile must never be applied.
 - **CTL-15** · *engine* — A receiver MUST reject a `resync-response` whose snapshot
   breaks the layout above as a whole, applying neither its update nor any of its
   control state (FRM-6).
   *Rationale:* a snapshot half-applied leaves the receiver in a state the creator
-  never had; an honest creator never sends an invalid snapshot, so rejecting it
-  loses nothing that a later, valid answer does not bring.
+  never had; a cooperating participant never sends an invalid snapshot (§1.1), so
+  rejecting it loses nothing that a later, valid answer does not bring.
 
 ### 7.6 A new device of the creator
 
-Under CTL-22 a device that has seen nothing is concurrent with every earlier
-decision: its grant would lose to any older, narrower right, and a creator who
-lost every device would lose the creator role with it, although the messenger
-still vouches for the account. Members cannot give such a device the control
-state — they hold no authority — but they can tell it *what* to supersede. What
-it learns so is a **control report**: the control vector of a resync request, or
-the control state in a member's answer to the device's own request (RSY-8). A
-control report is not a report in the sense of [§10.3](#103-reports-and-streams).
+The creator's devices hold the document's authoritative control state: only they
+decide (CTL-1), and a device of the creator that holds nothing yet takes that state
+only from another of her devices or its own restored or carried state (RSY-14,
+CTL-26, ARC-5). Members' answers bring it the content and the registers they hold
+(CTL-25), but not the creator's whole: a decision of a lost device that reached
+only some members may be missing from all of them. Until it is bootstrapped it
+decides nothing but the close and its reason (CTL-27); where no device and no
+backup of hers holds the state, the document is closed and continued as a new one
+(CTL-46, CTL-43).
 
-- **CTL-28** · *engine* — A device of the creator has a **basis** for its control
-  state once it:
-  - created the document;
-  - restored persisted control state that was a basis when it was persisted
-    (CTL-26), and state an application carried to it from another device of the
-    person (ARC-5) only where it was a basis there;
-  - merged a snapshot that another device of the creator sent in answer to this
-    device's own request (CTL-25, RSY-13); or
-  - took the action of CTL-33 on a person's explicit decision, after a member's
-    control report (CTL-27) had reached it, once every operation it issued went
-    out.
-
-  Control reports, its own new operations, and the creator's operations and
-  snapshots it applied otherwise (read from the channel's history, or sent in
-  answer to another requester) are none, before a restart and after it. Until it
-  has a basis it MUST answer every request, from a joiner, from a member's device
-  or from another device of the creator, with a control snapshot only when the
-  requester is a member it decided about itself, by an operation it issued, and
-  with `control: null` otherwise; and it MUST tell its application that its
-  control state is unconfirmed.
-  *Rationale:* on such a device every earlier member looks new. Handing a
-  requester its snapshot would bootstrap a member removed earlier with rights the
-  device never knew about; answering without control state leaves the requester
-  waiting for a device that knows (CTL-13), but without making everyone else
-  wait. Nothing on the wire says whether the device that issued an operation, or
-  that sent a snapshot to another requester, had a basis itself: counted as one,
-  two devices without a basis would give each other one, and between them
-  bootstrap a member the lost device had removed. A device answers another device
-  of the creator with a snapshot only once it has a basis, since the creator is no
-  member it decides about (CTL-4), so a snapshot in answer to one's own request is
-  one a device with a basis sent. A device without one asks with `control: null`,
-  so that such a device answers it even when it lacks nothing else (RSY-16,
-  RSY-17). A creator who lost every device has no device left that could answer
-  so: its new device stays without a basis, bootstraps only the members it decides
-  about itself, and shows its control state unconfirmed until a person confirms
-  it. Confirming, the person decides again every target on which what members
-  report differs from what the device holds (CTL-33), so the device then holds the
-  creator's word on all of it that the reporting members hold; with nothing
-  diverging, the person confirms what the device holds. Before any member
-  reported, there is nothing to confirm it against: the device stays unconfirmed,
-  and its application can say that it waits for a member.
-- **CTL-27** · *engine* — A device of the creator without a basis for its control
-  state (CTL-28) MAY issue operations at once. For CTL-22 it MAY count as seen, for
-  each other creator device, the highest counter a participant reports in a
-  control report — the control vector of a resync request, or the `vector` of the
-  control state a member's answer to its own request carries — only ever raising
-  what it counts as seen. Once it has a basis it MUST forget what it counted so
-  and MUST NOT count reported counters as seen any more, but for the explicit
-  confirmation of CTL-33. It MUST NOT take a value from a control report into its
-  control state: values come only from operations whose sender is the creator
-  (CTL-5), read from the channel's history or issued by itself.
-  *Rationale:* taking from members only what to supersede, never what holds, lets
-  a new device decide at once without giving members authority. A control report
-  too low makes a result narrower, the direction CTL-23 prefers; one too high
-  matters only when a former creator device comes back and decides concurrently,
-  whose decision then counts as superseded. A device with a basis that lags behind a
-  member would otherwise supersede decisions it never saw — another device's
-  revocation, say — and grant more than any device of the creator decided.
-- **CTL-29** · *application* — An application MUST NOT present control state
-  reported by anyone but the creator as the creator's decisions; it MAY show it as
-  unconfirmed. On a device of the creator without a basis (CTL-28) it MUST NOT
-  issue operations the person did not decide — an automatic grant to a newcomer,
-  say — while the person's own decisions stay possible at once.
-  *Rationale:* a control report is a member's word. An application that grants
-  newcomers a right by itself sees every earlier member as new on such a device,
-  and a control report would let its grant supersede an earlier removal; the
-  person deciding knows whom they mean.
-- **CTL-31** · *engine, application* — A device of the creator MUST compare a
-  control report (CTL-27) with what it holds, operation by operation under each
-  device and counter, and MUST tell its application every place where the control
-  report holds an operation under a device and counter that the device holds as
-  another operation (a *collision*, CTL-24), taking nothing else from it. Its
-  evidence of a member whose control digest differs at an equal control vector
-  (LOS-12) is what makes it ask, and a member that holds control state answers a
-  device of the creator with its control report then (RSY-17). An application
-  SHOULD let the person decide such a target again; the new operation supersedes
-  both (CTL-22), and a collision only a member's control report shows is a
-  divergence of CTL-33.
-  *Rationale:* a collision arises where a device of the creator goes on from an
-  old state — restored from a backup, or copied to a new computer with its tag —
-  and its two copies decide under one counter. Members who see both keep the
-  narrower (CTL-24), but the creator's devices may never see the other copy's
-  operation, and a member's state is no authority. Where it lies is all a control
-  report may say; a decision taken again ends it for everyone.
-- **CTL-33** · *engine* — A device of the creator MUST make observable to its
-  application every **divergence**: for each member's latest control report
-  (CTL-27), every target on which the control report holds an operation that the
-  device neither holds unsuperseded nor supersedes by an operation it holds
-  (CTL-22), with the member, the value the control report gives the target
-  (CTL-23) and the value the device gives it, for display only (CTL-29). It MUST
-  offer an action, taken only on a person's explicit decision, that issues every
-  diverging target but the close again:
-  - with the value the person chooses for it — by default the value the device
-    gives it, or, where it holds none, `null` for a member or a right on a layer
-    and 0 for the pace;
-  - counting as seen, for each other creator device, the highest counter of the
-    operations the control reports hold beyond it there;
-  - under a new tag (CTL-24) where one of those operations is under its own tag
-    above its counter.
-
-  That action is the only place a device with a basis counts reported counters as
-  seen, and still takes no value from a control report but one the person chose.
-  Taken after a member's control report (CTL-27) has reached the device, it gives
-  a device without a basis one (CTL-28) once every operation it issued went out
-  (at once where nothing diverges), which the device persists with its control
-  state (CTL-26); taken before any control report, it gives none.
-  *Rationale:* automatic is only what a rule merges without a question of
-  authority: two operations under one device and counter (CTL-24) and the union of
-  snapshots (CTL-25). A decision of a device of the creator that vanished, held only
-  by members, is the creator's word as much as any, but the device never saw it:
-  deciding the target again supersedes it only when the new value is narrower
-  (CTL-23), and otherwise the members keep the old one while the device shows its
-  own. Only the person can say which stands; counting the reported counters as seen
-  on that explicit decision makes the new one supersede the unknown one everywhere.
-  A member's control report can name counters that were never issued, as CTL-27
-  says; the person who confirms supersedes whatever lies there, which is what
-  confirming means. Having decided again everything a control report holds beyond
-  the device, the person has made the device's control state the creator's word
-  wherever a reporting member holds one, which is what a basis stands for; without
-  it, a creator who lost every device would never again bootstrap a member it did
-  not decide about (CTL-28). Before any control report the person would vouch for
-  a state nobody else has seen, and every member removed earlier would look new
-  again, so the device waits for one. What no member reported the confirmation
-  cannot cover (a member offline, say): that decision stands where it is held, the
-  narrower of two concurrent ones holding (CTL-23). The close is not issued again,
-  since nothing undoes one (LIF-7); a divergence on it stays until the device
-  closes too.
-- **CTL-43** · *application* — An application MUST show divergences (CTL-33) to the
-  person for as long as they last, and SHOULD offer the action of CTL-33, with the
-  held and the reported value of each target to choose from.
-  *Rationale:* a divergence ends only by a person's decision, which the person can
-  make only when shown what diverges.
+- **CTL-27** · *engine* — A device of the creator that is not bootstrapped (RSY-14)
+  MUST NOT make a decision other than the close and its reason (CTL-23): it MUST
+  refuse every other decision its person makes, as `not-bootstrapped`, and MUST
+  take the registers of an answer to its own request as any device does (CTL-25).
+  It MAY edit the content (CTL-13).
+  *Rationale:* a decision made before the bootstrap would hold, by its later clock,
+  over decisions of the creator the device does not hold yet (CTL-22), on a state
+  that may lack some of them for good. The close needs no state: it holds whatever
+  else was decided (CTL-23), and it is how a document whose creator kept no state
+  ends (CTL-46). Content is the CRDT's, and an edit of the creator's competes with
+  nothing she may not write.
+- **CTL-46** · *application* — The creator keeps the document's control state: an
+  application of the creator MUST persist it (CTL-26) and SHOULD let its person
+  keep it on more than one device or in a backup that restores it (ARC-5). Where no
+  device of the creator and no backup holds it any more, the document MUST NOT be
+  continued with rights taken from members (RSY-14): the application closes it,
+  SHOULD with the reason `creator-state-lost` (CTL-23), and continues in a new
+  document (CTL-43).
+  *Rationale:* every right is a decision of the creator, and only her devices hold
+  them all; members hold what reached them. A state rebuilt from members could lack
+  a decision for good, with no one able to complete it, while a new document starts
+  from rights the creator decides again, on the content as the members hold it.
+  The reason tells the others why the document ends and that it goes on elsewhere
+  for that reason.
+- **CTL-43** · *application* — On a device of the creator, an application MUST
+  show the person, while the device is not bootstrapped (RSY-14), that the
+  document's rights are not known yet and that only the close and its reason can
+  be decided (CTL-27). Once its attempts ran out (RSY-5) while it is still not
+  bootstrapped — no other device of the creator answered —, the application MUST
+  show that, MUST ask the person whether another device of hers, or a backup,
+  still holds the document, and SHOULD offer to close the document and continue it
+  as a new one (CTL-46). When its person says that another device of hers, or a
+  backup, still holds the document, it SHOULD ask again (RSY-5). Until it is
+  bootstrapped, it MAY keep its person from editing, or hold the person's edits as
+  CTL-42 holds those its engine refuses, applying them once it is bootstrapped and
+  keeping them apart (CTL-42, item 3) if the document is closed. What else it
+  shows of the control state stands where it arises: a capacity conflict
+  (CTL-32), a member the channel and the rights disagree on (LIF-10), attempts
+  that ran out (RSY-5).
+  *Rationale:* whether the creator's other devices are lost or only switched off,
+  only the person knows; asked first, she opens the other device where there is
+  one, and closes only where none is left. A device she opens again answers only a
+  request it reads, and attempts that ran out make no more until one of her devices
+  writes (RSY-5): asking again then reaches it. Its engine refuses none of her edits
+  (CTL-27), so holding them is the application's choice, made as CTL-42 says.
 
 ### 7.7 Persisting control state
 
-- **CTL-26** · *engine, application* — A device of the creator MUST persist an
-  operation it issues *before* it hands the operation to the transport, as part of
-  its control state, together with:
-  - its tag and its counter;
-  - whether it had a basis for its control state (CTL-28);
-  - the complete frames of its operations not yet known to be sent.
-
-  It MUST keep each such frame as a pending change until the transport accepts it
-  or refuses it for good (SND-6, SND-8). A restarted device MUST restore that state
-  and send its pending frames again; what it restores is a basis only if it was one
-  when persisted. The device that creates the document MUST persist its control
-  state — its tag, counter 0 and its basis — before the initial state goes out
-  (LIF-3),
-  though nothing is decided yet. Persisting is not best-effort: when the
-  application cannot persist, it MUST report the failure to the engine, and the
-  engine MUST NOT issue the operation.
-  *Rationale:* a counter that was never persisted with its operation would leave a
-  hole nobody can fill, and a creator that forgot its grants hands joiners an
-  empty membership map. A pending operation resent after a restart is inert where
-  it already arrived. A state persisted by a device without a basis is still one
-  without: restored as a basis, it would bootstrap joiners it never decided about
-  with rights it never knew (CTL-28). A creator restarted without the state it
-  persisted when it created the document would be a device without a basis.
+- **CTL-26** · *engine, application* — A device of the creator MUST persist a
+  decision *before* it hands it to the transport, as part of its control state,
+  together with its tag and its clock (CTL-45), whether it is bootstrapped
+  (RSY-14), the draft's marker (VER-3), and the complete `control` frames not yet
+  known to be sent; it MUST
+  keep each such frame as a pending change until the transport accepts it or
+  refuses it for good (SND-6, SND-8). A restarted device MUST restore that state
+  and send its pending frames again; what it restores is bootstrapped only if it
+  was when persisted. The device that creates the document MUST persist its
+  control state — its tag, its clock, bootstrapped — before the initial state goes
+  out (LIF-3). Persisting is not best-effort: when the application cannot persist,
+  it MUST report the failure to the engine, and the engine MUST NOT make the
+  decision.
+  *Rationale:* a decision never persisted is lost for the person who made it, while
+  it may have reached others; a clock not persisted could give the next decision a
+  clock below one already sent, which would then not hold. A pending frame sent
+  again after a restart merges as a duplicate where it arrived. A state persisted
+  by a device that was not bootstrapped is still one that is not: restored as
+  bootstrapped, it would answer others with less than the creator decided (RSY-8).
 - **CTL-38** · *application* — An application that can persist only asynchronously
   MAY, instead of persisting before the send (CTL-26), hold every message its
   engine sends, of any kind, until the control state the engine reported before it
@@ -2173,14 +2239,14 @@ control report is not a report in the sense of [§10.3](#103-reports-and-streams
   forget — where the application's storage only answers later, as a browser's
   does.
 - **CTL-39** · *engine, application* — Any other participant MAY persist the control
-  state its engine holds, with whether a bootstrap had completed (CTL-13) and
+  state its engine holds, with whether its bootstrap had completed (RSY-14) and
   whether it was in a capacity conflict (CTL-32), and restore it on that device,
-  never on another (ARC-5). Its engine then
-  shows the rights it holds at once, but takes the restored state as no authority
-  — it issues nothing (CTL-1) — and as a bootstrap only as CTL-41 says.
+  never on another (ARC-5). Its engine then shows the rights it holds at once, but
+  takes the restored state as no authority — it decides nothing (CTL-1) — and as a
+  bootstrap only as CTL-41 says.
   *Rationale:* a non-creator holds no authority of its own to restore: what it
-  restores is the creator's operations as it last held them, and a union cannot
-  undo anything (CTL-25), so the creator's later answer only adds to it.
+  restores is the creator's registers as it last held them, and a merge cannot
+  undo anything (CTL-25), so a later answer only adds to it.
 - **CTL-40** · *engine, application* — An engine MUST report every change of its
   control state to its application before it makes observable a cursor (§6.3, LIF-8)
   that reads past the delivery that brought the change. An application that
@@ -2196,29 +2262,23 @@ control report is not a report in the sense of [§10.3](#103-reports-and-streams
 - **CTL-13** · *engine* — An engine MUST refuse to send an `edit` frame of its own,
   reporting the refusal and not retrying it:
   - when the document is closed;
-  - when its own permission is explicitly `read` on a part the edit changes: on the
-    document for a change of the content, on a layer for a change of that layer
-    (LAY-5, LAY-6, LAY-7);
+  - when its own permission is `read` on a part the edit changes — on the document
+    for a change of the content, on a layer for a change of that layer (LAY-5,
+    LAY-6, LAY-7) —, a permission on the document that no register gives counting
+    as `read`;
   - when its own permission on the document is revoked (§7.1);
   - while it is in a capacity conflict (CTL-32);
-  - for anyone but the creator, before it is **bootstrapped**: by a
-    `resync-response` to one of its own requests, from the creator or from another
-    device of its own member, that carries control state it holds (CTL-30,
-    CTL-32), or after a restart as CTL-41 says.
+  - for anyone but the creator, before it is bootstrapped (RSY-14).
 
-  Once bootstrapped, an *unknown* permission MUST NOT cause a refusal; a revoked one
-  is not unknown.
-  *Rationale:* before its bootstrap a joiner has neither the document's content
-  nor its control state: an edit would compete with content it cannot see, and it
-  may come from someone the creator has made read-only. For a first join waiting
-  costs nothing: only the creator, or another device of the joiner's own member,
-  can bootstrap it ([§8.3](#83-who-answers)), and with neither online the joiner
-  has nothing to edit. After the bootstrap, refusing on an unknown permission
-  would lock out everyone the creator has not named yet, while channel membership
-  already decides who can post; a member the creator revoked is not one it has not
-  named, and taking it for unknown would let concurrent `read` and revoke end in
-  writing, against both intents. Rights stay as strong as the participants'
-  engines (§15.2): a member who must not even read has to leave the channel.
+  *Rationale:* before its bootstrap a joiner has neither the content nor the control
+  state: an edit would compete with content it cannot see, and may come from
+  someone the creator made read-only. Waiting costs little: any member asked by all
+  can bootstrap it ([§8.3](#83-who-answers)), and with no one online it has nothing
+  to edit. The creator names everyone it admits (LIF-9), so a member not named yet
+  waits as a reader — the safe side of not knowing. A revoked member's register
+  keeps it so, and concurrent `read` and revoke end where CTL-22 says, never in
+  writing for want of a value. A member who must not even read has to leave the
+  channel (§15.2, §15.3).
 - **CTL-41** · *engine* — After a restart, an engine that is not the creator is
   bootstrapped (CTL-13) also by control state of its own restored from an earlier
   bootstrap (CTL-39), once all of these hold:
@@ -2227,8 +2287,7 @@ control report is not a report in the sense of [§10.3](#103-reports-and-streams
     `receiveSince`;
   - the `receiveSince` answer that read on was not `truncated`;
   - the transport's instance, where it offers one, was the one persisted with the
-    cursor (LOS-9);
-  - no creator device's counters have a hole (LOS-10).
+    cursor (LOS-9).
 
   *Rationale:* a member that resumes content its application persisted
   ([§6.3](#63-joining-a-document)) does have something to edit, while the creator
@@ -2236,8 +2295,8 @@ control report is not a report in the sense of [§10.3](#103-reports-and-streams
   on without a gap stands where one that never restarted stands: a revocation it
   has not received takes effect when it arrives, for both, and one that arrived
   meanwhile takes effect before any edit, since the read comes first. Where that
-  read cannot rule out a gap — no cursor, a truncated answer, another instance, a
-  hole — or nothing was restored, an answer bootstraps it again before it edits:
+  read cannot rule out a gap — no cursor, a truncated answer, another instance —
+  or nothing was restored, an answer bootstraps it again before it edits:
   without a cursor, overlapping answers prove nothing after a restart (LOS-8).
 - **CTL-42** · *application* — While its engine would refuse an edit (CTL-13), an
   application MUST either prevent the person from typing or **hold** every change
@@ -2250,28 +2309,27 @@ control report is not a report in the sense of [§10.3](#103-reports-and-streams
      engine would no longer refuse it;
   3. SHOULD let the person keep held changes outside the document, as a copy for
      instance, or discard them, while the engine refuses because the document is
-     closed, the person's own permission is `read` or revoked, or it is in a
-     capacity conflict (CTL-32);
+     closed, the person's own permission is `read` or revoked — not merely
+     unknown, for which a decision may still come —, or it is in a capacity
+     conflict (CTL-32);
   4. SHOULD tell the person when a held change did not survive the merge;
   5. SHOULD persist held changes locally across a restart.
 
   *Rationale:* holding lets a person go on while the creator is offline. A change
-  the engine refuses stays in its document, so the application has to keep it out
-  of there. Every later local change builds on it, which alone would fork the
-  person's copy for good; and everything in that document can leave the device —
-  not only in the engine's own edits but in its answers to resync requests, which
-  carry the responder's state since the requester's (RSY-8), whatever the
-  responder's own permission (RSY-10) and even before its own bootstrap: a
-  non-creator answers the creator's requests, and a creator that restarts sends
-  one (RSY-1, RSY-6). Holding keeps what preventing protects: a held change reaches
-  others only after the bootstrap, merged by the CRDT like any concurrent edit, so
-  it never competes with content the person cannot see, and a reader's change, or
-  one made after a close, never leaves the device. Its cost is that of offline
-  editing: the longer a change is held, the likelier it lands in content others
-  deleted meanwhile, where the CRDT drops it.
+  in the engine's document could leave the device — in its edits and in its answers,
+  which carry the responder's state whatever its own permission (RSY-8, RSY-10), a
+  member answering any request to all (RSY-6, RSY-21) —, and every later change
+  would build on it. A held change reaches others only after the bootstrap, merged
+  by the CRDT like any concurrent edit, and a reader's change, or one made after a
+  close, never leaves the device. The cost is that of offline editing: a change held
+  long may land in content others deleted meanwhile.
 
 1.x's CTL-2, CTL-3, CTL-8, CTL-9, CTL-11, CTL-12, CTL-14, CTL-16, CTL-17, CTL-18
 and CTL-19 are withdrawn ([Appendix G](#appendix-g-changes-from-tdsp-1x)).
+
+CTL-24, CTL-28, CTL-29, CTL-31, CTL-33 and CTL-35, requirements of the previous
+draft revision of 2.0, are withdrawn ([CHANGELOG.md](CHANGELOG.md)); 1.x had none of
+them.
 
 ## 8. Bootstrap and resync
 
@@ -2279,65 +2337,121 @@ The CRDT tolerates delay, duplication and reordering completely. It does not
 tolerate loss: a missing update leaves every later update from the same sender
 pending, silently and permanently. And no transport is required to replay
 history, so a joiner cannot catch up by reading old messages. Both problems have
-one answer: an engine **asks**, and the creator — or another device of the asker's
-own member — **answers** with exactly what the asker lacks.
+one answer: an engine **asks**. A joiner asks first the creator and the other
+devices of its own member, which **answer** at once with exactly what it lacks;
+when none does, it asks everyone, and one member answers. Every other request —
+for a gap, at a start, after a return, or its person's — asks everyone at once.
 
 ### 8.1 The sequence
 
 ```text
   Bob (joining)          Bob's bridge      messenger     Alice's bridge    Alice (creator)
   1. bind to the channel ─►│
-  2. resync-request: control null, empty state vector
+  2. resync-request: control clock null, empty state vector, all false
      ─────────────────────►├──────────────►├─────────────►├───────────────►│
-  3.                                                               only Alice answers
+  3.                                                       Alice answers at once
   4. resync-response: full snapshot + control snapshot + attribution overlay
      ◄─────────────────────┤◄──────────────┤◄─────────────┤◄───────────────┤
   5. content, permissions, pace and authorship present — bootstrap complete
 ```
 
+With the creator offline and no other device of Bob's own member at hand, step 3
+does not happen:
+
+```text
+  Bob (joining)                    messenger                 Carol, Dave (members)
+  2. resync-request, all false ───►│─────────────────────────►│  not theirs to answer
+  3. it expires unanswered
+  4. resync-request, all true ────►│─────────────────────────►│  each waits for its turn
+  5.                                                          Dave's turn comes first
+     resync-response from Dave ◄───│◄─────────────────────────┤  Carol hears it; holding no more
+                                                                 than it, she stays silent
+  6. content, permissions and pace present, as Dave holds them — bootstrap complete
+```
+
 The same exchange heals an established engine that noticed a gap
-([§10](#10-loss-detection)); its request then carries a non-empty state vector
-and the answer is a targeted diff.
+([§10](#10-loss-detection)); its request then carries a non-empty state vector,
+asks all, and the answer is a targeted diff.
 
 ### 8.2 Requesting
 
 - **RSY-1** · *engine* — A joining engine MUST send a `resync-request` when it
   joins, whatever the transport, and MUST NOT make that conditional on whether the
-  transport replays history.
+  transport replays history. An engine that starts again from what its application
+  persisted ([§6.3](#63-joining-a-document)) MUST, once its first read is done
+  (CTL-41), send one as a joiner does while it is not bootstrapped; bootstrapped,
+  it MUST send a **start request** — to all (RSY-21), stating its own state
+  (RSY-16) — when its last read that reached the messenger began longer before
+  than an absence it chooses, as [Appendix B](#appendix-b-recommended-values)
+  recommends (LIF-8), or when that time is not known, or when it holds a gap
+  (LOS-25); it MUST NOT send one otherwise, nor repeat one that went unanswered —
+  a return asks again as RSY-21 says. A running engine that is bootstrapped and is
+  told of an absence longer than that (LIF-12) MUST send a start request as one
+  that starts does.
   *Rationale:* a capability flag would create two code paths of which tests
   exercise only one; on a transport with history the request is a cheap
-  redundancy, on one without it the only bootstrap that works.
+  redundancy, on one without it the only bootstrap that works. A bootstrapped
+  engine away only briefly reads what came meanwhile (TRN-18), and what it still
+  lacks shows as a gap (LOS-25), so a request at every start would cost a round of
+  answers for nothing. After a longer absence, or not knowing how long, it may lack
+  what nothing shows yet — a last change whose report was lost too (SND-27) —, and
+  asks once, after its first read, so as not to be answered with what that read
+  brought. Repeated, it would ask the same participants again; a later gap has
+  tries of its own (LOS-6).
 - **RSY-16** · *engine* — A `resync-request` MUST carry:
   - a fresh random 64-bit `requestId`;
-  - the requester's control vector (§7.4) and control digest: for anyone but the
-    creator `null` until it is bootstrapped (CTL-13), whatever control state it
-    holds; for a device of the creator `null` until it has a basis for its
-    control state (CTL-28), its own from then on;
+  - the requester's control clock — the greatest clock among the registers it
+    holds — and its control digest (LOS-24), or `null` for both until it is
+    bootstrapped (RSY-14), whatever it restored;
   - its current state vector and state digest (LOS-12);
   - its stream and number (LOS-13);
   - `force`: `true` while it holds *history truncated* evidence (LOS-8, LOS-9,
-    LOS-23), `false` otherwise.
+    LOS-23), `false` otherwise;
+  - `all`: whether any member may answer it (RSY-6), as RSY-21 says.
 
   A responder MUST treat copies of a request with the same `requestId` as one
   request.
   *Rationale:* the state vector lets the responder send only what is missing; the
-  control vector lets it see which operations a requester lacks even when it lacks
-  no content. `null` and an empty vector differ: a joiner of a document in which
-  the creator never decided anything holds an empty one once answered, and is
-  still answered before. A member restarted with the creator's operations it
-  persisted holds them without being bootstrapped: with its vector it would get no
-  answer when nothing is missing (RSY-17), and after a read that could not rule out
-  a gap it would never be bootstrapped; `null` asks for the creator's word. A
-  device of the creator without a basis is in the same place: it may hold every
-  operation, and lacks only another device's word that it holds them (CTL-28);
-  `null` makes the creator's other devices answer it (RSY-17), and members that
-  hold control state answer it with their control reports (RSY-8), as they answer
-  a device that holds nothing. A device of the creator with a basis decides its
-  own control state, so its vector is what it holds. The id is the requester's own, not the messenger's delivery id: a
-  requester does not always learn the id its message gets on the receiving side,
-  and a duplicated delivery must not be answered twice. `force` is needed because
-  after a truncated history the requester cannot tell what it lacks, and a
-  responder that sees nothing missing would stay silent.
+  control clock and digest show a lacking register where no content is missing.
+  `null` differs from `[0, 0]`, which a joiner holds once answered in a document
+  without decisions. A device not bootstrapped may hold registers without the whole:
+  with its clock it might get no answer (RSY-17); `null` asks for the whole. The id
+  is the requester's own, since a requester does not always learn the delivery id
+  its message gets, and a duplicate must not be answered twice. `force`: after a truncated history the
+  requester cannot tell what it lacks, and a responder that sees nothing missing
+  would stay silent.
+- **RSY-21** · *engine* — A requester MUST set `all` to `false` in the first
+  request of its bootstrap (RSY-5) unless it returns (below), and to `true` in
+  every other request: the repeats of its bootstrap, every request for a gap
+  (LOS-6, LOS-26), a start request (RSY-1), a request of its person (RSY-3) and
+  every request while it returns. An engine **returns** when it starts
+  from content its application persisted ([§6.3](#63-joining-a-document)) after it
+  was away longer than its transport keeps a message for a device that is away —
+  counted as LIF-8 says, never from when that content was taken —, or after its
+  application had unbound the document from its channel and binds it again; a
+  device of the creator returns too when it starts from control state that was
+  bootstrapped (CTL-26, ARC-5) without content. An engine that keeps running
+  returns too when its application tells it of such an absence once a read reaches
+  the messenger again (LIF-8, LIF-12). A return wakes every resting gap (LOS-25, LOS-26); a
+  return ends once a request of it
+  that asks all was answered, or two such requests expired (RSY-4) — not one whose
+  send failed, which asked nobody.
+  *Rationale:* a joiner's first question is for the whole document, which the
+  creator's devices and its own member's give at once (RSY-6); everyone is asked
+  only when none of them answered or what answered did not help. A gap heals
+  through whoever holds what is missing, where loss is rare mostly a member, so a
+  request that asked only the creator would mostly spend a try (LOS-6). A request
+  to all costs a wait and may cost several answers, so it is made only for a gap, a
+  start, a return or the person's word. What members wrote while a device was away
+  longer than its transport keeps, or while the document was unbound, is lost to it
+  where nothing shows it (LOS-9), and those who answer at once may lack it too: only
+  a member asked by all brings it (RSY-20). A device of the creator that starts
+  from its control state alone lacks everything, and returns too. An answer to a
+  return may be lost while the members that heard it stay silent, so a second
+  request follows one that expired; a bootstrap that returns asks all at once, or
+  an answer of the creator's or its own device would end the return before any
+  member was asked. What a return cannot recover is named in
+  [§10.6](#106-what-loss-detection-cannot-notice).
 - **RSY-3** · *engine* — An engine MUST have at most one resync request of its own
   outstanding per document. A further request made while one is outstanding MUST
   be coalesced into it and send nothing, and a request MUST NOT be sent sooner
@@ -2346,113 +2460,233 @@ and the answer is a targeted diff.
   and goes out once the floor permits (SND-2); one a person asks for while the
   floor holds MAY be refused instead, and the engine MUST then tell the asker.
   *Rationale:* a request is a broadcast; a second one multiplies the answers on a
-  budget where every message counts, and "ask again" is what every trigger — a
-  person's click, loss detection, a joiner's retry — would otherwise do at once.
-  An automatic request refused at the floor would be spent for nothing, and an
-  engine that keeps writing would never get to ask (LOS-6); a person who clicks
-  learns at once that it was too soon, where a click that silently waits looks
-  like one that did nothing.
+  budget where every message counts, and every trigger — a person's click, loss
+  detection, a joiner's retry — would otherwise ask at once. An automatic request
+  refused at the floor would be spent for nothing, and an engine that keeps
+  writing would never get to ask (LOS-6); a person who clicks learns at once that
+  it was too soon.
 - **RSY-4** · *engine* — An outstanding request MUST expire after a bounded time,
-  counted from when it was sent, and is then reported as *unanswered*. A request
+  counted from when it was sent, and is then reported as *unanswered*. An answer
+  ends it before, but for a request to all made in the bootstrap (RSY-5): an answer
+  that does not bootstrap the requester (RSY-14) leaves that request outstanding. A request
   whose send failed MUST release the slot immediately without counting against the
-  floor, and its outcome is *failed* (SND-10). The expiry SHOULD be derived from
-  the engine's floor and expected latency
-  ([Appendix B](#appendix-b-recommended-values)).
+  slot's floor, and its outcome is *failed* (SND-10); the send floor (SND-2) counts
+  the attempt. That bounded time is the time a
+  request may wait for an answer: where another requirement counts from it
+  (RSY-5, RSY-21), it passes at the same moment whether the request was answered or not,
+  and only a request that went out has it. The expiry SHOULD be derived from
+  the engine's floor and expected latency, and for a request with `all` also from
+  the time a member may wait before it answers (RSY-20;
+  [Appendix B](#appendix-b-recommended-values)).
   *Rationale:* an unanswered request is an ordinary outcome — a responder answers
   only if it has something to give (RSY-17) — and must not block the next one
-  forever. A request may wait for the floor before it goes out (RSY-3); counted
-  from when it was asked for, its time to be answered would be shortened by that
-  wait.
-- **RSY-5** · *engine* — While a joining engine has not completed its bootstrap,
-  it SHOULD repeat its request when one expires unanswered, with growing waits
-  and a bounded number of attempts; it MUST NOT repeat it without bound. The
-  automatic requests of a device of the creator on loss evidence (LOS-6) MUST NOT
-  depend on its bootstrap: neither on whether it completed nor on whether its own
-  attempts ran out.
-  *Rationale:* the first request, or its answer, may itself be lost, or the creator
-  may have been offline; an unbounded retry would spend the rate budget of a
-  participant nobody can answer. A device of the creator edits and answers at
-  once, so its evidence matters at once; a peer answers it only when it holds
-  something it lacks (RSY-17), so its bootstrap requests may go unanswered for
-  good without anything being wrong.
+  forever. Counted from when it was asked for, its time would be shortened by a
+  wait for the floor (RSY-3). Members answer a request to all at their turns
+  (RSY-20), so an answer that ends nothing — content alone — must not cut that wait
+  short.
+- **RSY-5** · *engine, application* — While a joining engine has not completed its
+  bootstrap, it SHOULD repeat its request once the time its latest request may wait
+  (RSY-4) has passed while it is not bootstrapped, whether or not that request was
+  answered, with growing waits and a bounded number of attempts, the repeats asking
+  all (RSY-21); it MUST NOT repeat it without bound. Once its attempts ran out, it
+  SHOULD make one further request, to all, when, after its latest request that
+  went out had its time (RSY-4), it reads a frame of a participant that did not
+  answer that request — on a device of the creator, only of another device of the
+  creator —, or, whoever answered, a `control` frame, a report or a request of a
+  device of the creator other than itself that states a control clock; at most one
+  per expiry, each after a wait at least double the one before, counted on from
+  its attempts, up to a longest wait as [Appendix
+  B](#appendix-b-recommended-values) recommends; it MUST NOT make a further request
+  after a shorter wait than that doubling gives. A further request whose send
+  failed for a reason worth retrying (§3.4) counts for nothing, as such an attempt
+  does, and is made again once the send back-off allows (SND-7); one refused for
+  good counts. While its attempts ran out and it
+  has not completed its bootstrap, its application MUST show that, and SHOULD offer
+  its person to ask again; its attempts have run out from when the last of them
+  released the slot (RSY-4), and not while a request of its own is outstanding, a
+  further one or its person's. The automatic requests of a device of the creator on
+  loss evidence (LOS-6) MUST NOT depend on its bootstrap: neither on whether it
+  completed nor on whether its own attempts ran out. An engine that returns
+  (RSY-21) SHOULD ask all again until its return ends, once the request before had
+  the time an answer may take (RSY-4) — one still in its bootstrap by the requests
+  of its bootstrap. The application MAY switch the repeats and
+  the further request of this requirement off, with the automatic requests of LOS-6
+  and LOS-26; the requests RSY-1 requires and a return's requests (RSY-21, above) go
+  all the same, but for a device still in its bootstrap, which asks again only as
+  its bootstrap does, also when it returns: with the repeats off, its first request
+  is its one.
+  *Rationale:* the first request, or its answer, may be lost, or the creator
+  offline; an unbounded retry would spend the rate budget of a participant nobody
+  can answer. An answer without control state bootstraps nobody (RSY-14), so the
+  engine asks on after one as after silence. A frame read after the attempts ran
+  out, from someone who did not answer the latest request, shows that someone who
+  may hold the document is there again, so a joiner may wait however long the
+  others are away (§6.3). Who answered has given what it holds; but content alone
+  from one device must not keep a joiner from its bootstrap while members write,
+  nor members' answers keep a device of the creator from her other device, the only
+  one that can bootstrap it (RSY-14). Her devices share one MemberId, so who
+  answered does not tell which of them did; a frame that states a control clock
+  comes from one that is bootstrapped, and so could. With the waits doubling, a
+  participant that writes on and never answers costs a few requests an hour. Answers
+  that end nothing spend the attempts for good, which only the person can tell. A
+  device of the creator edits and answers at once, so its evidence matters at once,
+  while its own bootstrap requests may rightly go unanswered (RSY-17). A device in
+  its bootstrap asks for the whole anyway, so its return adds nothing to it.
+- **RSY-22** · *engine* — An engine about to make an automatic request for gaps
+  (LOS-6, LOS-26) — as it is for a gap once the gap's wait passed, or for a further
+  try once the wait since the try before passed (after a request let go, once that
+  one had its time), also while the gap waits for its place (LOS-6) — MUST NOT make
+  it when it heard, within the time that request would wait for an answer (RSY-4),
+  another's request to all that reaches no further than its own would on each of
+  those gaps' streams (LOS-25): one whose state vector this engine's holds there —
+  for a gap of deletions, whose state digest is also this engine's, or whose state
+  vector this engine's holds with more —, and whose control clock is `null`, lower
+  than its own, or its own with its control digest. The request it let go counts as made
+  for those gaps (LOS-6); it accepts the answers to the one it heard (RSY-12), and
+  makes no request for a gap until that one had the time it may wait. Requests of
+  its bootstrap, and one for a truncated history, which asks with `force`
+  (LOS-19), are not let go so; nor is any for a request it read in its first read
+  after it started (CTL-41), or in the read before its application told it of a
+  return or of an absence longer than RSY-1's (LIF-12), which it may still answer
+  (RSY-20).
+  *Rationale:* where several devices lack the same change, each would ask, and
+  every member that holds it would answer each (RSY-20). A request that asks for no
+  more than this engine would is answered with all it lacks on those streams, and
+  the answer reaches everyone: five devices with the same gap cost one request and
+  one answer. One that reaches further is no
+  stand-in; the bootstrap asks for a whole the other may not need, and a truncated
+  history for what no state vector can say. A request read as an engine catches up
+  may have been sent long before, its answers gone, and no clock tells (RSY-17).
 
 ### 8.3 Who answers
 
 - **RSY-6** · *engine* — Who answers whom:
-  - The creator MUST answer resync requests from other members, as RSY-17 says.
-  - A non-creator MUST NOT answer a resync request unless the requester is the
-    creator or its own member.
+  - Every device of the creator MUST answer requests from other devices, as RSY-17
+    says.
   - Every engine MUST answer requests from another device of its own member as the
-    creator answers other members'.
+    creator's devices answer.
+  - Any other engine MUST NOT answer a request unless it carries `all: true`, and
+    answers one that does as RSY-17 says, at its turn (RSY-20).
   - An engine that does not know the creator MUST NOT answer any request.
   - An engine MUST NOT answer its own request, which it recognises by its
     `requestId`, not by its requester.
 
-  *Rationale:* one responder for every other member's requests, the creator, makes
-  a join cost one answer instead of one per online member, removes every
-  timing-dependent suppression rule, and leaves one attribution overlay for each
-  answer. The first exception exists because a creator may restart without the
-  content it had — its application must persist the creator's control state
-  (CTL-26) but need not persist content — and, even with persisted content, may
-  lack what arrived while it was away; then only a peer can give it back. The
-  second: a member may run several devices under one MemberId; one of them can
-  bring another up to date while the creator is offline, and only for that
-  device's own member.
+  *Rationale:* any participant may bring a new device up to date: content is the
+  CRDT's, and what a member's answer carries of control state is what reached it of
+  the creator's decisions, passed on as received (§1.1). But every answer is a
+  message against everyone's budget, and some messengers show each in the group's
+  chat: so the creator's devices and the requester's own answer at once, one of
+  them usually at hand, and everyone else only when asked by all, at its turn
+  (RSY-20). A creator restarted without content (CTL-26), or lacking what arrived
+  while it was away, gets it back from a member asked by all.
+- **RSY-20** · *engine* — An engine that may answer a request only because it
+  carries `all` (RSY-6) MUST NOT answer it before its **turn**: the time it heard
+  the request plus a delay it derives from the request's `requestId` and its own
+  stream (LOS-13), spread evenly over a window
+  ([Appendix B](#appendix-b-recommended-values)). It MUST keep the request until
+  then (RSY-9), and a copy of it keeps the turn it has. It MUST let the request go
+  unanswered at its turn when last pieces (RSY-18) of `resync-response`s it heard
+  before it, from anyone, whose `respondsTo` names that request — whether or not it
+  would accept them (RSY-12) — **hold** what it would give:
+  - where RSY-17 lets it answer for content — its first or third case —, one that
+    holds the engine's content as it heard it, together with the furthest the
+    requesting stream had stated then (RSY-17): its state vector or the stream's
+    counts every update the engine held, its state digest is the engine's within its
+    state vector (LOS-24), and where the engine held more than it, a state digest the
+    stream stated is the engine's within the stream's vector. Where the answer counts
+    updates the engine lacked, the engine compares the digests once it holds them;
+    one it could not compare before it was heard longer ago than a request to all
+    may wait (RSY-4) holds nothing;
+  - where RSY-17 lets it answer for control state — its second or fourth case —,
+    one whose snapshot holds, on every target the engine held a register for as it
+    heard it, that register or one that holds over it (CTL-22), and the close where
+    the engine held it.
+
+  It MAY judge only the first answers it heard of a request ([Appendix
+  B](#appendix-b-recommended-values)).
+
+  Otherwise it MUST answer at its turn: a piece that is not the last, an answer
+  that holds less, a report or a request, whatever it carries, silence it for
+  nothing. An answer it accepts because it let a request of its own go for that
+  request (RSY-22) it compares once it applied it. Where RSY-17
+  gives it nothing to offer at its turn — judged by the furthest the requesting
+  stream stated by then —, it MUST let the request go then. Once it
+  has sent a piece of its answer, it sends the rest (SND-17).
+  *Rationale:* a delay derived from the request and the responder's stream spreads
+  the members' answers without any of them knowing who else is there; two devices
+  of one member run different streams. A member that holds more than the first
+  answer may be the only one left that can give it (§10.6); members that hold the
+  same — the usual case — stay silent, so a request to all usually costs one
+  answer, two when turns lie closer than a message takes (RSY-13). Kept past its
+  turn with nothing to offer, a request would count every later change of the
+  member — the requester's own among them — as content it lacks, and every member
+  whose turn had passed would answer with its whole snapshot. Content is judged as
+  the answer is heard, with what the requester stated, since the requester holds
+  both once the answer arrived: a member that holds beyond it only the requester's
+  own change stays silent, and an update that reaches it later reaches the requester
+  the same way (§10.6). A digest compares deletions within one vector only (LOS-24),
+  so deletions wait only where the answer counts updates the member lacked, and a
+  member whose turn comes before it holds them may still answer. Control state is
+  compared register by register. An answer may come after the requester's expiry
+  (RSY-4); it asks once more — a message more, nothing lost.
 - **RSY-17** · *engine* — A responder that RSY-6 lets answer a request MUST answer
   it only if one of these holds, and then MUST answer it, even with nothing to
   add:
   - it holds content the requester's state vector lacks;
-  - it would carry a control snapshot (RSY-8) holding operations the requester's
-    control vector lacks;
+  - it would carry control state (RSY-8), and the request's control clock is below
+    the greatest clock among the registers it holds, or equal to it with another
+    control digest (LOS-24);
   - the request's state vector holds every update the responder holds itself, and
     the request's state digest differs from its own;
-  - it would carry control state, and the request's control vector equals its own
-    and its control digest does not (LOS-12);
-  - for the creator, and for a device that carries control state to another device
-    of its own member: the request's control vector is `null`, or it has
-    `force: true`.
+  - it would carry control state, and the request's control clock is `null` or the
+    request has `force: true`.
+
+  The state vector, state digest, control clock and control digest these cases
+  name are the furthest the requesting stream stated (LOS-13), in the request or in
+  any request, report or last piece of an answer of that stream the responder
+  heard: the state vector of the frame numbered highest, a state digest that
+  differs only where none the stream stated with exactly that vector is the
+  responder's, the greatest control clock it stated, and a control digest that
+  differs only where none it stated with that clock is the responder's.
 
   Otherwise a responder MUST stay silent, and MUST keep the request to reconsider
-  later (RSY-9), since that may change.
+  later (RSY-9), since that may change: one it may answer only because it carries
+  `all` until its turn (RSY-20); any other, while the responder is not bootstrapped
+  (RSY-14), as long as its requester may wait for an answer (RSY-4) — a bootstrapped
+  responder MUST let it go. It MUST NOT reconsider a request first heard longer ago
+  than that time, as it reckons RSY-4's expiry for itself.
   *Rationale:* an engine that is up to date gets no answer, which keeps resync
-  traffic proportional to what is actually missing. A lost membership change
-  leaves the content diff empty and still needs healing, which the control vector
-  shows; a lost deletion leaves both vectors equal, or the requester ahead with
-  insertions of its own, which only the digest shows, and the answer heals it,
-  since the state since the requester's state vector carries the responder's whole
-  record of deletions. Which of the two lacks something a digest does not tell; the
-  other one's evidence makes it ask in turn. A requester ahead differs in digest
-  by what it deleted of its own as well, so the answer may bring nothing: one
-  message, and its whole answer ends the requester's evidence (LOS-18). A joiner is
-  not up to date until it holds a control snapshot, nor a device of the creator
-  until it has a basis, whatever its state vector says:
-  one that had seen every edit as it happened would otherwise ask, get no answer,
-  and never complete its bootstrap.
+  traffic proportional to what is missing. A lost decision shows by the control
+  clock, or at an equal clock by the digest; a lost deletion only by the digest,
+  which does not tell which of the two lacks it — the other's evidence makes it ask
+  in turn (LOS-12) —: the state since the requester's state vector carries the
+  responder's whole record of deletions, so the answer heals it or brings nothing,
+  one message, and ends the evidence (LOS-18). A member's request is evidence of
+  control state for no one ([§10.6](#106-what-loss-detection-cannot-notice)). A
+  device that saw every edit is still not up to date until it is bootstrapped
+  (RSY-14), so anyone RSY-6 lets answer answers one that states no control clock
+  with its snapshot (RSY-8). A request may be read long after it was sent, its
+  requester having got what it asked for since; frames carry no time of sending,
+  and clocks may be off (§1.1), so no clock decides. Within a stream the state only
+  grows (LOS-13), so the frame numbered highest states the furthest however the
+  frames arrived; deletions only grow, so a digest the stream stated that is the
+  responder's shows it holds the responder's deletions; control state likewise, by
+  its clock. A bootstrapped responder with nothing to give lacks what the requester
+  lacks, and whoever brings it answers that request or the responder's own, which
+  every device hears; kept, the request would cost a second answer to one gap. What
+  a responder not bootstrapped holds may still grow.
 - **RSY-8** · *engine* — An answer MUST be a `resync-response` whose `respondsTo`
   is the request's `requestId` and whose update is the responder's state since
-  the requester's state vector. What it carries in `control`:
-  - the creator's answer MUST carry its control snapshot, except as CTL-28 says for
-    a device without a basis, and `null` from a device in a capacity conflict
-    (CTL-32);
-  - a non-creator answering another device of its own member MUST carry its own
-    control state once it has been bootstrapped and while it is in no capacity
-    conflict (CTL-32), and `null` otherwise;
-  - a member answering a device of the creator SHOULD carry the control state it
-    holds, which counts there as a control report only (CTL-27);
-  - every other non-creator answer MUST set `control` to `null`.
-
-  The answer SHOULD carry the responder's attribution overlay.
+  the requester's state vector. In `control` it MUST carry its snapshot (§7.5)
+  once it is bootstrapped (RSY-14) and while it is in no capacity conflict
+  (CTL-32), and `null` otherwise. The answer SHOULD carry the responder's
+  attribution overlay.
   *Rationale:* `respondsTo` lets the requester tell its own answer from answers to
-  others (RSY-13, ATR-1); only the creator can issue control state. A device may
-  pass on what it holds to its own member's other device, since a union cannot
-  undo anything (CTL-25), but not what it knows to lack something: bootstrapped
-  by it, the other device would write although it may lack a decision about
-  itself, which the conflict keeps the responder itself from doing (CTL-32), and a
-  joiner would hold less than the creator decided. A member's state helps a new
-  device of the creator know what to supersede and where operations collide
-  (CTL-27, CTL-31), and only a member's control report shows the creator a
-  decision that only members hold (CTL-33); a member that leaves it out hides
-  that.
+  others (RSY-13, ATR-1). A bootstrapped device passes on what reached it of the
+  creator's decisions, and a merge undoes nothing (CTL-25). A device not
+  bootstrapped, or in a capacity conflict, knows that its state may lack something:
+  a device bootstrapped by it would write though it may lack a decision about
+  itself, and pass the gap on (CTL-32). What decides is completeness, not trust.
 - **RSY-18** · *engine* — Every piece of an answer (RSY-8) MUST carry the
   responder's stream and the answer's number in it (LOS-13), and its own number,
   from 1 in the order the pieces are sent. The answer's last piece — the whole
@@ -2463,28 +2697,34 @@ and the answer is a targeted diff.
   every piece is there, so a piece that never arrives shows (LOS-4), where a
   bootstrap would otherwise look complete with the first piece that carried the
   snapshot; the numbers say it even where the requester already holds more than
-  the responder and no state does (LOS-14). Two devices of one member may both
-  answer, so a piece names its stream: by `respondsTo` alone their pieces would
-  count as one answer.
+  the responder (LOS-14). Two devices of one member, or two members asked by all,
+  may both answer, so a piece names its stream: by `respondsTo` alone their pieces
+  would count as one answer.
 - **RSY-9** · *engine* — A responder MUST answer at most one request per
   throttle interval per document. It MUST keep every request it may have to
-  answer and has not answered — throttled, or with nothing to offer yet (RSY-17) —
-  and reconsider it on later processing, independently of whether the request's
-  delivery is offered again. A request counts as answered only once the transport
+  answer and has not answered — throttled, before its turn (RSY-20), or with
+  nothing to offer yet (RSY-17) — and reconsider it on later processing, until
+  RSY-17 or RSY-20 lets it go, independently of whether the request's delivery is
+  offered again. Of each requesting stream (LOS-13) only its latest request
+  counts: a request numbered below one of its stream it heard before it MUST let
+  go, and one numbered above lets go what it keeps of that stream's earlier ones.
+  A request counts as answered only once the transport
   has accepted the answer:
   - after a send failure that is worth retrying (§3.4) the request MUST be kept as
     before, under the time it was first heard (RSY-19);
   - after a permanent one it MUST be let go.
 
   A request for which its profile fails to compute an answer MUST be let go and
-  reported to the application, and MUST NOT keep it from answering the others.
-  *Rationale:* bounds the responder's traffic in the time domain however many
-  requests arrive. Keeping the request itself is necessary because an engine
-  processes each delivery once (TRN-8): a request skipped under the throttle and
-  not kept would never be looked at again, and its requester would stay
-  unanswered until its own request expired. A request kept after its answer failed
-  would fail again on every later processing, and any member of the channel can
-  send one (§1.7, item 11).
+  reported to the application once, naming the request, and MUST NOT keep it from
+  answering the others.
+  *Rationale:* bounds the responder's traffic however many requests arrive. An
+  engine processes each delivery once (TRN-8), so a request skipped under the
+  throttle and not kept would not be looked at again; one kept after its answer
+  failed would fail on every later processing, and anyone in the channel can send
+  one (§1.7, item 11). A requester that asked again has moved on, and its latest
+  request asks for what it still lacks; an earlier one read late — after an outage,
+  or as a restarted responder reads again — would cost an answer for nothing. No
+  clock decides which is stale (RSY-17): the stream's own numbers do.
 - **RSY-19** · *engine* — A responder MUST keep those requests (RSY-9) by their
   `requestId`, at most four per requester (a requester's fifth replaces its
   oldest and keeps the requester's place in the order), and MUST serve requesters
@@ -2495,15 +2735,14 @@ and the answer is a targeted diff.
   *Rationale:* several devices of one member may each have a request outstanding
   (RSY-3) and are each to be answered (RSY-6); keeping one per requester would let
   them push each other out. Four per requester, and turns, keep a requester that
-  repeats itself from pushing others back and from being pushed back itself; the
-  bound keeps a flood of requests from growing a responder's memory — a dropped
-  requester asks again (RSY-5, LOS-6).
+  repeats itself from pushing others back; the bound keeps a flood of requests from
+  growing a responder's memory — a dropped requester asks again (RSY-5, LOS-6).
 - **RSY-10** · *engine* — A resync answer MUST NOT be refused because the document
   is closed or because the responder's own permission is `read`.
   *Rationale:* a closed document must still bootstrap a joiner (LIF-6); the creator
-  is never read-only, and a peer answering the creator is restoring the creator's
-  own content — as long as the peer's application keeps every change its engine
-  refuses out of the engine's document (CTL-42), since the answer carries
+  is never read-only, and a member answering a request to all restores content the
+  requester lacks — as long as the member's application keeps every change its
+  engine refuses out of the engine's document (CTL-42), since the answer carries
   everything in it.
 - **RSY-11** · *engine* — A resync answer MUST go through the send scheduler and wait
   for the floor like every other message (SND-2). A responder SHOULD NOT stop
@@ -2514,61 +2753,102 @@ and the answer is a targeted diff.
 
 ### 8.4 Accepting an answer
 
-- **RSY-12** · *engine* — Which answers an engine accepts:
-  - An engine that is not the creator MUST accept a `resync-response` only if its
-    sender is the creator, or its own member answering a request the engine itself
-    made.
-  - A device of the creator MUST accept one from another device of the creator,
-    and one from another member only if its `respondsTo` names a request this
-    device itself made.
-  - An engine that does not know the creator MUST accept none.
-
-  *Rationale:* the counterpart of RSY-6. Without the `respondsTo` check anyone
-  could push content at the creator by sending an unsolicited "response".
+- **RSY-12** · *engine* — An engine MUST accept every `resync-response` the
+  creator sent, every `resync-response` whose `respondsTo` names a request the
+  engine itself made, whoever sent it, and every `resync-response` whose
+  `respondsTo` names another's request to all for which it let a request of its
+  own go (RSY-22). An engine that does not know the creator MUST accept none.
+  It MUST bound the requests it keeps for this, its own and those it let its own
+  go for, by an age and a count of its own
+  ([Appendix B](#appendix-b-recommended-values)): it MAY forget one that went out,
+  or was heard, longer ago than that age and to which no answer is still arriving
+  in pieces (LOS-14), and beyond that count it forgets the oldest first. An answer
+  to a request it forgot is one to a request it did not make.
+  *Rationale:* the counterpart of RSY-6: anyone may answer a request to all, so
+  anyone's answer to one's own request is accepted. Its content is an update anyone
+  in the channel could have sent as an edit (CTL-7), and its control state is
+  merged as CTL-25 says; without the `respondsTo` check, anyone could push content
+  by a response nobody asked for. A device that let its request go for another's
+  asked through that one (RSY-22). A later answer is not applied, but its last piece
+  is a report, which shows what the engine lacks as a gap (LOS-4, LOS-25). Only
+  answers one asked for, or let one's own go for, are reassembled, so what an engine
+  holds in pieces stays bounded (LOS-22); kept without bound, the requests of an
+  engine that runs for months would grow with every one it makes.
 - **RSY-13** · *engine* — An engine MUST apply:
-  - the update of every accepted `resync-response`, including one that answers
-    another member's request;
-  - the control snapshot of every `resync-response` the creator sent, and of one
-    from another device of its own member answering its own request (CTL-25).
+  - the update of every accepted `resync-response`, the creator's answers to other
+    members' requests included, and of every answer to one request when several
+    arrive;
+  - the control snapshot of every accepted `resync-response`, as CTL-25 says.
 
   It MUST consider the attribution overlay only of a response that answers its own
-  request (ATR-1, ATR-2), and MUST leave content applied from any other response
-  unattributed (ATR-2).
-  *Rationale:* content is a CRDT and harmless to apply twice; a snapshot from the
-  creator is authoritative whoever asked for it; but an overlay only describes the
-  document of the member who asked, and the responder did not write everything
-  it sends.
-- **RSY-14** · *engine* — An engine MUST consider its bootstrap complete:
-  - once it has applied an answer to its own request that bootstraps it (CTL-13) —
-    for a device of the creator any answer to its own request;
-  - for a device of the creator also at once when it restored persisted content
-    together with control state that had a basis (CTL-28), or merged carried
-    content together with control state that gives it one (CTL-28, ARC-5);
-  - for anyone else also when its own restored control state bootstraps it after
-    a restart (CTL-41).
+  request (ATR-1, ATR-2) — the first one it adopts stands (RSY-15) — and MUST leave
+  content applied from any other response unattributed (ATR-2).
+  *Rationale:* content is a CRDT and harmless to apply twice, so the answers of two
+  members asked by all merge, their control state too, the later register holding
+  (CTL-22); but an overlay only describes the document of the member who asked, and
+  the responder did not write everything it sends.
+- **RSY-14** · *engine* — An engine MUST consider its bootstrap complete — it is
+  **bootstrapped** — once it:
+  - created the document (LIF-3);
+  - applied an answer to its own request that carries control state (CTL-25,
+    RSY-8), also one whose snapshot brings it into a capacity conflict (CTL-32) —
+    a device of the creator: only an answer of another device of the creator;
+  - a device of the creator: restored control state that was bootstrapped when it
+    was persisted (CTL-26), or that its application carried to it from another
+    device of the creator where it was bootstrapped (ARC-5);
+  - anyone else: by its own restored control state after a restart, as CTL-41
+    says.
 
-  It MUST make "not yet bootstrapped" observable to the application.
-  *Rationale:* a joiner whose creator is offline sees an empty document; the
-  application must be able to say "waiting for the creator" rather than present
-  an empty document as the real one. A device of the creator that restored its
-  content and a basis holds what an answer would bring it; a peer that holds
-  nothing it lacks rightly stays silent (RSY-17), so waiting for an answer would
-  leave it unbootstrapped, and asking again, for good.
+  Its own decisions, an answer without control state and an answer to someone
+  else's request — one it let its own request go for (RSY-22) included — bootstrap
+  nothing. Until it is bootstrapped it MUST state `null` as its control clock and
+  control digest in every frame that has them (RSY-16, SND-11), MUST answer with
+  `control: null` (RSY-8), and MUST make "not yet bootstrapped" observable to its
+  application.
+  *Rationale:* a joiner nobody has answered yet sees an empty document; the
+  application must be able to say "waiting for the group" rather than present it as
+  the real one. A device that is not bootstrapped holds at most part of the control
+  state: offered as the whole, it would bootstrap others with less than the creator
+  decided. Members' answers bring a device of the creator the content and, merged,
+  the registers they hold (CTL-25), yet a decision of a lost device may have reached
+  only some of them (§7.6), so only another device of the creator, or its own
+  restored or carried state, bootstraps it; restored or carried, at once, and
+  without content it returns (RSY-21). An answer bootstraps a device only when it
+  answers its own request, which states the responder's state as it answers:
+  without a cursor overlapping reads prove nothing (LOS-8), and a member restarted
+  without one would be bootstrapped by re-reading an old answer, past a revocation a
+  gap may have hidden (CTL-41).
 - **RSY-15** · *engine* — The first overlay an engine adopts for its bootstrap
   stands; a later answer's overlay MUST NOT replace it wholesale.
   *Rationale:* whichever answer bootstrapped the engine, a second wholesale
   replacement could overwrite attribution the engine has derived since.
+
+### 8.5 The bootstrap in one table
+
+What a bootstrap takes stands in §7 and §8; this table states it in one place and
+adds no rule: each cell restates the requirement it cites. An *answer* is a
+`resync-response` the device accepts (RSY-12); *its request* is one of its own
+(RSY-16). Who writes, and when, CTL-13, CTL-27 and CTL-32 say.
+
+| Answer | What it takes (RSY-13) | Over the bounds (CTL-30) | *History truncated* (LOS-19) | Its bootstrap (RSY-14, RSY-21) |
+|---|---|---|---|---|
+| Anyone's, to its request, with control state — to a device of the creator, only another device of the creator's | The update, and the snapshot merged (CTL-25) | Refused: a capacity conflict (CTL-32) | Ends, for a request sent with `force` after it was last found | Complete, in a conflict too, and the request ends (RSY-4) |
+| A member's, to a request of a device of the creator, with control state | As above | As above | Ends, for a request sent with `force` after it was last found | Goes on: merged, but not bootstrapped (RSY-14); once its attempts ran out, its application asks for another device of the creator (CTL-43) |
+| The creator's, to another's request | As above | As above | Stays | Goes on |
+| Anyone's, to another's request to all for which it let a request of its own go (RSY-22) | As above | As above | Stays | Goes on |
+| Anyone else's, to another's request | Nothing: not accepted (RSY-12); its last piece is a report (LOS-13) | — | Stays | Goes on |
+| Anyone's, to its request, with `control: null`: from a device not bootstrapped, or in a capacity conflict (RSY-8) | Content only | — | Stays | Goes on: a request to all stays outstanding (RSY-4), and the next one asks all (RSY-21) |
+| No answer: its own state restored after a restart (CTL-26, CTL-39), or carried from another device of the creator (ARC-5) | As persisted | As persisted (CTL-32) | A truncated read keeps anyone but the creator from completing | A device of the creator: complete at once where it was bootstrapped, its request going out as RSY-1 says, to all where it holds no content (RSY-21); anyone else: once it read on from its cursor without a gap (CTL-41) |
 
 1.x's RSY-2 and RSY-7 are withdrawn
 ([Appendix G](#appendix-g-changes-from-tdsp-1x)).
 
 ## 9. Send scheduling
 
-Real messengers refuse traffic that a naive "send on every typing pause"
-policy produces: one measured provider refused after about 35 messages in 20
-minutes, and without a retry a refused message is a lost one. The scheduler is one
-component of the engine, above every bridge, so no bridge implements any of
-it.
+Real messengers refuse traffic that a naive "send on every typing pause" policy
+produces: one measured provider refused after about 35 messages in 20 minutes, and
+without a retry a refused message is a lost one. The scheduler is one component of
+the engine, above every bridge, so no bridge implements any of it.
 
 ### 9.1 Pacing
 
@@ -2580,19 +2860,18 @@ Five numbers govern when an engine sends — its **pacing**:
 | `maxIntervalMs` | The longest a pending change may wait, counted from its oldest pending edit; `null` for no limit |
 | `minChars` | Do not send fewer changed characters than this, unless `maxIntervalMs` has passed |
 | `maxChars` | Send as soon as the floor permits once this many changed characters are pending; `null` for no limit |
-| `expectedLatencyMs` | How long a message normally takes to arrive; this engine judges the others' silence by it ([§10](#10-loss-detection)). 0 = unknown |
+| `expectedLatencyMs` | How long a message normally takes to arrive; the waiting time of this engine's evidence derives from it (LOS-1). 0 = unknown |
 
 An engine also has a local **quiet time** (`batchWindowMs` in the reference
-implementation): the length of a typing pause after which a pending change may
-go out.
+implementation): the length of a typing pause after which a pending change may go
+out.
 
 Pacing is each participant's own. The one thing the participants share is the
 **pace**: the shortest interval anyone sends at, which the creator may set as a
 target of the control state ([§7.1](#71-what-control-state-is)). Where a messenger
 shows every message in the group's chat, the pace keeps a document quiet for
 everyone; where a provider is strict, each participant's own bounds still win.
-What receivers need of a sender's pacing travels with each frame that owes a
-follow-up: `due`, the time within which the sender will speak again (SND-14).
+Receivers need nothing else of a sender's pacing.
 
 - **SND-1** · *engine* — An engine MUST make every pacing it runs consistent before
   running it:
@@ -2600,88 +2879,66 @@ follow-up: `due`, the time within which the sender will speak again (SND-14).
     `minIntervalMs`, `minChars` or `expectedLatencyMs` that is not finite — only
     `maxIntervalMs` and `maxChars` may be unlimited;
   - `maxIntervalMs` is raised to at least `minIntervalMs`;
-  - `minChars` is treated as 0 while `maxIntervalMs` is unlimited, and is lowered
-    to at most `maxChars`.
+  - `minChars` is treated as 0 while `maxIntervalMs` is unlimited, and is lowered to
+    at most `maxChars`.
 
   *Rationale:* no combination of values may starve a pending change — a change
   smaller than `minChars` with no deadline would otherwise never be sent.
 - **SND-15** · *engine* — The creator MAY set the pace. An engine MUST NOT send
-  faster than the larger of the pace and its own transport's
-  `bounds.minIntervalMs`, and MAY send slower. It MUST bound the pace it runs
-  ([Appendix B](#appendix-b-recommended-values); 10 minutes recommended) and run a
-  longer one as that bound, here and wherever it judges by the pace (SND-16,
-  LOS-11).
-  *Rationale:* the pace lets the creator keep a document quiet; the own bounds
-  still win, because they are the provider's limit and the creator cannot know
-  everyone's provider (§1.7, item 13). Quiet is not mute: a pace of days would
-  hold every participant's heartbeats and answers, a joiner's bootstrap among
-  them, for as long. The bound is each engine's own: a receiver waits for the
-  larger of a sender's `due` and the pace it runs itself (LOS-11), and a `due`
-  above 0 is at least the pace its sender runs (SND-14, SND-16, SND-1), so two
-  engines that bound the pace differently never take each other for silent.
+  faster than the larger of the pace and its own transport's `bounds.minIntervalMs`,
+  and MAY send slower. It MUST bound the pace it runs ([Appendix
+  B](#appendix-b-recommended-values); 10 minutes recommended) and run a longer one
+  as that bound, here and wherever it judges by the pace (SND-16, LOS-14).
+  *Rationale:* the pace keeps a document quiet; the own bounds still win, since they
+  are the provider's limit and the creator cannot know everyone's provider (§1.7,
+  item 13). A pace of days would hold every participant's reports and answers, a
+  joiner's bootstrap among them, for as long. What a receiver judges by the pace —
+  how long the pieces of an answer may take (LOS-14) — is its own waiting, so
+  engines that bound it differently never misjudge each other.
 - **SND-16** · *engine* — The pacing an engine runs MUST be the engine's defaults,
-  overridden by its transport profile's `pacing`, overridden by what its
-  application chose; then `minIntervalMs` raised to at least the transport's
+  overridden by its transport profile's `pacing`, overridden by what its application
+  chose; then `minIntervalMs` raised to at least the transport's
   `bounds.minIntervalMs` and to the pace it runs (SND-15); and the result made
-  consistent (SND-1). Its `minIntervalMs` is the engine's **floor**. No pacing
-  value but the pace is sent to anyone.
-  *Rationale:* everything else about pacing concerns only the sender's own
-  messages and its own judgement of others' silence; sharing it would need a
-  grammar, an ordering and a clamp for every value, for the one thing receivers
-  need, which `due` carries.
-- **SND-14** · *engine* — Every `edit` and `control` frame MUST carry `due`: the
-  milliseconds within which its sender will send another message at the latest,
-  or 0 for no promise. A sender MUST set it to its `maxIntervalMs` when that is
-  finite, and to 0 otherwise; a sender that announced a `due` above 0 MUST follow
-  the frame within it by another frame of the same kind or by a heartbeat
-  (SND-11, SND-23): a `resync-request` or `resync-response` keeps no such promise.
-  *Rationale:* a receiver judges a sender's silence by what that sender promised
-  (LOS-11), not by its own pacing; `due` is relative, so it needs no shared clock
-  (LOS-7). The receiver ends the expectation only with a frame of the same source
-  or a heartbeat that holds the frame (LOS-16), so that is what keeps the promise.
+  consistent (SND-1). Its `minIntervalMs` is the engine's **floor**. No pacing value
+  but the pace is sent to anyone.
+  *Rationale:* the rest of pacing concerns only the sender's own messages; receivers
+  need none of it, and sharing it would need a grammar, an order and a clamp for
+  every value.
 - **SND-2** · *engine* — Every message an engine sends — of every kind, the initial
   seed and resync answers included — MUST go through its send scheduler, and MUST
-  NOT be sent sooner than the engine's floor (SND-16) after its previous message
-  of any kind, nor while a hold after a refusal lasts (SND-7). This holds for a
-  send an application asks for at once too (what is pending, or a last send
-  before the engine stops), which skips only the quiet time and `minChars`, and
-  the wait for the person after a `needs-person` refusal (TRN-20).
+  NOT be sent sooner than the engine's floor (SND-16) after its previous message of
+  any kind, nor while a hold after a refusal lasts (SND-7). This holds for a send an
+  application asks for at once too (what is pending, or a last send before the
+  engine stops), which skips only the quiet time and `minChars`, and the wait for
+  the person after a `needs-person` refusal (TRN-20).
   *Rationale:* the floor is the provider's rate limit, and the provider counts
-  messages, not kinds; a single message that bypasses the scheduler — an explicit
-  request to send at once among them — can push the next one into a refusal.
+  messages, not kinds: one message that bypasses the scheduler can push the next
+  into a refusal.
 - **SND-20** · *engine* — A message that is not a local edit (a control frame, a
-  resync request or answer, the seed) SHOULD go ahead of edits that are waiting.
-  Its outcome goes to whoever sent it, and the scheduler does not retry it, except
-  a control frame (CTL-26) and a piece of an answer sent in pieces (SND-17). The
-  seed is no pending change (SND-6): a failed send of it MUST fail the document's
-  creation (LIF-3).
-  *Rationale:* a piece is retried because the pieces before it are already out,
-  and an answer missing one is incomplete. The seed goes out once, as the document
-  is created and before anyone is invited (§6.2): an application told that the
-  creation failed can create a new document, and nobody invited has missed
-  anything. It cannot create the failed one again: its documentId stays marked
-  (LIF-5), and a seed reported as failed may still have reached someone listening.
+  resync request or answer, the seed) SHOULD go ahead of edits that are waiting; a
+  report goes after them (SND-11). Its outcome goes to whoever sent it, and the
+  scheduler does not retry it, except a control frame (CTL-26), a piece of an answer
+  sent in pieces (SND-17) and a report (SND-12). The seed is no pending change
+  (SND-6): a failed send of it MUST fail the document's creation (LIF-3) — but where
+  the creator's application sent the invitation before it, into a channel made for
+  the document (LIF-9). There the engine MUST keep the document, count its content
+  as undistributed (SND-21) and send it whole once it can, as it sends restored
+  content (LIF-5).
+  *Rationale:* a piece is retried because the pieces before it are out. A seed that
+  failed before anyone was invited (§6.2) is replaced by a new document, not created
+  again: its documentId stays marked (LIF-5), and it may have reached someone
+  listening. Where the invitation went first, those invited would hold one to a
+  document that never starts.
 - **SND-3** · *engine* — A pending change MUST be sent no later than the first
   moment at which the floor permits after either `maxIntervalMs` has passed since
-  its oldest edit or `maxChars` changed characters are pending, and no later than
-  a heartbeat this engine owes requires (SND-23): by the heartbeat's time where
-  the change, once sent, keeps the promise the heartbeat would keep (the promises
-  still open are an edit's, or none, LOS-16), and one floor before it otherwise.
-  Beyond that it SHOULD be sent once the floor, the quiet time and `minChars` all
-  permit.
+  its oldest edit or `maxChars` changed characters are pending. Beyond that it
+  SHOULD be sent once the floor, the quiet time and `minChars` all permit.
   *Rationale:* `maxIntervalMs` closes the debounce's fault that continuous typing
-  never sends; the floor closes its other fault, one message per pause. A
-  heartbeat waits for a change pending before it (SND-23), so a change typed on and
-  on would hold back the heartbeat a control frame owes for as long as the person
-  types: receivers would wait in vain for the follow-up the frame's `due` promised
-  (SND-14, LOS-11), and the heartbeat is the only sign that a decision sent last
-  was lost (LOS-10). An edit keeps an edit's promise itself; a control frame's only
-  a heartbeat or another control frame keeps (LOS-16), so there the change goes a
-  floor ahead, and the heartbeat after it within the frame's `due`.
+  never sends; the floor closes its other fault, one message per pause.
 - **SND-5** · *engine* — Changed characters MUST be counted from local edits only,
   never from applying remote updates.
-  *Rationale:* a remote edit arriving must not make a local change look large
-  enough to send early.
+  *Rationale:* a remote edit arriving must not make a local change look large enough
+  to send early.
 
 ### 9.2 Keeping and retrying a refused send
 
@@ -2690,49 +2947,56 @@ follow-up: `due`, the time within which the sender will speak again (SND-14).
   *Rationale:* one lost update blinds every receiver to everything its author sends
   afterwards (PRF-5). CRDT updates merge and are idempotent, so resending a change
   that did in fact arrive is harmless.
-- **SND-7** · *engine* — A send the scheduler retries (SND-6, SND-20) that failed
-  with `rate-limited` or `unavailable` MUST be retried after an exponential
-  back-off that is bounded and reset by a success, and MUST NOT be retried before
-  a messenger-stated `retryAfterMs` has passed (up to a bounded maximum). A retry
-  MUST wait for the floor and the back-off only, not for the quiet time or
-  `minChars` again. Such a failure of any message — one the scheduler retries or
-  not, a request, an answer, a heartbeat — MUST hold back the engine's next send
-  of any kind for the back-off, or for what the messenger asked if that is longer.
-  *Rationale:* the batch was already judged ready once; waiting for a new typing
-  pause would delay it by up to the quiet time for nothing. A provider throttles
-  the account, not one message: the next message of another kind would only run
-  into the same refusal.
+- **SND-7** · *engine* — A send the scheduler retries (SND-6, SND-12, SND-20) that
+  failed with `rate-limited` or `unavailable` MUST be retried after an exponential
+  back-off that is bounded and reset by a success, and MUST NOT be retried before a
+  messenger-stated `retryAfterMs` has passed (up to a bounded maximum). A retry MUST
+  wait for the floor and the back-off only, not for the quiet time or `minChars`
+  again. Such a failure of any message, retried or not, MUST hold back the engine's
+  next send of any kind for the back-off, or for what the messenger asked if that is
+  longer — except a report (SND-11) whose send failed with `unavailable`: that holds
+  back only its own retry, by a back-off of its own (SND-12). A `rate-limited`
+  failure, the wait the messenger asked for, the spacing it widens (SND-9) and a
+  `needs-person` refusal (TRN-20) hold back every send, a report's among them. A
+  success resets a back-off and ends a hold, and a success or a drop (SND-8) ends the
+  failure the engine exposes (SND-10, TRN-20), only where its send began after the
+  failure; that failure ends too once no message the scheduler retries waits or is
+  under way.
+  *Rationale:* the batch was judged ready once; waiting for a new typing pause would
+  delay it for nothing. A provider throttles the account, not one message, so the
+  next message of another kind would run into the same refusal, and a send under
+  way when the refusal came says nothing of it. A report that could not reach the
+  messenger says nothing of the account, and a change made meanwhile goes first
+  anyway (SND-12).
 - **SND-8** · *engine* — A send that failed with `too-large` or `rejected`, and a
-  change the engine itself refuses to send (CTL-13), MUST be dropped and reported
-  to the application exactly once. Dropping ends the send job only: the change
-  stays in the sender's document, and every later change builds on it. The engine
-  MUST therefore expose that it holds *undistributed changes* until the transport
-  has accepted its whole state (`resync()`) — every piece of it, when it is split —
-  and nothing has been dropped since. A piece of that state refused for good keeps
-  the mark; a dropped message that carries no change of the sender's own — a resync
-  answer, a request, a heartbeat — MUST NOT set it.
-  *Rationale:* retrying cannot help, and a change that is dropped silently is the
-  failure this section exists to prevent. The CRDT cannot take a change back, so
-  the author's copy diverges: receivers hold everything the author sends later as
-  a pending gap no resync from the creator can fill, since only the author has
-  the missing change. Sending the whole state once the cause is fixed — the
-  permission restored, a smaller document, a working profile — heals it, because
-  a full-state update depends on nothing before it. An answer that does not go out
-  leaves its requester as it was, which asks again (RSY-5, LOS-6); nothing of the
-  responder's own is missing anywhere.
+  change the engine itself refuses to send (CTL-13), MUST be dropped and reported to
+  the application exactly once. Dropping ends the send job only: the change stays in
+  the sender's document, and every later change builds on it. The engine MUST
+  therefore expose that it holds *undistributed changes* until the transport has
+  accepted its whole state (`resync()`) — every piece of it, when it is split — and
+  nothing has been dropped since. A piece of that state refused for good keeps the
+  mark; a dropped message that carries no change of the sender's own — a resync
+  answer, a request, a report, whatever update it carries again (SND-27) — MUST NOT
+  set it.
+  *Rationale:* retrying cannot help, and a change dropped silently is the failure
+  this section exists to prevent. The CRDT cannot take a change back: receivers hold
+  everything its author sends later as a pending gap only the author can fill, until
+  the whole state, sent once the cause is fixed, heals it — a full-state update
+  depends on nothing before it. A dropped answer, request or report leaves nothing
+  of the sender's own missing (RSY-5, LOS-6, SND-27).
 - **SND-21** · *application* — While the engine exposes undistributed changes
   (SND-8), the application MUST show that the document holds them, MUST offer to
   send the whole state again, and MUST NOT show the document as synchronised. An
-  application that keeps a document across restarts MUST keep the undistributed
-  mark with it.
-  *Rationale:* an application that merely avoids the word "synchronised" says
-  nothing; the person has to learn that a change of theirs did not go out, and be
-  able to send it once the cause is gone.
+  application that keeps a document across restarts MUST keep the undistributed mark
+  with it.
+  *Rationale:* the person has to learn that a change of theirs did not go out, and
+  be able to send it once the cause is gone; merely avoiding the word "synchronised"
+  says nothing.
 - **SND-22** · *engine* — A `too-large` refusal of a message within the `maxBytes`
   the transport's own profile declared MUST be reported, in addition to its report
   under SND-8, as a fault of the transport profile or its binding.
-  *Rationale:* a refusal the profile said could not happen is not the sender's
-  fault and must not look like it.
+  *Rationale:* a refusal the profile said could not happen is not the sender's fault
+  and must not look like it.
 - **SND-9** · *engine* — After a `rate-limited` failure of a message of any kind an
   engine SHOULD widen the spacing between its later sends of every kind, and SHOULD
   relax it again after a run of successful sends.
@@ -2741,115 +3005,162 @@ follow-up: `due`, the time within which the sender will speak again (SND-14).
 - **SND-10** · *engine* — An engine MUST expose to the application whether it is
   idle, waiting for its send window, or retrying (with the failure count, the time
   of the next attempt and the last failure), and MUST report a failure as an error
-  only when SND-8 drops a message. A resync request whose send fails is no error:
-  it releases its slot (RSY-4), and its outcome, *failed*, MUST be observable until
-  the engine's next request. A heartbeat whose send fails is neither retried nor
-  reported (SND-12).
-  *Rationale:* a change being retried is not yet lost; showing a sticky error for it
-  teaches people to ignore errors. A request carries nothing of the engine's own,
-  but a request that never goes out leaves a joiner waiting for the creator for
-  ever: its outcome lets the application say so.
+  only when SND-8 drops a message. A resync request whose send fails is no error: it
+  releases its slot (RSY-4), and its outcome, *failed*, MUST be observable until the
+  engine's next request. A report whose send fails is retried as SND-12 says, is
+  reported to no one, and is not shown as retrying: what the status shows is the
+  person's changes, and that sending waits for the person while a `needs-person`
+  refusal of any message holds it (TRN-20). A report owed still counts among what has not gone out for an
+  application that waits for that before it ends (SND-28).
+  *Rationale:* a change being retried is not yet lost, and a sticky error for it
+  teaches people to ignore errors. A request that never goes out leaves a joiner
+  waiting for ever: its outcome lets the application say so.
 
-### 9.3 Heartbeat
+### 9.3 The report
 
-A lost *final* message leaves no gap for anyone to see: nothing later from the
-same sender is pending behind it. The heartbeat closes that hole.
+A lost *final* message leaves no gap for anyone to see: nothing later from the same
+sender is pending behind it. The report after each phase of a sender's own writing
+carries that message again.
 
-- **SND-11** · *engine* — When its pacing has a finite `maxIntervalMs`, an engine
-  owes one `heartbeat` once it:
-  - has sent an `edit` (a piece of one included), a `control` frame or a
-    `resync-response` in pieces;
-  - or applied an answer — to its own request or to another's — which changed what
-    it holds.
+- **SND-11** · *engine* — An engine **owes** one **report** — a `heartbeat` frame —
+  for each **phase** of its own sending, and MUST send each report it owes once it
+  is **due**. A phase begins with an `edit` frame (a piece of one included) or a
+  `control` frame of its own that the transport accepted, and goes on with each
+  further one; its report is owed from that first frame on (SND-28). The phase ends,
+  and its report is due, once a **report delay**, as [Appendix
+  B](#appendix-b-recommended-values) recommends, has passed since the last of them
+  while no change of its own waits, is under way — its first try as a retry — or is
+  retried (SND-6, SND-17); the report then
+  goes, whatever the engine's pacing, as soon as the floor permits. A report is owed
+  and due at once — it goes as soon as the floor permits, and still only once no
+  change of its own waits or is under way —:
+  - for a phase not yet reported, when its application stops using the document, or
+    tells it that its device is about to sleep (LIF-12);
+  - on a device of the creator, once a merge — of a `control` frame of another
+    device of the creator (CTL-22), or of an answer's snapshot, to its own request
+    or to another's (CTL-25) — changed its control digest while it is
+    bootstrapped, and once an answer bootstrapped it (RSY-14) where its control
+    digest then differs from the one the answer stated;
+  - as SND-24 says.
 
-  A `resync-request` or a whole `resync-response` MUST NOT by itself make a
-  heartbeat owed. A heartbeat carries its sender's state vector and state digest
-  and, from a device of the creator, its control vector and control digest
-  (otherwise `null`), and its stream and number (LOS-13).
-  *Rationale:* one heartbeat after the last message is enough to reveal a lost
-  final message (LOS-4, LOS-10) and costs one message per burst of activity; a
-  repeating heartbeat would spend the rate budget of an idle document. After an
-  answer that healed it, it tells the others the new state, so that what their
-  evidence showed of the old one ends (LOS-12, LOS-18): its last report would
-  otherwise stand for it, older than what it holds.
-- **SND-23** · *engine* — An engine MUST send a heartbeat it owes by SND-11
-  `maxIntervalMs` after the earlier of its last `edit` and its last `control` frame
-  since its previous heartbeat — when it sent neither, after the last other
-  message or answer that owes one —, and not inside the floor. For every heartbeat
-  it owes (SND-11, SND-24):
-  - a `resync-request` or a whole `resync-response` MUST NOT delay it: one that
-    would push the heartbeat past its time goes after it;
-  - a change pending before it MUST go first, as SND-3 says, and the heartbeat
-    MUST then follow as soon as the floor permits; a change is pending before it
-    when, once sent, it keeps the heartbeat's promise (the heartbeat then counts
-    afresh from it), when it was made before SND-3's time for it, or, for a
-    heartbeat owed at once (SND-24), when it was made before the heartbeat became
-    owed;
-  - a change made after that MUST NOT delay it, and goes after it;
-  - the engine MUST NOT send another until something owes one again, and MUST NOT
-    send one while a change is being retried;
-  - a close does not cancel a heartbeat that is owed (LIF-6).
+  It MUST NOT send more than one report per phase but in these cases: once one went,
+  none until a new phase begins or one of them comes. A send of the whole state —
+  the seed (LIF-3), restored content, `resync()` (SND-8) — is no local change: it
+  neither begins nor prolongs a phase. Nor do a close sent again (LIF-11), a
+  request, an answer or a report, and reading owes nothing. A report carries its
+  sender's state vector and state digest, from a device of the creator that is
+  bootstrapped (RSY-14) its control clock and control digest (`null` otherwise), its
+  stream and number (LOS-13), and what SND-27 says.
+  *Rationale:* one report after a phase shows what a lost final message leaves
+  unseen (LOS-4, LOS-10) and, carrying it again (SND-27), heals it, also where its
+  sender goes offline right after; it costs one message per pause in writing, and
+  reading none. "Nothing of its own waits" keeps a change and its report from going
+  as two messages where the floor is long — under a pace of 35 seconds only a pause
+  about that long brings a report —, and a report ahead of a change it holds would
+  show an update receivers cannot have yet (LOS-4). Closing and sleeping cut the
+  delay short; the delay says only when the report goes, not from when it is owed
+  (SND-28). Whoever missed the seed is bootstrapped by
+  an answer (RSY-14); repeated, the largest message there is would double. Control
+  state is judged by reports only (LOS-10), and a member's report states no control
+  clock, so what a device of the creator merged — a member's answer, a `control`
+  frame of another of her devices — spreads by her report (LOS-12), also where it
+  left her control clock where it was: one message however many merges come, healed
+  when lost by her next report or request (§10.6).
+- **SND-27** · *engine* — The report that ends a phase (SND-11), and only that, MUST
+  carry again, once, the last message of its own local changes and decisions that
+  the transport accepted in that phase:
+  - where that message was an `edit` frame, its update, in `update`, byte for byte
+    as it went out, and nothing else — never a change the engine did not send or
+    refused (CTL-13, SND-8, SND-26) —; it MUST carry none where that edit was a
+    piece of a split update (SND-17), or where the report would exceed
+    `bounds.maxBytes` with it;
+  - where that message was a `control` frame, of a device of the creator, that frame
+    again, unchanged, before the report, which then carries no `update`.
 
-  *Rationale:* the heartbeat is what a sender's `due` promises when nothing else
-  follows (SND-14, LOS-11), so it counts from what promised: a request or an
-  answer keeps no promise, and an `edit` and a `control` frame are two sources to
-  a receiver, so a later one of one kind does not keep the other's. Counted from
-  the last message of any kind, an answer to a joiner just after an edit would
-  push the heartbeat past the edit's `due`, and every other participant would
-  suspect the sender. A heartbeat states what its sender holds: sent ahead of a
-  change it holds, it would show receivers an update they cannot have yet (LOS-4),
-  so a change made before it goes first. One made after it waits behind it, or a
-  person who keeps typing would hold back the heartbeat a control frame promised
-  for as long. The heartbeat then states a change made in the last floor before
-  it, which receivers see as missing until that change arrives a floor later:
-  within their waiting time (LOS-1) wherever the sender's floor is no longer than
-  it, as for the pacing of Appendix B.
+  Every other report MUST carry no `update`. A receiver MUST check and apply a
+  carried update as an `edit` frame's (CTL-7, LIF-6, FRM-6; PRF-1, item 9), and
+  judge the report after it (LOS-4, LOS-12).
+  *Rationale:* a receiver that lost the last change of a phase — the typical loss,
+  which nothing later of its sender shows — takes it from the report, without asking
+  and whether or not its sender is still online; one that has it notices nothing,
+  since the CRDT takes a duplicate as nothing. The requirement lies with the sender,
+  since a receiver may not judge an update by its own rights (CTL-7): only what went
+  out is carried, so a reader or a revoked member carries nothing, and after a
+  revocation or the close a repeat is a duplicate delivery. A piece is no whole
+  change, a report too large would not go, and repeated in every report the change
+  would cost its bytes for nothing. A report carries no registers, so a decision
+  sent last goes again as itself.
+- **SND-28** · *engine, application* — A report stays owed (SND-11) until the
+  transport accepted it, or refused it for good (SND-12). An engine MUST
+  make whether one is owed, and what it would carry again (SND-27) — nothing, for a
+  report that ends no phase —, observable to its application whenever that changes,
+  from when it is owed, not only once it is due. An application that persists the
+  document's content MUST persist that with it, on this device only, and give it
+  back when it starts the engine from that content; the engine MUST then send that
+  report, with what it carries again, as soon as a report due at once may go
+  (SND-11).
+  *Rationale:* owed from its first frame, not from when it is due, a report survives
+  a device that is ended within the report delay. A device that sleeps, loses its
+  network or is ended before its report went sends it the next time it opens the
+  document: an opportunity, no promise, for a receiver that lost its last change or
+  decision (SND-27, LOS-10, LOS-12), which heals where the report arrives. A report
+  the transport accepted is owed no longer, whether or not it arrived (TRN-10), and
+  opening the document then brings none
+  ([§10.6](#106-what-loss-detection-cannot-notice)). Carried across a restart,
+  under a new stream and a new client id (LOS-13, LOS-27), what the report carries
+  is still a copy of an edit that went out (SND-27) — on this device only, since no
+  other device sent it (ARC-5).
 - **SND-24** · *engine* — An engine that hears a `resync-request` stating exactly
   its own state vector and state digest, while what it deleted within the state
-  vector of its latest report (LOS-13) differs from what that report stated, owes
-  a heartbeat that it MUST send as soon as the floor permits, whatever its
-  `maxIntervalMs`; SND-23 applies to it otherwise.
-  *Rationale:* without it, a report that crossed another's deletion, which the
-  engine then received by an ordinary edit, would stand for the engine though older
-  than what it holds: at everyone who holds that deletion it shows a difference in
-  digests (LOS-12), and none of them can end it — nobody has anything to give them,
-  so their requests go unanswered.
-  A request that states what the engine holds is the sign that someone asks in
-  vain, and only a newer report of that stream ends what it asks about.
-- **SND-12** · *engine* — A heartbeat MUST count against the floor and MUST NOT be
-  retried if its send fails.
-  *Rationale:* a lost heartbeat is itself caught by the silence rule (LOS-11); a
-  retried one would only compete with real changes.
-- **SND-13** · *engine* — A heartbeat MUST NOT be applied as document content and
-  MUST NOT change control state.
-  *Rationale:* it is evidence, not authority, and it is accepted from any member.
+  vector of its latest report (LOS-13) differs from what that report stated, owes a
+  report at once (SND-11).
+  *Rationale:* a report that crossed another's deletion, which the engine then
+  received by an edit, would stand for the engine though older than what it holds,
+  and show everyone who holds that deletion a difference in digests (LOS-12) that
+  nobody can end: nobody has anything to give them, so their requests go unanswered
+  and their gaps rest (LOS-6). A request that states what the engine holds is the
+  sign that someone asks in vain, and only a newer report of that stream ends it.
+- **SND-12** · *engine* — A report MUST go through the send scheduler and count
+  against the floor like every message (SND-2). One whose send failed for a reason
+  worth retrying stays owed and MUST go again after the back-off (SND-7). The
+  messages of a report go one after the other (SND-27); while one waits, a change of
+  its own goes first, and the report stays owed and goes with the report that ends
+  the phase that change begins (SND-11). Once its application tells it of a return
+  (RSY-21) or that a read reached the messenger again (LIF-12), the back-off of the
+  report's retries ends, and it goes as soon as the floor and a wait the messenger
+  asked for (SND-7) permit. One refused for good is given up and sets no
+  undistributed mark (SND-8).
+  *Rationale:* retried, a report lost to a passing refusal goes as soon as the
+  messenger takes messages again, after an absence at once, not only at the next
+  opening (SND-28). It never holds a change back: the next report carries the
+  change.
+- **SND-13** · *engine* — A report's state MUST NOT be applied as document content
+  and MUST NOT change control state; the update it carries is applied as an edit's
+  (SND-27).
+  *Rationale:* its state is evidence, not authority, and it is accepted from any
+  member; the update it carries is a copy of an edit that went out, and taken as
+  one.
 
 ### 9.4 Changes larger than one message
 
-When the transport states `bounds.maxBytes`, no frame larger than that may be
-sent. A change that does not fit travels as several messages:
+When the transport states `bounds.maxBytes`, no frame larger than that may be sent.
+A change that does not fit travels as several messages:
 
 - *Spreading* sends several pending updates as a sequence of merged prefixes, one
-  per message, each the longest prefix whose frame still fits.
-- *Splitting* is for a single update that does not fit by itself — one large
-  paste, or the state a resync answer carries: the profile splits it into
-  **pieces** (PRF-1, item 7), and each piece is an `edit`, or a `resync-response`
-  to the same request.
+  per message, each a prefix whose frame fits.
+- *Splitting* is for a single update that does not fit by itself — one large paste,
+  or the state a resync answer carries: the profile splits it into **pieces**
+  (PRF-1, item 7), and each piece is an `edit`, or a `resync-response` to the same
+  request.
 
-Either way every message carries a valid update, which a receiver that accepts the
-frame applies as it arrives: a piece that arrives before its predecessors is held
-by the CRDT like any update, and a lost piece is an ordinary pending gap (LOS-2)
-that a resync heals. There is no reassembly and no buffer of incomplete sets;
-1.x's `fragment` kind, whose frame was usable only once its last slice arrived, is
-gone.
+Either way every message carries a valid update, applied as it arrives; a lost piece
+is an ordinary pending gap (LOS-2), and there is no reassembly. How many messages
+a change takes is the sender's, each no larger than `bounds.maxBytes`, which
+includes whatever the bridge can carry beyond a message body, an attachment among
+it ([bindings/](bindings/)).
 
-`bounds.maxBytes` already includes whatever the bridge can carry beyond an
-ordinary message body: where a messenger binding sends a large frame as an
-attachment ([bindings/](bindings/)), the transport profile states the attachment's
-limit, and the engine never needs to know how a frame of a given size travels.
-
-- **SND-17** · *engine* — An engine MUST NOT send a frame larger than the transport's
-  `bounds.maxBytes`:
+- **SND-17** · *engine* — An engine MUST NOT send a frame larger than the
+  transport's `bounds.maxBytes`:
   - it MUST spread a pending change over several messages when that suffices;
   - it MUST otherwise send an update as several frames of one piece each: several
     `edit` frames, or several `resync-response` frames with the same `respondsTo`.
@@ -2858,254 +3169,289 @@ limit, and the engine never needs to know how a frame of a given size travels.
   it, paced by the floor, and MUST NOT make them wait for a typing pause. A piece
   refused for good (SND-8) MUST drop the pieces of its update still to go.
   *Rationale:* a piece is useful on its own, so nothing waits for the last one; a
-  later edit builds on the split change, and sent first it would arrive first and
-  look like a gap to every receiver. The pieces after one that never goes out build
-  on it, so a receiver would only hold them back as a gap; the change goes again
-  whole (SND-8), and a requester missing a piece asks again (LOS-14).
+  later edit builds on the split change, and sent first it would look like a gap to
+  every receiver. The pieces after one that never goes out build on it, so receivers
+  would only hold them back; the change goes again whole (SND-8), and a requester
+  missing a piece asks again (LOS-14).
 - **SND-18** · *engine* — When a resync answer is split, its control snapshot and
-  attribution overlay MUST travel in the last piece, or, when they do not fit
-  beside it, in one more `resync-response` whose update holds nothing (PRF-1,
-  item 4); when both do not fit there, the overlay is left out. A control
-  snapshot that does not fit even alone makes the answer fail (SND-8); CTL-37
-  keeps a device of the creator from issuing an operation after which it would
-  not fit.
-  *Rationale:* the requester's bootstrap completes with the snapshot (CTL-13), so
-  it should come once the content it describes is on its way; attribution is
-  display only (ATR-3) and yields first.
+  attribution overlay MUST travel in the last piece, or, when they do not fit beside
+  it, in one more `resync-response` whose update holds nothing (PRF-1, item 4); when
+  both do not fit there, the overlay is left out. A control snapshot that does not
+  fit even alone makes the answer fail (SND-8); CTL-37 keeps a device of the creator
+  from making a decision after which it would not fit.
+  *Rationale:* the requester's bootstrap completes with the snapshot (CTL-13), so it
+  should come once the content it describes is on its way; attribution is display
+  only (ATR-3) and yields first.
 - **SND-19** · *application, engine* — An application MUST write content so that no
-  single unit the document's profile cannot split exceeds the size the profile
-  names for it (PRF-1, item 7). An engine MUST refuse an update it cannot split to
-  fit as `too-large`, and report it (SND-8), as it MUST when not even one useful
-  piece fits beside a frame's other fields.
+  single unit the document's profile cannot split exceeds the size the profile names
+  for it (PRF-1, item 7). An engine MUST refuse an update it cannot split to fit as
+  `too-large`, and report it (SND-8), as it MUST when not even one useful piece fits
+  beside a frame's other fields.
   *Rationale:* without a reassembly, a unit larger than one message could not travel
-  at all; requiring applications to write large content in pieces keeps large
-  changes possible (§1.7, item 8) without a frame kind of its own. For
-  `yjs-paragraphs/1` only content of length one — an embed, a binary — is such a
-  unit, and a profile says how large it may be (Appendix A).
+  at all; writing large content in pieces keeps large changes possible (§1.7, item
+  8) without a frame kind of its own. For `yjs-paragraphs/1` only content of length
+  one — an embed, a binary — is such a unit, and a profile says how large it may be
+  (Appendix A).
+- **SND-26** · *engine* — An engine MUST NOT send a change of its own that its
+  document's profile does not read as exactly one update (PRF-1, item 9; for
+  `yjs-paragraphs/1`, Appendix A, "Reading without applying"). It MUST refuse it as
+  `unreadable` and report it (SND-8), and MUST NOT merge it with any other change
+  into one message.
+  *Rationale:* every receiver would refuse such a frame (FRM-6), and with it every
+  change merged into it. Refused, the change still stays in the replica that made
+  it: later changes of that replica build on it and wait at receivers for it
+  (LOS-23), and its answers carry it. So an application must not make such a change
+  (YJS-1); the refusal tells it that it did, so that it can undo it.
 
-1.x's SND-4 and FRG-1 to FRG-8 are withdrawn
-([Appendix G](#appendix-g-changes-from-tdsp-1x)).
+1.x's SND-4 and FRG-1 to FRG-8 are withdrawn ([Appendix
+G](#appendix-g-changes-from-tdsp-1x)). SND-14 and SND-23, requirements of the
+previous draft revision of 2.0, are withdrawn: no frame promises a follow-up, so
+there is no `due` to keep ([CHANGELOG.md](CHANGELOG.md)).
 
 ## 10. Loss detection
 
-*How it works (informative).* A receiver often holds what it needs to notice that
-a message did not reach it. Loss detection makes that available as **evidence**,
-never as a claim: every piece of evidence can have an innocent cause, such as a
-message that is only late, or a participant who closed the application. The
-converse holds too: no evidence is no claim of completeness, since a loss can
-leave no trace an engine can see (§10.6).
+*How it works (informative).* A receiver often holds what it needs to notice that a
+message did not reach it. Loss detection makes that available as **evidence**, never
+as a claim: every piece of evidence can have an innocent cause, a message only late
+among them, and no evidence is no claim of completeness either (§10.6).
 
-- **What follows from evidence** (§10.1). Evidence is reported once it has
-  persisted for a waiting time (a truncated history at once), judged by when the
-  receiver heard a message, and answered by a bounded number of resync requests.
-- **What a receiver can see missing** (§10.2). An update whose predecessors it
-  lacks (*pending gap*), and more of them than it holds, which it gives up as a
-  truncated history; a sender who promised a follow-up and sent none (*silence*);
-  a report of updates it has not applied; a missing counter of a device of the
-  creator.
-- **Reports and streams** (§10.3). A heartbeat, a request and an answer's last
-  piece each state their sender's state, its vectors and digests: they are
-  *reports*. An engine numbers its reports in a *stream* that it begins anew each
-  time it starts, so a receiver keeps the latest report of each stream and never
-  takes one device of a member for another. Digests show what vectors cannot: a
-  lost deletion (*diverged*), or two operations under one counter.
-- **A history the bridge cut short** (§10.4). A bridge keeps a bounded window.
-  When an engine's reads no longer overlap, or the bridge says that it truncated
-  or restarted, the engine holds *history truncated* evidence and asks for a
-  resync at once.
-- **Answers in pieces** (§10.5). An answer to a request arrives in numbered
-  pieces; one with a piece missing is *answer incomplete*.
+Evidence is a **gap** of one stream (§10.1): an update whose predecessors are
+missing, a report — a `heartbeat`, a request or an answer's last piece — of what the
+receiver has not applied, of a digest that differs, or, from a device of the
+creator, of a control clock above every clock the receiver holds (§10.2, §10.3), a
+history the bridge cut short (§10.4), an answer missing a piece (§10.5). A `control`
+frame is no evidence; a difference in digests, which cannot say which side lacks
+something, lapses once its stream falls silent (LOS-12). Each gap is asked for at
+most three times, then **rests** until something wakes it. Most often none of it is
+needed: the report after each phase carries the phase's last message again (§9.3).
 
 ### 10.1 Evidence, not claims
 
 - **LOS-1** · *engine* — An engine MUST NOT report a message as lost; it MAY report
-  evidence that something is missing. It MUST NOT report any evidence before it
-  has persisted for a *waiting time* derived from its pacing's
-  `expectedLatencyMs` ([Appendix B](#appendix-b-recommended-values)), except
-  *history truncated* evidence (LOS-19).
+  evidence that something is missing. It MUST NOT report any evidence before it has
+  persisted for a *waiting time* derived from its pacing's `expectedLatencyMs`
+  ([Appendix B](#appendix-b-recommended-values)), except *history truncated*
+  evidence (LOS-19).
   *Rationale:* a message that is merely late produces exactly the same evidence for
   a while; reporting it immediately would cry wolf on every slow network.
 - **LOS-15** · *engine, application* — An engine MUST NOT expose the absence of
   evidence as "synchronised" or "complete", and an application MUST NOT present it
   so. The most an application may say is that nothing currently suggests a loss —
   and not even that on a device of the creator whose evidence LOS-20 ended by a
-  request that went *unanswered*, while that is its last request's outcome: then
-  it may only say that nobody it could ask had anything to give.
+  request that went *unanswered*, while that is its last request's outcome: then it
+  may only say that nobody it could ask had anything to give.
   *Rationale:* a loss can leave no trace an engine can see (§10.6), so no evidence
   is not completeness.
 - **LOS-7** · *engine* — Loss evidence MUST be based on the time the receiver heard
   a message, not on the sender's clock.
   *Rationale:* clocks of different participants are not synchronised, and the
-  missing edit may still be in flight behind a heartbeat that just arrived.
-- **LOS-6** · *engine, application* — An engine SHOULD answer evidence by a resync
-  request through its single request slot (RSY-3), automatically:
-  - only after a conservative multiple of the waiting time, but *history
-    truncated* evidence at once (LOS-19);
-  - with a bounded number of attempts per episode, and growing waits between them;
-  - never while a request of its own is already outstanding.
+  missing edit may still be in flight behind a report that just arrived.
+- **LOS-25** · *engine* — A **gap** is evidence of what the engine lacks of one
+  **stream**, kept and tried apart from every other:
+  - of the updates of one CRDT client (LOS-2, LOS-4), where the profile tells whose
+    (PRF-1, items 2 and 4), else of the reports of the one stream that showed it;
+  - of the deletions one stream's report shows (LOS-12);
+  - of the control state one stream of the creator states in its reports, or of the
+    creator's control clock (LOS-10, LOS-12);
+  - of an answer missing a piece (LOS-14);
+  - of a history truncated (LOS-8, LOS-9, LOS-23).
 
-  The application MAY switch the automatic request off.
+  Its **position** is the furthest point of its stream the engine knows of: the
+  clock of that client a frame names — an update carried by a report (SND-27)
+  included —, the number of that stream's latest report, the creator's control
+  clock; a gap of an answer or of a truncated history has none. A gap keeps the time
+  it arose until it ends (LOS-18) — a lapse is no end (LOS-12) —; a gap of the same
+  stream after that is a new one. Gaps are not kept across a restart: a starting
+  engine holds none, and what its first read shows arises anew. An engine MUST bound the CRDT clients whose
+  positions it keeps, forgetting the one named least recently first ([Appendix
+  B](#appendix-b-recommended-values)).
+  *Rationale:* losses of different writers are independent: one that nobody
+  reachable can heal says nothing of the next. Kept apart, each has its tries
+  (LOS-6) and its rest (LOS-26), and a writer who writes again moves only its own
+  gap's position. Kept from when it arose, a gap shown again and again is not judged
+  as new each time (LOS-1). Every start writes under a new client (LOS-27), so their
+  number grows with the sessions that wrote.
+- **LOS-6** · *engine, application* — An engine SHOULD answer each gap (LOS-25) by
+  resync requests to all through its single request slot (RSY-3), automatically: the
+  first once the gap has lasted a conservative multiple of the waiting time (LOS-1)
+  and then its **place**, derived from the gap and its own stream as RSY-20 derives
+  a turn — at once for a truncated history (LOS-19) —; each further one once a wait
+  has passed since the try before, the first twice the expiry of a request that does
+  not ask all (RSY-4; Appendix B: floor + 2 × latency, at least 10 s), each at least
+  double the one before, up to a longest wait as
+  [Appendix B](#appendix-b-recommended-values) recommends, and after a request let
+  go for another's (RSY-22) also once that one had its time, then its place; never
+  while a request of its own is outstanding. It
+  MUST NOT make more than three automatic requests for one gap, nor wait less
+  between two of them than that doubling gives. A gap's wait is the multiple of
+  LOS-1, without its place: from when it passed, the gap is about to be asked for,
+  and while it waits for its place another's request to all may stand in for its
+  try (RSY-22). A request counts as a try of every gap whose wait had passed
+  when it went out, or when it was let go for another's (RSY-22), its place come or
+  not; one whose send failed for a reason worth retrying (§3.4) counts for none, one
+  refused for good counts. After three, the gap **rests**: the engine asks for it no
+  more by itself until it is woken (LOS-26). The application MAY switch the
+  automatic requests of this requirement and LOS-26 off, as RSY-5 says.
   *Rationale:* asking costs messages against the same rate budget as editing;
-  unbounded automatic requests would turn a noisy network into a traffic storm.
+  unbounded automatic requests would turn a noisy network into a traffic storm. A
+  gap that nobody reachable can heal must not spend the tries a later loss of
+  another stream needs: each gap has its own, and resting, it costs nothing until
+  its stream moves on. A loss at the messenger leaves the same gap at every receiver;
+  placed apart, one of them asks first at each try, and the others let theirs go
+  for its request (RSY-22): one request and one answer, where all would otherwise
+  ask at once. Where some ask before hearing each other, each may let its next try
+  go for one of those requests, its answers over: a cost only where those answers
+  were lost too.
+- **LOS-26** · *engine, application* — An engine MUST make a resting gap (LOS-6)
+  observable, and its application MUST show it and SHOULD offer its person to
+  synchronise now (LIF-12). An engine SHOULD wake a resting gap — one request to all
+  for it, timed from the frame that woke it as its first was from when it arose
+  (LOS-6), after which it rests again — when it reads a frame that raises the gap's position (LOS-25), or, for a
+  gap of a CRDT client, a frame of the member it names as that client's writer
+  (LOS-2); it MUST NOT wake a gap so more than once in 10 minutes, counted from its
+  previous wake: a frame read sooner wakes it once the 10 minutes passed. A frame of
+  anyone else that states the same position again wakes nothing. An absence its
+  application tells it of that is longer than RSY-1's, or a return (RSY-1, RSY-21),
+  and a request of its person (RSY-3) wake every resting gap at once; the request it
+  brings, or the person's, is theirs.
+  *Rationale:* a gap rests because nobody who could heal it answered; a frame that
+  moves its stream on, or one of the writer's member — under a new client id after
+  a restart (LOS-27), still holding what it wrote (RSY-17) —, shows that someone who
+  holds what is missing is there again. Once in 10 minutes bounds what a writer
+  whose lost change stays lost costs while it writes on; the first wake does not
+  wait 10 minutes after the last try. Timed so, the devices one frame wakes ask once (RSY-22). An absence and the person's request ask anyway; a gap without a position
+  waits for them. A resting gap stays evidence (LOS-15): the person may know what the
+  engine cannot — that another device is online again.
 
 ### 10.2 What a receiver can see missing
 
 - **LOS-2** · *engine* — An engine MUST treat as evidence an update held pending
-  because its causal predecessors are missing (a *pending gap*). A deletion of
-  items the engine does not hold, which the CRDT holds back until they arrive
-  (PRF-1, item 2), is one. The engine SHOULD name the member it is waiting for
-  when it can tell.
+  because its causal predecessors are missing (a *pending gap*). A deletion of items
+  the engine does not hold, which the CRDT holds back until they arrive (PRF-1, item
+  2), is one. The engine SHOULD name the member it is waiting for when it can tell.
   *Rationale:* this is the direct signature of a lost message in the middle of a
-  sender's stream. A held deletion is one too: the insertion it deletes was lost,
-  or is late.
+  sender's stream. A held deletion is one too: the insertion it deletes was lost, or
+  is late.
 - **LOS-23** · *engine* — An engine MUST bound the bytes its profile holds for
-  missing predecessors (PRF-1, item 2;
-  [Appendix B](#appendix-b-recommended-values)). When they exceed the bound, it MUST
-  give up all it holds so, and MUST treat that as *history truncated* evidence, with
-  the consequences of LOS-19 and LOS-20.
+  missing predecessors, as the profile measures them (PRF-1, item 2; [Appendix
+  B](#appendix-b-recommended-values)). When they exceed the bound, it MUST give up
+  all it holds so, as the profile gives them up, and MUST treat that as *history
+  truncated* evidence, with the consequences of LOS-19 and LOS-20.
   *Rationale:* anyone in the channel can send updates whose predecessors never come,
   since receivers do not reject an edit for its sender's permission (CTL-7); held
   without a bound, they would take a receiver's memory unseen (§1.7, item 11). What
   is given up is as if the engine had missed those deliveries, so it asks as after a
   truncated history: the forced answer carries every update its state vector lacks,
-  those it gave up among them, from a responder that holds them, and ends the
-  evidence even where the responder holds none of them. One only its writer holds
-  comes back when the writer sends again or answers.
-- **LOS-11** · *engine* — A frame with `due` above 0 sets up an *expectation*: a
-  further frame of its source, or a heartbeat that holds it (LOS-16), within the
-  larger of that `due` and the pace this engine runs (SND-15), measured from when
-  the engine heard the frame. An engine MUST treat as evidence (*silence*) an
-  expectation that nothing ended (LOS-16) within that time plus the waiting time
-  LOS-1 derives from the engine's own `expectedLatencyMs`. The waiting time counts
-  once, so the evidence is reported as soon as that has passed.
-  - A `resync-request` or a `resync-response` MUST NOT set up an expectation, and a
-    frame with `due` 0 sets up none.
-  - Frames of the engine's own member count like anyone's, except its own coming
-    back: an `edit` whose updates come only from the engine's own CRDT client, and
-    a `control` frame under its own device tag.
-
-  *Rationale:* after an edit, a follow-up is due by what its sender promised
-  (SND-14); its absence is the only sign of a lost final message when the
-  heartbeat itself was lost too. Judging by the sender's own promise, not by the
-  receiver's pacing, is what lets pacing be each participant's own. The pace is a
-  floor for everyone, though: a sender that learned a longer pace after it
-  announced its `due` can no longer keep the shorter promise, and must not look
-  silent for it. A receiver that counted a resync request as an edit would suspect
-  every joiner of going quiet and ask for a resync itself — in a small group, more
-  than a dozen messages for one join without a single edit. Another device of the
-  engine's own member is a sender like any other, whose losses this device must
-  notice too; a transport need not tell a sender the id its message is delivered
-  under (RSY-16), so an engine may see its own frames again, and their content
-  tells them apart.
-- **LOS-16** · *engine* — An expectation (LOS-11) MUST end by each of these, for
-  the frames named and for no other:
-  - a heartbeat, for the frames it holds: an `edit` whose update its state vector
-    holds (PRF-1, item 3), a `control` frame whose counter its control vector
-    reaches;
-  - a further frame, for the earlier frames of its own source: an `edit` for those
-    whose updates come from the same CRDT clients, a `control` frame for those
-    under its device tag;
-  - an applied answer to the engine's own resync request, for every frame.
-
-  *Rationale:* a member may write from several devices: a heartbeat that crossed
-  another device's edit, or that device's next edit, says nothing about whether the
-  device that wrote the first one fell silent; what a heartbeat holds, and where a
-  frame comes from, does.
-- **LOS-4** · *engine* — An engine MUST treat as evidence a report (LOS-13) — a
-  heartbeat, a request or an answer's last piece (RSY-18) — whose state vector
-  contains updates it has not applied, judged against its current document so
-  that the evidence disappears when those updates arrive. It MUST judge the latest
-  report of each of a member's streams (LOS-17), not only the member's latest, and
-  the reports of its own member like anyone's.
-  *Rationale:* it is the only direct evidence of a lost *final* message. A member
-  may write from several devices: the report of one that never saw a change must
-  not hide the report of the one that made it. And another device of one's own
-  member is where a change this device missed shows. A request states what its
-  sender holds as a heartbeat does.
-- **LOS-10** · *engine* — An engine MUST treat as evidence a hole in a creator
-  device's counter (§7.4), and a heartbeat from the creator whose control vector
-  holds an entry above its own.
-  *Rationale:* operations come only from the creator's devices, each counting
-  without gaps, so a missing counter is a missing decision; the heartbeat makes
-  even the last operation's loss visible. A heartbeat from a creator device that
-  knows less is no evidence: a vector compares per device, so a lagging device
-  shows only lower entries. Only a heartbeat brings the creator's control vector
-  into this check, deliberately; a creator's request is judged by its control
-  digest alone (LOS-12). Every control frame makes a heartbeat owed (SND-11) that
-  carries the same vector, so a lost operation shows by the heartbeat that follows
-  it, and a request would add no evidence of its own.
+  from a responder that applied them, and ends the evidence even where the responder
+  holds none of them.
+- **LOS-4** · *engine* — An engine MUST treat as evidence — a gap of each client
+  whose updates it holds fewer of (LOS-25) — a report (LOS-13) — a `heartbeat`, a
+  request or an answer's last piece (RSY-18) — whose state vector contains updates
+  it has not applied, judged against its current document, after applying an update
+  the report carries (SND-27), so that the evidence disappears when those updates
+  arrive. It MUST judge the latest report of each of a member's streams (LOS-17),
+  not only the member's latest, and the reports of its own member like anyone's.
+  *Rationale:* it is the direct evidence of a lost *final* message whose repeat in
+  the report was lost or did not fit (SND-27), and of someone else's change that the
+  reporter holds. A device of a member that never saw a change must not hide the
+  report of the one that made it, and another device of one's own member is where a
+  change this device missed shows. Judged before the update it carries, every report
+  would show its own repeat as missing.
+- **LOS-10** · *engine* — An engine MUST treat as evidence a report (LOS-13) of a
+  device of the creator whose control clock is above the greatest clock among the
+  registers the engine holds. A `control` frame is no evidence, of this kind or of
+  LOS-12's.
+  *Rationale:* every decision raises its device's clock (CTL-21), and the report
+  that ends its phase states that clock and its digest (SND-11), so a lost decision
+  shows by that report or a later one (LOS-12); a clock that lags is no evidence,
+  since its device may simply know less. A `control` frame carries no number that
+  orders it among its device's frames, nor need its clock rise (LIF-11), so one that
+  arrives late cannot be told from a current one; a report can (LOS-13, LOS-17).
+  Only the creator decides (CTL-5), so her devices' clocks are what control state is
+  measured by; a member's report says only what reached that member
+  ([§15.4](#154-what-is-not-guaranteed), CTL-46).
 
 ### 10.3 Reports and streams
 
-- **LOS-13** · *engine* — An engine MUST choose a random stream tag (§4.3) each
-  time it starts, and MUST number every heartbeat, request and answer it sends in
-  that stream, from 1, each one higher than every earlier one:
-  - a heartbeat and a request when it writes them;
+- **LOS-13** · *engine* — An engine MUST choose a random stream tag (§4.3) each time
+  it starts, and MUST number every `heartbeat`, request and answer it sends in that
+  stream, from 1, each one higher than every earlier one:
+  - a `heartbeat` and a request when it writes them;
   - an answer when it takes the state it answers from, every piece of that answer
     with the same number (RSY-18).
 
-  A *report* is a heartbeat, a request or an answer's last piece — of an answer
-  the engine does not accept (RSY-12) too, of which it applies nothing —: its
-  sender's state, at that number.
+  A *report* is a `heartbeat` — the report of SND-11 —, a request or an answer's
+  last piece — of an answer the engine does not accept (RSY-12) too, of which it
+  applies nothing —: its sender's state, at that number.
   *Rationale:* a member may run several devices under one MemberId, and a later
   message of one says nothing about another's state. Within one stream the state
-  only grows, so a newer report says at least what an older one did, and its
-  number orders the two however the messenger delivered them. What a stream
-  reveals is how many engines a member runs and when one starts.
+  only grows, so a newer report says at least what an older one did, and its number
+  orders the two however the messenger delivered them. What a stream reveals is how
+  many engines a member runs and when one starts.
+- **LOS-27** · *engine* — Where its profile names CRDT clients (Appendix A), an
+  engine MUST write its own changes under a client id of its own drawn each time it
+  starts, never under one a restored state holds.
+  *Rationale:* as a device that takes over carried control state decides under a tag
+  of its own (ARC-5): two engines under one client id — one state restored twice, or
+  restored while its engine wrote on elsewhere — would give two different updates
+  the same clock, which the CRDT takes as one, and a gap's position (LOS-25) would
+  no longer be one writer's. A new id at each start costs about 10 bytes in every
+  state vector for each session that wrote.
 - **LOS-17** · *engine* — An engine MUST keep the latest report of each of a
-  member's streams (at least four streams per member, dropping the one it heard
-  from least recently first, [Appendix B](#appendix-b-recommended-values)), MUST
-  let a report replace only one of the same stream with a lower number, and MUST
-  NOT take a report of its own stream as anyone's.
-  *Rationale:* kept by member, the report of a device that lags behind would
-  replace that of the device that deleted, and valid evidence would vanish. An older report
+  member's streams (at least four streams per member, dropping the one it heard from
+  least recently first, [Appendix B](#appendix-b-recommended-values)), MUST let a
+  report replace only one of the same stream with a lower number, and MUST NOT take
+  a report of its own stream as anyone's.
+  *Rationale:* kept by member, the report of a device that lags behind would replace
+  that of the device that deleted, and valid evidence would vanish. An older report
   offered again changes nothing.
-- **LOS-18** · *engine* — What a stream's report shows (LOS-4, LOS-12, LOS-14) MUST
-  end only:
+- **LOS-18** · *engine* — Evidence that another participant's report (LOS-4, LOS-10,
+  LOS-12, LOS-14) shows MUST end only:
   - when the engine's state no longer gives it, judged against its current state;
   - when a newer report of that stream shows nothing;
-  - or when the engine has applied, whole (LOS-14), an answer of that stream to its
-    own request: it then holds what that answer's last piece states, and neither
-    that report nor a later one of the stream stating the same state is evidence of
-    a difference in digests.
+  - when the engine has applied, whole (LOS-14), an answer of that stream to a
+    request it made, or let its own go for (RSY-22), or holds what its last piece
+    states, or the stream's state at a higher number (LOS-21): it then holds what
+    that answer's last piece states. That answer covers the state up to its number
+    and later reports of that same state, not any newer state of the stream: no
+    report it covers is evidence of a difference in digests, whichever arrived
+    first.
 
-  A stream that falls silent is a sender that falls silent (§10.6): no time alone
-  ends what its last report shows.
-  *Rationale:* a whole answer is the one way a receiver knows it holds a sender's
-  state although its own digest differs — by deletions of its own the sender had
-  not seen — so it ends that false alarm without a second request.
+  Evidence of LOS-12 also lapses as LOS-12 says. Evidence that does not end rests
+  once its tries ran out (LOS-6) and is woken as LOS-26 says. Evidence of the
+  engine's own state, a pending gap (LOS-2), ends only when the gap does.
+  *Rationale:* a whole answer, or one whose last piece's state it held, is the one
+  way a receiver knows it holds a sender's state although its own digest differs —
+  by deletions of its own the sender had not seen —, so it ends that false alarm
+  without a second request. Its number orders
+  it among its stream's reports however they arrive (LOS-13): one that comes after a
+  newer report covers that report only where it states the same. Where it holds a
+  stream's state at a higher number — every insertion that vector counts, and the
+  same deletions within it —, nothing of an answer numbered in between is missing
+  here, since a stream's state only grows: ending that answer's evidence, of a
+  missing piece or of control state, loses nothing, and only a false alarm and its
+  request go. Evidence nobody reachable can heal does not end by being asked about:
+  it rests until it is woken (LOS-26).
 
 **State digests.** A state vector counts what a sender inserted, not what it
-deleted, and a control vector counts operations, not what they say. A lost update
-that only deleted, or two different operations under one device and counter
-(CTL-24), leave every vector equal. So heartbeats, requests and an answer's last
-piece carry digests beside their vectors (LOS-12).
+deleted, and a control clock says how late the latest decision is, not what was
+decided; so reports carry digests beside them (LOS-12).
 
-- **LOS-24** · *engine* — A **digest** MUST be the first 8 bytes of SHA-256
-  (FIPS 180-4) of its input, written as 16 lowercase hex digits, where:
-  - the *state digest*'s input is the profile's encoding of what the sender
-    deleted (PRF-1, item 8);
-  - the *control digest*'s input is the object holding exactly the sender's
-    control snapshot's `vector` and `targets` (§7.5), without its `aboveHoles`,
-    every target's `heads` in order of `device` and then `counter`, no control
-    vector in it with an entry of 0 (FRM-14), canonicalized by RFC 8785 (JSON
-    Canonicalization Scheme) and encoded as UTF-8.
+- **LOS-24** · *engine* — A **digest** MUST be the first 8 bytes of SHA-256 (FIPS
+  180-4) of its input, written as 16 lowercase hex digits, where:
+  - the *state digest*'s input is the profile's encoding of what the sender deleted
+    (PRF-1, item 8);
+  - the *control digest*'s input is the object holding exactly the sender's `closed`
+    flag and its `targets` (§7.5), `{"closed": …, "targets": {…}}`, each register
+    exactly its `value`, `clock` and `device` — without `profile` and extension
+    fields —, canonicalized by RFC 8785 (JSON Canonicalization Scheme) and encoded
+    as UTF-8.
 
-  *Rationale:* a receiver compares a digest another implementation computed with
-  one of its own, so both must digest the same bytes: a second reading would show
-  a divergence that is not there, or hide one. `aboveHoles` is left out because a
-  hole is evidence of its own (LOS-10). Eight bytes keep every report small; two
-  different states share a digest only by chance, and then a difference goes
-  unseen until either state changes.
-
-A receiver that holds every insertion a sender's vector counts compares the
-sender's state digest with that of what it deleted itself of those items, its own
-control digest with the sender's at equal control vectors. Different digests are
-evidence (LOS-12), a responder that sees them has something to offer (RSY-17), and
-a device of the creator learns where two participants hold different operations
-(CTL-31). While one participant lacks an insertion the other counts, the vectors
-show that first, and the digests are compared once it has arrived.
-
+  *Rationale:* a receiver compares a digest another implementation computed with its
+  own, so both must digest the same bytes, and only what both hold — the registers
+  and the close. Eight bytes keep every report small; two different states share a
+  digest only by chance, and then a difference goes unseen until either state
+  changes.
 - **LOS-12** · *engine* — An engine MUST treat as evidence:
   - (*diverged*) a report (LOS-13) whose state vector its own holds — every update
     it counts, the vectors equal or the engine's ahead — and whose state digest
@@ -3113,193 +3459,293 @@ show that first, and the digests are compared once it has arrived.
     state vector counts (PRF-1, item 8). It is judged first when the engine can
     compare the two: as it hears the report, or once it holds every update the
     report's vector counts. A report that did not differ then is no such evidence.
-  - a creator device's heartbeat or request whose control vector equals the
-    engine's own and whose control digest does not — on a device of the creator, a
-    member's request too (CTL-31).
+  - a report (LOS-13) of a device of the creator whose control clock equals the
+    greatest clock among the registers the engine holds and whose control digest
+    differs from the engine's own (LOS-24).
 
-  It MUST judge either against its current state, so that it disappears once the
-  digests agree, and wait for it as LOS-1 says. A report the engine holds by a
-  whole answer is no such evidence (LOS-18).
-  *Rationale:* a vector counts what was inserted, or which operations were issued;
-  a lost deletion, or two different operations under one device and counter
-  (CTL-24), leave it equal. The digest is what differs then. A sender cannot have
-  deleted what it never held, so a receiver that holds more compares only what the
-  sender's vector counts: a lost deletion then shows although the receiver has
-  edited since, where comparing at equal vectors only would wait for the vectors
-  to meet, which nothing promises. While the receiver lacks an insertion the sender
-  counts, the vectors show that first (LOS-4). The report is judged once: what the
-  receiver deletes after that — the sender's own later edits among it — says
-  nothing of what the sender held, and judged anew it would raise an alarm after
-  every edit that deletes. A deletion of the receiver's own within that vector,
-  which the sender had not yet received when it reported, makes the digests differ
-  as well: a false alarm, which one whole answer of that stream ends, or its next
-  report, which a request stating what it holds brings at once (SND-24).
+  It MUST judge each against its current state, so that it disappears once the
+  digests agree, and wait for it as LOS-1 says. Of the creator, each stream's latest
+  report that states control state is judged — the last piece of an answer states
+  none —; a `control` frame is evidence of neither kind (LOS-10). Evidence of either
+  kind ends as LOS-18 says, and a report the engine holds by a whole answer is none
+  (LOS-18). Evidence of either kind MUST also **lapse** once the report's stream has
+  not been **heard** for longer than the absence of RSY-1, as [Appendix
+  B](#appendix-b-recommended-values) recommends: a stream is heard when a frame that
+  names it — a `heartbeat`, a `resync-request`, a piece of a `resync-response` —
+  brings a number above every one the engine heard of that stream (LOS-13); a frame
+  offered again or an older one is not, and `edit` and `control` frames name no
+  stream. Lapsed, it is no evidence and asks nothing, and no request made meanwhile
+  is a try of it (LOS-6); only a newer report of that stream that still differs
+  brings it back (LOS-17), as the gap it was, with its time and the tries it had,
+  and that report wakes it as a frame that raises its position does (LOS-26). No
+  other evidence lapses.
+  *Rationale:* a lost deletion, a lost close, or a register lost under a clock no
+  greater than one received, leave vector and clock equal; the digest is what
+  differs then. Compared only at equal clocks, it leaves out a sender whose clock
+  lags; after a decision, the report that ends its device's phase follows (SND-11).
+  A sender cannot have deleted what it never held, so a receiver that holds more
+  compares only what the sender's vector counts, and a lost deletion shows although
+  the receiver edited since; while it lacks an insertion the sender counts, the
+  vectors show that first (LOS-4). Judged once, a report raises no alarm for what
+  the receiver deletes later. A deletion of the receiver's own the sender had not
+  yet received makes the digests differ too: a false alarm, which a whole answer of
+  that stream ends, or its next report, which a request stating what it holds brings
+  at once (SND-24). A difference in digests cannot say which side lacks something,
+  and the report of a stream that no longer runs — an earlier run of its device,
+  read late — would show it for good; so it lapses with its stream's silence, and a
+  stream that runs reports again after each phase of its own writing (SND-11), which
+  brings back what still differs. A frame offered again says nothing new of its
+  stream, so it keeps nothing alive; and back with the tries it had, a stream that
+  falls silent and reports again, time after time, earns no new tries each time.
+  What lapses is only what a digest shows: a missing update, a higher control clock
+  or a missing piece says which side lacks what.
 
 ### 10.4 A history the bridge cut short
 
 - **LOS-8** · *engine* — An engine whose transport does not offer `receiveSince`
   MUST treat as evidence (*history truncated*):
-  - a `receive` answer that shares no delivery with the previous non-empty answer
-    it processed — everything it had seen has left the bridge's window, so
-    deliveries may have come and gone unseen in between;
+  - a `receive` answer that shares no delivery with the previous non-empty answer it
+    processed — everything it had seen has left the bridge's window, so deliveries
+    may have come and gone unseen in between;
   - the first `receive` answer after one that failed.
 
-  *Rationale:* a bounded window (BRG-17) can drop an edit *and* the heartbeat that
-  follows it before an engine reads again; the engine then sees no pending gap, no
-  silence (it never heard the edit) and no newer state vector, so LOS-2, LOS-4,
-  LOS-10 and LOS-11 stay quiet while the document has diverged. The one thing the
-  engine can still see is that the window moved past everything it knew. Overlap
-  proves nothing after a bridge restart, though: a restarted bridge may offer old
-  deliveries again (BRG-17), and one it offers again can overlap the previous
-  answer while newer ones were lost. A restart is visible to an engine that polls
-  as a failed `receive`, so that is evidence too; so is a bridge that could not
-  reach its messenger, which costs one answered request when nothing was lost.
+  *Rationale:* a bounded window (BRG-17) can drop an edit *and* the report that
+  follows it before an engine reads again; then LOS-2, LOS-4 and LOS-10 stay quiet
+  while the document has diverged. What the engine can still see is that the window
+  moved past everything it knew — for an engine nobody else writes to, once its own
+  report comes back in a read. Overlap proves nothing after a bridge restart, which
+  may offer old deliveries again (BRG-17); a restart shows to an engine that polls
+  as a failed `receive`, and so does a bridge that could not reach its messenger,
+  which costs one answered request when nothing was lost.
 - **LOS-9** · *engine* — Where the transport can say what it lost:
   - An engine whose transport offers `receiveSince` MUST read through it, with the
     last `DeliveryId` of the latest answer that held one as the cursor (TRN-18,
     TRN-21). It MUST treat an answer with `truncated: true` as *history truncated*
     evidence, and MUST NOT apply LOS-8's comparison of answers then.
   - An engine whose transport offers `instance` (TRN-19), with or without
-    `receiveSince`, MUST treat as such evidence too an `instance` other than the
-    one that answered its previous read — after a restart, other than the one its
+    `receiveSince`, MUST treat as such evidence too an `instance` other than the one
+    that answered its previous read — after a restart, other than the one its
     application restored with the cursor (LIF-8), where it restored one.
 
   Either is evidence on its own.
   *Rationale:* where the bridge can say that something slid out unseen, or that it
-  restarted, the engine needs no guess: LOS-8's overlap heuristic, its "first
-  answer after a failed one" case and its cost of a needless request after every
-  outage go, and a restart between two polls becomes visible. A bridge may offer
-  the instance without the cursor; its restart is evidence all the same. Restored
-  with the cursor, the instance carries this across the engine's own restart: a
-  bridge that lost something meanwhile has another epoch, one that kept its window
-  the same. Read after the deliveries, it also shows what a bridge gave up while it
-  answered them — an event of its messenger it read for this answer and could not
-  enter — at this read, not one later, when a restored member would already have
-  bootstrapped from its own state.
+  restarted, the engine needs no guess, nor a needless request after every outage,
+  and a restart between two polls shows. Restored with the cursor, the instance
+  carries this across the engine's own restart; read after the deliveries, it shows
+  what a bridge gave up while it answered them at this read, before a restored
+  member would bootstrap from its own state.
 - **LOS-19** · *engine* — Unlike every other evidence of this section, *history
-  truncated* evidence (LOS-8, LOS-9, LOS-23) needs no waiting time. An engine
-  SHOULD answer it by a resync request with `force: true` (RSY-16) as soon as its
-  request slot is free, and further attempts as LOS-6 says, and MUST report it as
-  "not safely synchronised", never as "synchronised", until it has applied an
-  answer to its own request that bootstraps it (CTL-13, RSY-14), or, on a device
-  of the creator, as LOS-20 says. For a device of the creator any answer
-  bootstraps it; for anyone else, one with control state it takes (RSY-13).
-  *Rationale:* the request forces an answer (`force: true`) because only an
-  answer can end the evidence: an engine that lacks nothing would otherwise get
-  none and warn for ever. For anyone but the creator that answer must carry control
-  state: the window may have dropped a control operation, which an answer of
-  content alone does not bring back. The rule does not promise healing: with the
-  creator offline the request goes unanswered and the evidence stays.
-- **LOS-20** · *engine, application* — For the creator, *history truncated*
-  evidence also ends when a request it made after the evidence expired unanswered.
-  What remains is the request's outcome, *unanswered* (RSY-4), which the engine
-  MUST keep observable until its next request; an application SHOULD show it, and
-  MUST NOT say then that nothing suggests a loss (LOS-15). The creator's copy may
-  still lack a change of a member who is offline, until that member sends again
-  (LOS-2, LOS-4, LOS-11) or answers a later request.
-  *Rationale:* a peer answers the creator only when it holds content the creator
-  lacks (RSY-6, RSY-17), so silence means nothing to recover, or nobody online to
-  recover it from — and the engine cannot tell which.
+  truncated* evidence (LOS-8, LOS-9, LOS-23) needs no waiting time. An engine SHOULD
+  answer it by a resync request with `force: true` (RSY-16) as soon as its request
+  slot is free, and the further tries of its gap as LOS-6 says, and MUST report it
+  as "not safely synchronised", never as "synchronised", until it has applied an
+  answer that carries control state (CTL-25) to its own request sent with `force`
+  after the history was last found truncated, or, on a device of the creator, as
+  LOS-20 says. An answer with content alone ends it for no one. Each time the engine
+  finds its history truncated anew, also while the evidence stands, an answer to a
+  request sent before ends nothing; the evidence keeps the time it was first found,
+  and its gap its tries: one that rests is not woken by it (LOS-26).
+  While the evidence stands, a bridge that answers `truncated` again for the same
+  cursor (TRN-18) tells of the same loss.
+  *Rationale:* only an answer can end the evidence, and an engine that lacks nothing
+  would get none without `force`. It must carry control state: the window may have
+  dropped a decision of the creator, which content alone does not bring back. An
+  answer to a request sent before, also one sent with `force` for an earlier
+  truncation, whether that one still stands or has ended, may have been taken before
+  what the window dropped was sent, and nothing in it says when. With nobody online who holds the document, the request
+  goes unanswered and the evidence stays.
+- **LOS-20** · *engine, application* — For the creator, *history truncated* evidence
+  also ends when a request with `all` (RSY-21) it sent after the history was last
+  found truncated expired unanswered. What remains is the request's outcome, *unanswered* (RSY-4), which the
+  engine MUST keep observable until its next request; an application SHOULD show it,
+  and MUST NOT say then that nothing suggests a loss (LOS-15). The creator's copy
+  may still lack a change of a member who is offline, until that member sends again
+  (LOS-2, LOS-4) or answers a later request.
+  *Rationale:* only a request to all reaches the members, and a member answers the
+  creator only when it holds something the creator lacks (RSY-6, RSY-17), so silence
+  means nothing to recover, or nobody online to recover it from — and the engine
+  cannot tell which.
 
 ### 10.5 Answers in pieces
 
 - **LOS-14** · *engine* — An answer with every piece, up to the number its last one
-  names, is *whole*. An engine MUST count, by stream and number (LOS-13), the
-  pieces of each answer to its own request it applies; a piece MUST count once by
-  its number, however often it arrives. It MUST treat as evidence (*answer
-  incomplete*) an answer of which a piece is missing (its last piece arrived and
-  one of a lower number did not, or pieces arrived and its last did not), once no
-  piece of it has arrived for the engine's floor (SND-16) plus the waiting time of
-  LOS-1, unless the engine holds what the last piece states anyway (LOS-4,
-  LOS-12). It MUST make that evidence observable, and an answer that lacks a piece
-  observable at once, as a transfer under way; it SHOULD answer the evidence as
-  LOS-6 says.
+  names, is *whole*. An engine MUST count, by stream and number (LOS-13), the pieces
+  of each answer to its own request it applies; a piece MUST count once by its
+  number, however often it arrives. It MUST treat as evidence (*answer incomplete*)
+  an answer of which a piece is missing (its last piece arrived and one of a lower
+  number did not, or pieces arrived and its last did not), once no piece of it has
+  arrived for the engine's floor (SND-16) plus the waiting time of LOS-1, unless the
+  engine holds what the last piece states anyway (LOS-4, LOS-12). It MUST make that
+  evidence observable, and an answer that lacks a piece observable at once, as a
+  transfer under way; it SHOULD answer the evidence as LOS-6 says.
   *Rationale:* a bootstrap completes with the piece that carries the snapshot
-  (RSY-14), which may arrive first: trust is there before the content is. And a
-  receiver that already holds more than the responder — its own edits, others' —
-  cannot tell from a vector or a digest whether the rest arrived, since the missing
-  piece may carry only deletions. Numbered pieces say it exactly, for the cost of a
-  count. The responder sends its pieces at its own floor, which the receiver does
-  not know but shares through the pace; it waits as long as one more piece would
-  take it.
+  (RSY-14), which may arrive first; and a receiver that holds more than the
+  responder cannot tell from a vector or a digest whether the rest arrived, since a
+  missing piece may carry only deletions. Numbered pieces say it exactly, for the
+  cost of a count. The receiver waits as long as one more piece would take at the
+  pace it shares with the responder.
 - **LOS-21** · *engine* — An engine MUST keep each answer it counts (LOS-14) by its
-  sender, stream and number, bound to the request it answers, apart from every
-  other answer and from the reports it keeps (LOS-17): a piece of another answer —
-  of the same stream or another, to its own request or anyone's — ends nothing of
-  it, and neither does dropping its stream's report. Its evidence MUST end only:
+  sender, stream and number, bound to the request it answers, apart from every other
+  answer and from the reports it keeps (LOS-17): a piece of another answer — of the
+  same stream or another, to its own request or anyone's — ends nothing of it, and
+  neither does dropping its stream's report. Its evidence MUST end only:
   - when the answer is whole;
   - when the engine holds what its last piece states;
-  - or when it holds the state of that stream at a higher number: by a report of
-    the stream it held when it could first compare it (LOS-12), or by a whole
-    answer of the stream.
+  - or when it holds the state of that stream at a higher number: by a report of the
+    stream it held when it could first compare it (LOS-12), or by a whole answer of
+    the stream.
 
   *Rationale:* two answers of one stream are two transfers, and they overlap: a
   responder answers whoever asks, and a later answer may go to someone else and
-  never be whole here. Within a stream the state only grows, so a later answer
-  held whole, or a later report held, says the engine holds the earlier one's state
-  too; a piece that is not the last states nothing, and cannot.
+  never be whole here. Within a stream the state only grows, so a later answer held
+  whole, or a later report held, says the engine holds the earlier one's state too;
+  a piece that is not the last states nothing.
 - **LOS-22** · *engine* — An answer whose pieces disagree — on the request they
-  answer, on the count or on the state the last one states, or with a piece
-  numbered above the count — MUST NOT be taken as whole, and its evidence MUST end
-  only by a higher number of its stream. An engine MAY bound the answers it counts
-  at once and the piece numbers it counts; an answer it gives up for the bound MUST
-  stay evidence until the engine holds the state of its stream at its number or a
-  higher one, and one with a piece numbered above the bound is never whole.
+  answer, on the count or on the state the last one states, or with a piece numbered
+  above the count — MUST NOT be taken as whole, and its evidence MUST end only by a
+  higher number of its stream. An engine MAY bound the answers it counts at once and
+  the piece numbers it counts; an answer it gives up for the bound MUST stay
+  evidence until the engine holds the state of its stream at its number or a higher
+  one, and one with a piece numbered above the bound is never whole.
   *Rationale:* where an answer's pieces disagree, the engine cannot tell which of
   them states the answer; only its stream's later word can. A bound on what is
   counted keeps memory finite without letting evidence vanish: giving an answer up
-  costs the engine the chance to see it whole, not the warning.
+  costs the chance to see it whole, not the warning.
 
 ### 10.6 What loss detection cannot notice
 
-*Informative.* A loss may leave no evidence, evidence that ends too soon, or
-evidence nothing can end:
+*Informative.* A loss may leave no evidence, or evidence that rests before the loss
+heals (LOS-6, LOS-25). Closing it takes three steps, and TDSP promises none of them
+by a time: the first and the last wait for a message that may not come.
 
-- **Before the first answer.** LOS-8 notices a window that moved on only while a
-  previous answer exists to compare with, so a truncation between an engine's
-  start and its first `receive` is covered by the joiner's bootstrap instead
-  (RSY-1).
-- **A bridge restart between two polls.** A bridge that restarts entirely between
-  two polls of an engine — possible where an application polls rarely, as a
-  browser does in a background tab — and whose new window overlaps the previous
-  answer is not noticed, unless the transport offers `instance` (LOS-9).
-- **Nobody to ask.** A resync heals only while the creator is online, or another
-  device of the requester's own member, or, for the creator's own request, a peer
-  holding the content. A message that reached *nobody* is recovered only when its
-  author answers a request. And the creator's truncated history ends with a
-  request nobody answered (LOS-20): its copy may still lack a change of a member
-  who is offline.
-- **What waits for missing predecessors** beyond the bound is given up (LOS-23):
-  an update that only its writer holds comes back only when the writer sends
-  again or answers a request.
-- **No promise.** A sender whose `maxIntervalMs` is not finite promises nothing
-  (`due` 0) and sends no heartbeat, and the loss of its final message cannot be
-  noticed at all.
-- **Another device's heartbeat.** A heartbeat names its member, not its device: one
-  that holds a frame ends the expectation of that frame, whichever of the member's
-  devices sent it (LOS-16). So when one device's final message and its heartbeat
-  are both lost while another device of that member, which did get the frame
-  before, sends a heartbeat, the loss shows only through a gap (LOS-2), that
-  device's next message, or the request it sends when it restarts (RSY-1, LOS-4).
-- **Deletions.** An update that only deleted is held by every state vector, so a
-  heartbeat ends its expectation always; the digest then shows its loss (LOS-12),
-  once the receiver holds every insertion the report counts.
-- **A report that crossed a deletion.** A report that crossed a deletion the
-  receiver holds stays evidence until its stream reports again — at once, once
-  that stream hears a request stating what it holds (SND-24) — or answers the
-  receiver whole (LOS-18); while that stream does not run, it stays, and the
-  receiver's requests go unanswered.
-- **Many engines of one member.** An engine keeps the reports of a bounded number
-  of streams per member (LOS-17): a member running more engines at once than that
-  can have one stream's evidence dropped — not that of an answer it counts
-  (LOS-21).
-- **A responder that stops.** An answer whose responder stops before its last piece
-  — the application quits, or restarts with a new stream — stays evidence while
-  that stream does not run: what another stream of the member holds says nothing
-  of what this one sent, so whole answers from it do not end it; the old stream's
-  own pieces, sent before it stopped and delivered late, still do.
+1. **It can be detected** once the receiver gets a message that shows it: an update
+   that builds on what was lost, which then waits for it (a pending gap, LOS-2); a
+   report of someone who applied it, whose state vector counts it (LOS-4) or, over
+   the same insertions, whose state digest differs (LOS-12); or, for a decision, a
+   report of a device of the creator that holds it (LOS-10, LOS-12) — not a
+   `control` frame. An edit that does not build on what was lost shows nothing. Most
+   often no detection is needed: the report after a phase carries its last edit
+   again (SND-27).
+2. **A resync is requested** once that evidence has lasted its waiting time, within
+   the tries of its gap (LOS-6), unless the application switched them off.
+3. **The state is restored** once an answer that holds what was lost arrives whole
+   and is applied: to that request, from a responder it reaches who is online and
+   holds it ([§8.3](#83-who-answers)) — or an answer to another's request to all for
+   which the engine let its own go (RSY-22), or, by chance, the creator's answer to
+   another's.
 
-1.x's LOS-3 and LOS-5 are withdrawn ([Appendix G](#appendix-g-changes-from-tdsp-1x)).
+Control state has a narrower limit: evidence of it judges only the clocks a device
+of the creator states in its reports (LOS-10, LOS-12), never in its `control`
+frames; a member states its control clock only in a request (RSY-16), which is
+evidence of control state for no one. The cases below are instances of these steps
+and limits, not occasions for rules of their own:
+
+- **Before the first answer.** LOS-8 notices a window that moved on only against a
+  previous answer, so a truncation between an engine's start and its first `receive`
+  is covered by the joiner's bootstrap instead (RSY-1).
+- **A bridge restart between two polls** whose new window overlaps the previous
+  answer — possible where an application polls rarely, as a browser does in a
+  background tab — is not noticed, unless the transport offers `instance` (LOS-9).
+- **Nobody to ask.** A resync heals only while someone who holds what is missing is
+  online and answers (RSY-6, RSY-21); a message that reached *nobody* comes back
+  only from its author. The creator's truncated history ends with a request to all
+  nobody answered (LOS-20), and her copy may still lack a change of a member who is
+  offline.
+- **An answer only the others heard.** Members waiting for their turn fall silent
+  once they heard an answer that holds what they would give (RSY-20), whether or not
+  it reached the requester. One lost on the way to the requester alone leaves it to
+  ask again where it still asks (RSY-5, LOS-6), a return once more (RSY-21); where
+  that answer is lost as well, what such a member holds shows only by a later
+  message of it (step 1). An answer of which only some pieces arrive is evidence
+  (LOS-14).
+- **An answer heard before a later update.** A member asked by all judges an
+  answer as heard (RSY-20): an update reaching it afterwards is in no answer it
+  heard, and the requester gets it only once a later message of someone who holds it
+  shows it (step 1). Judged anew, any later change would have members answer.
+- **A request the creator or one's own member answered.** The first request of a
+  bootstrap asks only the creator's devices and the requester's own (RSY-6, RSY-21),
+  and their answer ends the bootstrap (CTL-13, RSY-14). What the answering device
+  lacks — a change that reached members only — the requester lacks too; it shows
+  only once a later message of a member that holds it shows it (step 1).
+- **A register only members hold** — a decision of a lost device of the creator
+  that reached none of her other devices — shows only once a later decision of hers
+  brings the clocks level, at a request and an answer per such decision
+  ([§15.4](#154-what-is-not-guaranteed), "Rights beyond the creator's devices").
+- **A request read late.** Frames carry no time of sending, and clocks may be off
+  (§1.1), so no clock tells how long a request waited. A responder that reads it
+  late judges it by its stream: only its latest request counts (RSY-9), answered
+  only where the furthest its stream stated since still lacks something (RSY-17); a
+  stream that stated nothing since is answered with what it may hold already — a
+  message, nothing lost. An engine lets no request it read as it caught up stand in
+  for its own (RSY-22).
+- **Automatic requests switched off** (RSY-5): an engine keeps its evidence until
+  its person asks or a request that goes all the same does; its gaps stay until
+  they heal.
+- **A resting gap** is woken by a frame that raises its position, or by a frame of
+  the member it names as the writer, at most once in 10 minutes (LOS-26); a change
+  whose author never returns and that nobody else holds stays missing, and its gap
+  stays shown while the engine runs (LOS-25).
+- **A lost last change and its report.** A last change whose report was lost too, or
+  did not carry it (SND-27), shows by that report's state vector where the report
+  arrived (LOS-4). Its sender opening the document again is an opportunity to
+  heal it, no promise, in three cases only: a report still owed (SND-28), which goes
+  even where the device may no longer write; stored content, which a device that
+  may still write sends whole (SND-8); or a start request (RSY-1), which shows what
+  the device holds, so that a receiver that lacks the change asks all and the device
+  answers, read-only or closed too (RSY-10). A report the transport accepted is owed
+  no longer (TRN-10). Otherwise the change shows once a later message of its sender
+  builds on it (step 1), or once someone synchronises now (LIF-12).
+- **A lost decision** shows only by a report, not by its `control` frame; what that
+  leaves unseen, and when a restart helps, [§15.4](#154-what-is-not-guaranteed)
+  says ("Evidence of a lost decision").
+- **A long outage its application cannot see** — a bridge answered its reads from
+  its window while it could not reach its messenger —, or one on a transport whose
+  retention the application does not know, brings no return (RSY-21, LIF-12): what
+  the messenger no longer held shows only where the bridge can tell (TRN-18,
+  TRN-19), or by a later message of a member that wrote then (step 1).
+- **A wall clock set forward.** A clock that does not run back (SND-25) may still
+  count a jump of the wall clock forward as time that passed. A correction forward
+  by more than the age an engine keeps its own requests (RSY-12) can make it forget
+  one early; an answer that comes after is one to a request it did not make, whose
+  last piece still shows what the engine lacks (LOS-4), and it asks again (LOS-6).
+- **What waits for missing predecessors** beyond the bound is given up (LOS-23): an
+  update that only its writer holds comes back only when the writer sends again or
+  answers a request.
+- **Two devices of the creator at once.** A report whose control clock lags is left
+  out of the comparison (LOS-10, LOS-12), so a decision lost under a clock below
+  another device's later decision that the receiver holds shows by neither device's
+  report until one of them holds both; the one that merges the other's then reports
+  at once (SND-11).
+- **Deletions.** An update that only deleted is held by every state vector: its loss
+  shows by the digest only once the receiver holds every insertion the report counts
+  (LOS-12), and the report after its phase carries it again where it was the last
+  change (SND-27).
+- **An ambiguous difference** in digests (LOS-12) lapses once its stream falls
+  silent: a real one stays unseen until that stream reports again and still differs.
+  One who writes on without a pause sends only `edit` frames, which name no stream,
+  so theirs may lapse meanwhile; the report that ends their phase brings it back
+  (SND-11). A false one, of a report
+  that crossed a deletion the receiver holds, lasts until its stream reports again —
+  at once on a request that states what it holds (SND-24) — or answers the receiver
+  whole (LOS-18); of a stream that will not run again, only the lapse ends it. How
+  long the silence must last is recommended, not required (Appendix B).
+- **A missed close.** A member that lost the close, the close its device sent again
+  as its phase ended (SND-27) and the report after it, whose control clock or digest
+  showed the close (LOS-10, LOS-12), writes on; a device of the creator that holds
+  the close and reads its edit sends the close again (LIF-11). With no device of the
+  creator online, nobody does until the member asks or one of them comes back
+  ([§15.4](#154-what-is-not-guaranteed)).
+- **Many engines of one member.** An engine keeps the reports of a bounded number of
+  streams per member (LOS-17): a member running more engines at once than that can
+  have one stream's evidence dropped — not that of an answer it counts (LOS-21).
+- **A responder that stops** before its last piece leaves its answer evidence while
+  its stream does not run: another stream of the member says nothing of what this
+  one sent (LOS-21).
+
+1.x's LOS-3 and LOS-5 are withdrawn ([Appendix
+G](#appendix-g-changes-from-tdsp-1x)). LOS-11 and LOS-16, requirements of the
+previous draft revision of 2.0, are withdrawn: no frame promises a follow-up, so
+silence is evidence of nothing ([CHANGELOG.md](CHANGELOG.md)).
 
 ## 11. Invitations
 
@@ -3372,9 +3818,9 @@ number stays so that references to §11.3 keep their meaning.
 | `provider` | messenger | yes | the binding's name: lowercase letters, digits, `.` and `-`, 1–64 characters, the first a letter or a digit |
 | `documentId` | documentId | yes | 1–255 UTF-8 bytes |
 | `creatorMemberId` | creatorMemberId | yes | 1–255 UTF-8 bytes |
-| `channelId` | channel id | Signal, Matrix | 1–255 UTF-8 bytes |
+| `channelId` | channel id | every binding but email | 1–255 UTF-8 bytes |
 | `threadRoot` | thread root `Message-ID` | email | the email binding's `Message-ID` form, at most 200 characters in all ([email binding](bindings/email.md)) |
-| `recipients` | every participant's address, the creator's included | email | 1–64 distinct addresses, comma-separated |
+| `recipients` | every participant's address, the creator's included | email | 1–64 addresses, comma-separated, distinct in lower case; each a local part of 1–64 and a domain of 1–189 UTF-16 code units joined by `@`, neither holding `,`, `@` or white space (ECMAScript's `\s`); a reader does not check that the creator is among them |
 | `pgp` | PGP is on | email, optional | `1` |
 | `profile` | profile | yes | a profile id ([§5](#5-document-profiles)) |
 
@@ -3386,11 +3832,25 @@ from every later addition, as a profile or layer id from outside this
 specification is kept apart ([§5.5](#55-profiles-defined-outside-this-specification),
 [§5.6](#56-layers)).
 
+A `provider` the table does not name is read as Signal and Matrix are: it
+requires `channelId`. A parameter of the table that the link's binding does not
+require is still checked for its range where present and read into the
+invitation.
+
 - **INV-6** · *application* — A reader:
   - MUST refuse an invitation in which a parameter of the table above appears more
     than once, a required one is missing or empty, or a value is outside its range;
   - MUST ignore parameters the table does not define — 1.x's `policy` among them;
   - MUST treat a missing or other `tdsp` as an invitation it cannot read.
+
+  A refused link has the first of these problems that applies, in this order:
+  `repeated-field`, a parameter of the table appears more than once;
+  `not-an-invitation`, neither `tdsp` nor `documentId` is present — an ordinary
+  page load, not an invitation; `unsupported-version`, `tdsp` is missing or other;
+  `missing-field`, `provider`, `documentId`, `creatorMemberId` or `profile` is
+  missing or empty; `invalid-field`, a value present is outside its range, an
+  empty one included; `missing-field`, a parameter the link's binding requires is
+  missing.
 
   *Rationale:* one reading for every link. A parameter named twice is exactly the
   place where two parsers pick different values; an unknown parameter is
@@ -3480,6 +3940,21 @@ changes with what the document requires — how a binding carries a frame, say. 
 binding names the core versions whose frames it carries, and a change to one
 document needs no new version of another.
 
+The parts of TDSP 2.0, their versions, and which of them become stable when TDSP
+releases 2.0; until then all are this draft:
+
+| Part | Version | With the release |
+|---|---|---|
+| Core (this document) | 2.0; frames and invitations `tdsp` 2, until the release the draft marker (VER-3) | Stable |
+| Profile `yjs-paragraphs/1` ([Appendix A](#appendix-a-profile-yjs-paragraphs1)) | 1; Yjs update encoding version 1, by Yjs 13.6.33 | Stable |
+| Bridges and the envelope ([bridges.md](bindings/bridges.md)) | Bindings 2.0; envelope `tdsp` 1 | Stable |
+| Signal binding ([signal.md](bindings/signal.md)) | Bindings 2.0 | Stable |
+| Matrix binding ([matrix.md](bindings/matrix.md)) | Bindings 2.0; `EncryptedFile` v2 of the Matrix Client-Server API v1.19 | Stable |
+| Email binding ([email.md](bindings/email.md)) | Bindings 2.0 | Stable, but for the layout of a mail, which stays a draft: an incompatible change of the layout increments the email binding's version, and until the layout is specified, email bridges interoperate only within one release of this repository |
+| Local bridge interface ([local-bridge-interface.md](bindings/local-bridge-interface.md)) | Bindings 2.0 | Draft; optional. An incompatible change increments its version, and until it is stable, adapters and bridges interoperate only within one release of this repository |
+| The wire's test vectors ([§3.6](#36-conformance-suite)): frames, invitations, control | Named and marked for draft-10 (VER-3) | Stable and in the wire lock, with `2` in place of the marker |
+| Behaviour vectors ([§3.6](#36-conformance-suite)): clock, digests, updates, flows | Named for draft-10 | Informative and not in the wire lock; renamed for the release |
+
 - **VER-1** · *all* — An incompatible change MUST increment the version that
   governs it. A receiver that does not implement a version MUST fail loudly — by
   reporting it locally with a named reason (FRM-7 for a frame, which an
@@ -3496,18 +3971,25 @@ document needs no new version of another.
   deliberate message.
 - **VER-2** · *all* — Kinds, targets, reasons and permissions not defined in this
   specification MUST NOT be used until a revision of it defines them. An extension
-  field (FRM-9) is not such a value: its name keeps it apart.
+  field (FRM-9) is not such a value, nor an application's reason for the close
+  named as CTL-23 says: their names keep them apart.
   *Rationale:* two implementations inventing the same value for different meanings
   cannot be told apart on the wire.
 - **VER-3** · *engine, application* — Until TDSP 2.0 is released, an implementation
   of this draft MUST write, in every frame's and every invitation's `tdsp`, a draft
   marker in place of `2`, MUST accept only that marker, and MUST name a new marker
   for every incompatible change of the draft. The marker of this draft is
-  `de.wappensc.together.tdsp.probe.draft-5`.
+  `de.wappensc.together.tdsp.probe.draft-10`. An engine MUST persist its control
+  state (CTL-26, CTL-39) with that marker, and MUST read control state persisted
+  under another marker, or under none, as none: a device of the creator then starts
+  as a new device (CTL-27), anyone else waits for an answer (RSY-14).
   *Rationale:* a draft that wrote `2` would leave frames behind that a released 2.0
   reads as its own, although they may mean something else; a marker that is not a
   number makes every 1.x engine refuse a draft frame loudly (VER-1), and every
-  released engine too.
+  released engine too. A persisted state is as much the draft's own as a frame: read
+  under another draft, its registers or its bootstrap may mean something else. What
+  a released 2.0 engine does with control state persisted under a draft marker is
+  for the release to say; read as none, as here, is the safe side.
 - **VER-4** · *application* — An application MUST show the person each participant
   whose frames its engine rejects as `unsupported-version` (FRM-7): that this
   participant uses another version, and that what they write does not reach this
@@ -3520,26 +4002,26 @@ document needs no new version of another.
   the person can resolve it, by updating one of the two applications.
 - **VER-5** · *all* — A revision that defines a new value for a member's
   permission or for a right on a layer (VER-2) MUST define the capabilities each
-  value grants — on a layer, for every permission on the document — and a merge of
-  concurrent values (CTL-23, CTL-24) with these properties, for every permission on
-  the document:
-  - the merge grants no capability that one of the merged values withholds —
-    exactly the capabilities they all grant, where some value grants exactly those,
-    and otherwise a narrower set the revision names;
-  - it is commutative, associative and idempotent;
-  - a decision made in knowledge of another still supersedes it, wider or not
-    (CTL-22), which is no merge;
-  - a permission on the document that is revoked leaves no right on any layer
-    (LAY-5).
-
-  *Rationale:* of two concurrent decisions of the creator's devices, no more may
-  hold than one of them wanted (CTL-23). In this version the values are ordered
-  (revoked, `read`, `write`; `read`, inherit, `write` on a layer), and the
-  narrowest of them grants exactly what every one grants, whatever the permission
-  on the document. A later right may not fit an order: "comment only" and "edit the
-  text but not comment" each withhold what the other grants, and ranking one below
-  the other would grant one of them more than its device wanted. Capabilities and
-  their intersection say it for any set of rights.
+  value grants — on a layer, for every permission on the document —, its place in
+  the order CTL-23 uses at a tie, before every value that grants all of its
+  capabilities and more, and that a revoked permission on the document leaves no
+  right on any layer (LAY-5). A later minor revision MAY define further codes for
+  the reason for the close (CTL-23), without a new marker or version (VER-1): an
+  engine of this revision takes a code it does not know, and its application shows
+  the close without a known reason.
+  *Rationale:* of two decisions the later holds, wider or not (CTL-22), so values
+  need no merge, only a total order for a tie, which every receiver must apply
+  alike. A tie means one device decided twice at one clock — a state put back from
+  a backup, a copy under one tag —, so whichever value holds was one of that
+  device's decisions; ordered by what each grants where two values compare, the tie
+  grants no more than either did. In this version the values compare (revoked,
+  `read`, `write`; `read`, inherit, `write` on a layer). A later right may not:
+  "comment only" and "edit the text but not comment" each withhold what the other
+  grants, and the order then only has to be the same everywhere. Capabilities say
+  what a value grants on the document and on each layer, whatever the permission on
+  the document, which its name alone does not. A reason for the close grants
+  nothing: a code a receiver does not know costs its person the reason, not the
+  close.
 - **VER-6** · *all* — A revision that defines such a value (VER-5) MUST keep older
   implementations from taking it for `write` or for inherit: as an incompatible
   change (VER-1, VER-3), or with a rule by which a creator's device issues the
@@ -3570,7 +4052,7 @@ A messenger is suitable for TDSP if and only if it offers all of these:
 | Accept a message for every member of the channel, and deliver it to them in the normal case | There is no server to fan out. A message lost now and then is recovered by TDSP ([§10](#10-loss-detection)); a messenger that routinely loses messages makes that recovery the normal path |
 | An authenticated sender per message | Every authority check compares the sender against the creator |
 | A stable, unique message identifier | De-duplication depends on it |
-| A known maximum message size | The scheduler must split what does not fit |
+| A known maximum message size, of at least 4 MiB per frame, attachments included (TRN-23) | The scheduler must split what does not fit, and an answer must carry the control state whole (SND-18) |
 | Immutable delivered messages, or a bridge that makes them so | An applied update cannot be retracted |
 
 A binding that lacks one of these is not a TDSP binding. In particular, email
@@ -3580,12 +4062,16 @@ the key the creator's invitation pinned; that the key belongs to the person
 named is established only by a fingerprint compared outside TDSP (EML-8,
 EML-13). Matrix in a plain room authenticates a sender only as far as the
 homeserver is trusted, and protects nothing against it. In an encrypted room it
-authenticates the sender's account by the device its identity signed, and adds
-integrity and confidentiality against the homeserver — as far as every bridge
-shares room keys only with devices their owners signed and accepts frames only
-from them (MTX-4), and ignores TDSP events that arrive unencrypted (MTX-5); a
-homeserver that can add an unsigned device to an account gains nothing then
-([§13.3](bindings/matrix.md#133-matrix)).
+authenticates the sender's account by the device the account's identity signed,
+and adds integrity and confidentiality against the homeserver — as far as every
+bridge shares room keys only with devices their owners signed and accepts frames
+only from them (MTX-4), and ignores TDSP events that arrive unencrypted (MTX-5).
+That protects against a device the homeserver adds to an account, not against an
+identity it puts in place of the account's: the homeserver can reset an account's
+identity, and the identity a bridge meets on first contact is its word. Against
+that holds only an identity a bridge remembered and holds to until a person agrees
+to another (MTX-4, a SHOULD), or one a person verified outside TDSP
+([§13.3](bindings/matrix.md#133-matrix)). A device's signature confirms no person.
 
 Not required: history, ordering, exactly-once delivery, per-message access
 control, server-enforced membership, or any notion of a document.
@@ -3594,14 +4080,14 @@ it is only *worth using* with it.
 
 ### 15.2 What TDSP assumes
 
-1. **Participants are honest.** They run genuine software rather than a modified
-   engine that speaks the same wire format, and each is responsible for the
-   channel they take part in. A participant running modified software can ignore
-   every rule of §7 in their own copy. Every genuine engine still rejects a
-   control frame that does not come from the creator, but it applies such a
-   participant's edits, which it does not reject for their sender's permission
-   (CTL-7): a modified engine can write what its permission forbids, or after a
-   close, and everyone's documents take it.
+1. **Participants cooperate** ([§1.1](#11-what-tdsp-is)). They
+   run genuine software rather than a modified engine that speaks the same wire
+   format, and each is responsible for the channel they take part in. A genuine
+   engine still rejects a control frame that does not come from the creator, but
+   applies a modified engine's edits (CTL-7) and merges the control state its
+   answers carry (CTL-25): such an engine can write what its permission forbids, or
+   after a close, and hand on rights or a close the creator never decided
+   ([§15.4](#154-what-is-not-guaranteed)).
 2. **The local machine is trusted**, including every process running as the same
    user.
 3. **The messenger is trusted for what it reports**: senders, channel membership and
@@ -3609,25 +4095,29 @@ it is only *worth using* with it.
    end-to-end encryption could misreport a sender, and TDSP would not notice.
 4. **A service that carries a document between one person's devices** (ARC-5) is
    trusted as that person's machine is (INV-9): whoever can write there can hand
-   the person's other devices a creator to obey and, on a device of the creator,
-   the creator's operations — and can hand a device content and a binding of its
-   choosing, to a channel the person never chose, into which the device then
-   sends what the person writes: a loss of confidentiality, not only of
-   authority.
+   the person's other devices a creator to obey, the creator's control state, and a
+   binding to a channel the person never chose, into which the device then sends
+   what the person writes — a loss of confidentiality, not only of authority.
+5. **Who takes part is the channel's**, as the messenger enforces it
+   ([§6.6](#66-who-takes-part)): whoever it admits receives every frame, whoever it
+   removes receives nothing new. TDSP enforces no membership of its own;
+   applications keep rights in step with the channel (LIF-9, LIF-10), and where the
+   channel cannot remove a revoked member, nothing does
+   ([§15.4](#154-what-is-not-guaranteed)).
 
 ### 15.3 What TDSP enforces itself
 
 | Concern | Mechanism | Worth |
 |---|---|---|
-| Permissions | The creator grants and revokes; each engine refuses to send an edit before its bootstrap, while its own permission is `read` or revoked, in a capacity conflict, and once the document is closed — not when its permission is merely unknown after the bootstrap (CTL-13, CTL-32) | Among cooperating engines only, and only while their applications keep what the engine refuses out of the engine's document, which a resync answer carries whole (CTL-42, RSY-10); receivers do not reject an edit for its sender's permission (CTL-7) |
+| Permissions | The creator grants and revokes; each engine but a device of the creator refuses to send an edit before its bootstrap, and each refuses one while its own permission is `read` or revoked, in a capacity conflict, and once the document is closed — also when its permission is unknown after the bootstrap, which counts as `read` (CTL-13, CTL-32) | Among cooperating engines only, and only while their applications keep what the engine refuses out of the engine's document, which a resync answer carries whole (CTL-42, RSY-10); receivers do not reject an edit for its sender's permission (CTL-7) |
 | Rights on layers | The creator sets a member's right on a layer, or lets it inherit the permission on the document; each engine refuses to send a change of a layer on which its permission is `read`, of any layer once its permission on the document is revoked, and a change that touches such a layer whole (LAY-5, LAY-6, LAY-7) | As for permissions: among cooperating engines only; `read` hides nothing, every participant reads every layer it receives |
-| Creator identity | Fixed; control operations and snapshots only from it (CTL-5, CTL-25); device tags tell its devices apart and authenticate nothing | Exactly as strong as the messenger's sender authentication; a snapshot carried between the creator's devices (ARC-5) as strong as the service that carries it |
-| Replay of control frames | Control state is a set of operations ([§7.1](#71-what-control-state-is), CTL-25) | A replayed operation is inert (CTL-6) |
+| Creator identity | Fixed; `control` frames only from it (CTL-5); the snapshot of an answer is what its sender holds of the creator's decisions, merged as such (CTL-25), and only her devices give a device of the creator her state (RSY-14, CTL-46); device tags tell its devices apart and authenticate nothing | Exactly as strong as the messenger's sender authentication, among cooperating participants (§15.2); a snapshot carried between the creator's devices (ARC-5) as strong as the service that carries it |
+| Replay of control frames | Control state is registers ([§7.1](#71-what-control-state-is), CTL-22) | A replayed register changes nothing (CTL-6) |
 | Close | Cooperating engines stop sending edits of their own; edits sent before the close still arrive and apply (LIF-6) | Among cooperating engines only, and only while their applications keep a change made after the close out of the engine's document (CTL-42) — a modified engine can keep sending edits, which genuine engines apply, exactly as with `read` (CTL-7) |
 | Convergence | The CRDT | Unconditional, given the same set of updates — not given a lost one |
 | Message immutability | Bridges refuse and record edits and withdrawals (BRG-12); in a room once seen encrypted, a Matrix bridge takes no unencrypted event at all (MTX-5) | Where the messenger reveals them, and after a bridge's restart under the ids it kept; the sender of a Matrix redaction is the homeserver's word (MTX-5) |
 | No external connection | ARC-2, BRG-4; an application that carries a document between one person's devices also reaches that service (ARC-5) | As strong as its enforcement; see below |
-| Resource exhaustion by peers | Bounded control state (CTL-30), and a capacity conflict beyond its bytes or its targets (CTL-32); bounded nesting and frame size, extensions included (FRM-11), bounded attachment fetches (BRG-14), bounded pre-verification reads (BRG-13); what is held for missing predecessors bounded (LOS-23); no reassembly buffer | Bounded, not prevented; beyond the bytes or the targets of control state a person resolves the conflict |
+| Resource exhaustion | Bounded control state (CTL-30), and a capacity conflict beyond its bytes or its targets (CTL-32); bounded nesting and frame size, extensions included (FRM-11), bounded attachment fetches (BRG-14), bounded pre-verification reads (BRG-13); what is held for missing predecessors bounded (LOS-23); no reassembly buffer | Bounded, not prevented; beyond the bytes or the targets of control state a person resolves the conflict |
 
 **Enforcing "no external connection".** The one security property TDSP owns
 rather than inherits is only as good as the checks behind it, and no single check
@@ -3665,17 +4155,77 @@ The reference implementation uses all five.
   encryption in their own messenger client, independently of what TDSP shows. A
   copy an application carries between one person's devices through another
   service (ARC-5) is as confidential as that service makes it.
-- **Protection against a malicious participant**, a compromised application or device,
-  traffic analysis, or exfiltration from a participant's machine.
+- **Protection against a participant whose software ignores this
+  specification**, a compromised application or device, traffic analysis, or
+  exfiltration from a participant's machine. Such a participant can spoil content
+  and control state for everyone — write what its permission forbids, set rights,
+  close the document — and TDSP neither prevents nor detects it; the way out is to
+  remove it from the channel and continue in a new document (§6.2, LIF-9).
+- **One document for all participants.** A participant whose software ignores
+  this specification can give different participants different content under one
+  CRDT identifier; their documents then differ for good, and neither the state
+  vector, nor the state digest, nor loss detection shows it.
 - **Availability** against someone who can drop messages — they can drop the resync
-  too — or while the creator is offline.
+  too — or of decisions while the creator is offline: any member can bring a new
+  device up then — a new device of the creator excepted (CTL-46) —, but nobody can
+  be granted anything. A joiner whose reachable devices are all in a capacity
+  conflict waits for a device of the creator that is not, for good where hers are
+  in it too (CTL-32); her person, who sees the conflict, continues in a new
+  document.
 - **Convergence beyond the bounds of control state.** Devices of the creator that
   grow apart beyond what a receiver holds leave a capacity conflict, which a person
   resolves (CTL-32), not a merged state.
+- **A bootstrap beyond what one answer carries.** Every transport carries at least
+  4 MiB (TRN-23), and an answer carries a control state at its bound beside the
+  responder's state vector, which grows with every session that wrote (LOS-27):
+  roughly 75 000 such sessions at 4 MiB, an estimate whose assumptions §7.4 states,
+  where the bytes of the whole frame as encoded decide. Beyond it no answer carries
+  the control state, nobody new is bootstrapped, and no state of the protocol says
+  so; a device of the creator then decides nothing but a close without a reason
+  (CTL-37).
+- **Which of two concurrent decisions holds**: the later by the deciding devices'
+  clocks, which may be wrong; the narrower is not preferred (CTL-22).
+- **Rights beyond the creator's devices.** The creator's devices hold the
+  document's rights (CTL-46). A creator who loses every device and every backup
+  closes the document and continues in a new one, on the content the members hold.
+  A decision of a lost device of hers that reached only members stays with them; a
+  member that holds such a register sees the difference only once a later decision
+  of the creator brings the clocks level, and asks once for each later decision: a
+  request and an answer per decision, where a content gap's cost is bounded to a
+  request in 10 minutes (LOS-26). Only a new decision on that target, or that
+  member's answer to a request of a device of the creator, heals it, and the member
+  passes the register on to every device it answers. What a device of the creator
+  merged from a member's answer goes on only by its report, a later request, a start
+  request or its return (SND-11, RSY-1, RSY-21).
+- **Evidence of a lost decision.** Control state is judged only by reports, never
+  by `control` frames (LOS-10, LOS-12). A lost decision shows only with the report
+  that ends its device's phase, once that device pauses (a report delay after its
+  last edit or decision; SND-11, 10 s recommended).
+  Where the decision, its repeat and that report are all lost at a receiver, the
+  decision stays there without evidence until a later report or a request makes
+  the control state known, or an answer brings the missing registers; a restart
+  creates that opportunity only where such an exchange actually falls due with it —
+  a report owed (SND-28) or a start request (RSY-1) —, and stored content sent again
+  carries no rights. A difference in digests lapses once its stream falls silent
+  (LOS-12), so a real one of a silent stream stays unseen until that stream reports
+  again; how long the silence must last is recommended (Appendix B), not required.
+- **A close a member missed.** A member that lost the close, its repeat and the
+  report after them (SND-27), while no device of the creator is online, writes on
+  until it asks or hears the close again (LIF-11); everyone takes its edits (LIF-6),
+  so a document closed as `continued` may still change.
 - **Completeness without evidence.** A copy with no loss evidence may still lack a
-  change: one no engine saw a trace of ([§10.6](#106-what-loss-detection-cannot-notice)), or,
-  at the creator, one held only by a member who was offline when the creator
-  asked (LOS-20).
+  change: one no engine saw a trace of ([§10.6](#106-what-loss-detection-cannot-notice)),
+  one held only by a member offline when the creator asked (LOS-20), or whose
+  answers to both of a return's requests were lost (RSY-21); a last change whose
+  report was lost too, for which its device opening the document again is an
+  opportunity, not a promise, and only where the report was still owed (SND-28) —
+  not once the transport accepted it, however it fared (TRN-10) —, the device still
+  writes and sends its stored content, or a start request falls due (RSY-1); and
+  what a resting gap lacks, until it is woken (LOS-26).
+- **A revocation where the channel cannot remove the member.** Where the channel
+  cannot remove a revoked member — under a binding that offers no removal, or an
+  application that does not administer the channel — a concurrent grant may undo
+  a revocation (CTL-22), and nothing else stops that member (LIF-9, LIF-10).
 - **Authorship.** Attribution is a display convenience (ATR-3).
 - **Deletion** of content from participants' devices.
 - **Metadata protection.** Who talks to whom, when and how much is as visible as the
@@ -3689,38 +4239,33 @@ The reference implementation uses all five.
 - **A forged or careless pace** can make a document slow, though no slower than
   the bound each engine sets on the pace it runs (SND-15; 10 minutes recommended).
   It can never make an engine exceed its own provider's limits (SND-15), and it
-  comes from the creator alone. This is not new power: whoever can forge the
-  creator can close the document. Nothing else about pacing is shared, so 1.x's
-  forged policy, with its grammar, ordering and clamps, is gone.
-- **Reported counters** (CTL-27, CTL-33): a member can report counters too low — a
-  creator device's decision then counts as concurrent, and the result is narrower
-  — or too high, which matters only when a former creator device comes back and
-  decides concurrently; its decision then counts as superseded. A device counts
-  reported counters only while it has no basis for its control state (CTL-28), or
-  on a person's explicit confirmation of a divergence (CTL-33). Control reports
-  never carry authority: values come only from operations whose sender is the
-  creator.
+  comes from the creator alone: whoever can forge the creator can close the
+  document. Nothing else about pacing is shared.
+- **A clock far ahead.** A device of the creator whose clock runs ahead wins
+  concurrent decisions until the others catch up (CTL-22). A register far in the
+  future — from a broken application of the creator — holds until a decision on its
+  target made in knowledge of it, which takes a clock above it (CTL-21, CTL-45); no
+  device's own clock runs more than a day ahead for it. At the end of the range no
+  decision on that target is possible; the person continues in a new document
+  (§6.2).
 - **Many device tags and targets**: the creator's account can name tags and
   targets at will; CTL-30 bounds what a receiver holds, and refuses and reports the
   rest.
-- **Updates whose predecessors never come**: anyone in the channel can send them,
-  since receivers do not reject an edit for its sender's permission (CTL-7);
-  LOS-23 bounds what a receiver holds of them, and gives it up as a truncated
-  history, which costs a forced resync.
+- **Updates whose predecessors never come** — the rest lost, or sent by software
+  that ignores this specification —: LOS-23 bounds what a receiver holds of them,
+  and gives it up as a truncated history, which costs a forced resync; no answer
+  passes them on (Appendix A).
 - **Extension fields** (FRM-9): a sender can ship bytes a receiver ignores, as it
   already could in a `decline`'s text; they count against `maxBytes` and the
   nesting limit (FRM-11), and nothing an extension carries is applied by an engine
   that does not implement it. An engine that does keeps nothing of it and passes
   nothing on (FRM-17), so a forged extension misleads at most the receivers of the
   one frame, and only as far as the extension's definition lets it.
-- **A forged heartbeat** can cost one unnecessary resync request per floor, never
-  more (RSY-3, LOS-6).
 - **A forged invitation** naming a false creator hands control authority to that
   identity in the joiner's engine; INV-3 puts a person in the loop. One that names
-  the person themselves as its creator is presented as that claim, never taken for
-  a document they created on another device on the invitation's word alone
-  (INV-7); only what the person confirmed on a device of theirs, carried from there
-  unchanged, lets another device join without asking again (INV-9).
+  the person themselves as its creator is presented as that claim (INV-7); only what
+  the person confirmed on a device of theirs, carried unchanged, lets another device
+  join without asking again (INV-9).
 - **Attachments** let any member make other members fetch data; BRG-13 and BRG-14
   bound how much a bridge reads, and the fetch itself where the bridge makes it.
   Where a messenger's client fetches attachments before the bridge sees a message,
@@ -3742,33 +4287,52 @@ The reference implementation uses all five.
 ## Appendix A. Profile `yjs-paragraphs/1`
 
 *Normative for every engine that implements this profile.* A document of this
-profile is a Yjs document holding plain paragraphs. It fixes the wire format, not
-a library version: any implementation that reads and writes the encodings below
-interoperates, whichever Yjs release — or independent implementation — it uses.
+profile is a Yjs document holding plain paragraphs. Its updates and state vectors
+are **Yjs update encoding version 1**, the normative reference for which is Yjs
+13.6.33 ([source](https://github.com/yjs/yjs/tree/v13.6.33/src): in `utils/`
+`encoding.js`, `updates.js`, `UpdateEncoder.js`, `UpdateDecoder.js`, `DeleteSet.js`; in
+`structs/` `Item.js` (`readItemContent`, `Item.integrate`) and the content kinds'
+`Content*.js`; the type readers in `types/`; with lib0 for its numbers, strings and
+`Any` values, which the reference implementation resolves as 0.2.117 — informative,
+since what Yjs 13.6.33 reads is the reference): its structs, content kinds,
+variable-length integers and strings, which bytes it reads as an update, and what a
+replica that applies them holds — deleting a type deletes what it holds
+(`ContentType.js`). *Informative:* yrs, the Rust implementation in y-crdt, reads and
+writes the same encoding independently (`Update::decode_v1`, `encode_v1`,
+`StateVector::decode_v1`; [yrs 0.28.0](https://docs.rs/yrs/0.28.0/yrs/)), not tested
+by the reference implementation; it draws 53-bit client ids where Yjs 13 draws
+32-bit ones, and the encoding carries either.
+The rows below fix what this profile adds to the encoding; any implementation that
+reads and writes it so interoperates, whichever library it uses. A library function
+named below is an informative example, not a definition.
 
 | PRF-1 item, or §5.6 | In this profile |
 |---|---|
-| Update | A **Yjs update in encoding version 1**, as produced by `Y.encodeStateAsUpdate` and consumed by `Y.applyUpdate` (not the `…V2` functions). A full snapshot and an incremental change are the same format |
-| Missing predecessors | Yjs holds such an update as pending (`store.pendingStructs`, `store.pendingDs`); the Yjs client ids an update carries name whose updates they are. What they take is the length of the pending structures' update and of the pending deletions, as Yjs keeps them; giving them up sets both to none |
-| State vector | A **Yjs state vector** as produced by `Y.encodeStateVector`. The empty document's is the single byte `00` (Base64 `AA==`) |
-| Updates a state vector lacks | `Y.encodeStateAsUpdate(doc, stateVector)`; with the empty state vector this is byte-identical to the full state. The update that holds nothing, the full state of an empty `Y.Doc`, is the two bytes `00 00` (Base64 `AAA=`): no structs and an empty delete set |
+| Update | A **Yjs update in encoding version 1**, not version 2: the structs — the number of clients, and for each the number of its structs, its client id, the clock of its first struct and the structs — then a delete set, laid out as in *What a replica deleted*, though a received one need not be in that order or merged. A full snapshot and an incremental change are the same format. *Informative:* Yjs writes it with `Y.encodeStateAsUpdate` and applies it with `Y.applyUpdate`, yrs with `encode_state_as_update_v1` and `Update::decode_v1` |
+| Missing predecessors | A struct is held, not applied, while a struct of its client before it, or an item it names — its left origin, its right origin or its parent — has not arrived; the later structs of its client in that update are held with it. A delete range is held, as far as it reaches beyond the items of its client the replica holds. Whose updates they are: for a held struct, the client whose struct is missing; for a held range, the client it names. How far an update carries a client: the clock after its last struct of that client; an update that only deletes carries none. What they take (LOS-23) is the length of two updates in encoding version 2: one of all held structs with an empty delete set, and one of all held ranges with no structs, each part held later merged into what was held before as Yjs 13.6.33 merges updates of that encoding. Nothing sends these bytes; they only measure. Giving them up drops both, as if those updates had never arrived. *Informative:* these are the two updates Yjs keeps, `store.pendingStructs.update` and `store.pendingDs` |
+| State vector | In encoding version 1: the number of entries, then for each a client id and the clock after the last struct of that client the replica has applied, every number a variable-length unsigned integer; held structs are not counted. Yjs writes the entries in descending order of client id; a reader takes them in any order. The empty document's is the single byte `00` (Base64 `AA==`). *Informative:* `Y.encodeStateVector`; yrs `state_vector().encode_v1()` |
+| Updates a state vector lacks | An update of every struct the replica applied, from each client's clock in the state vector on — a struct that clock falls inside written from that clock —, and of the delete set of its applied items; nothing held for missing predecessors. With the empty state vector this is the full state. The update that holds nothing, the full state of an empty document, is the two bytes `00 00` (Base64 `AAA=`): no structs and an empty delete set. *Informative:* `Y.encodeStateAsUpdate(doc, stateVector)` while `store.pendingStructs` and `store.pendingDs` are empty; it adds what they hold |
 | Initial state | One empty paragraph |
 | Plain-text projection | The paragraphs' texts in document order, joined by a single `"\n"`; a paragraph's text is that of the `Y.XmlText` it holds, without formatting or embeds (YJS-4 for content YJS-1 forbids); offsets count **UTF-16 code units** |
 | Splitting into pieces | Each piece a Yjs update in encoding version 1 holding one contiguous run of one client's structs, or a part of the delete set. A run is cut between structs and, where a struct alone is too large, inside it: the prefix written as a shortened copy, the suffix as Yjs writes any partial struct; text never cut inside a UTF-16 surrogate pair |
 | Indivisible units | Content of length one — an embed, a binary, a format, a type, a subdocument. Its encoded struct must fit a piece: (`maxBytes` − an `edit` frame's other fields) × 3/4 bytes, just under 3 MiB at the bindings' 4 MiB. Text is never such a unit |
-| What a replica deleted | The update of no structs and the replica's whole delete set, as `Y.encodeStateAsUpdate(doc, Y.encodeStateVector(doc))` writes it in encoding version 1: `00` for no structs, the number of clients, and for each client in descending order of its id its id, the number of its ranges and each range's clock and length, ascending and merged, every number a variable-length unsigned integer. A document that deleted nothing gives the two bytes `00 00`. Of the items a state vector counts: the same, with each client's ranges cut at that client's clock in the state vector, and a client without ranges left out — within the replica's own state vector exactly the encoding of all it deleted |
-| Reading without applying | An update is read as `Y.decodeUpdate` reads it, every struct and the whole delete set, and ends where its delete set ends; a state vector is read as `Y.decodeStateVector` reads it, and ends after its last entry. Yjs ignores bytes after either; a receiver of this profile rejects them (§4.4) |
+| What a replica deleted | The update of no structs and the replica's whole delete set, in encoding version 1: `00` for no structs, the number of clients, and for each client in descending order of its id its id, the number of its ranges and each range's clock and length, ascending and merged, every number a variable-length unsigned integer. A document that deleted nothing gives the two bytes `00 00`. Of the items a state vector counts: the same, with each client's ranges cut at that client's clock in the state vector, and a client without ranges left out — within the replica's own state vector exactly the encoding of all it deleted |
+| Reading without applying | An update is read whole — every struct with its content, then the delete set — and ends after the delete set's last range; a state vector ends after its last entry. A struct is a skip only where its info byte is 10 itself, and a parent-info number other than 1 names an item by its id, as 0 does. Bytes are not an update, or not a state vector, where encoding version 1 does not read them so: among them a number or a length that runs past the end, a string that is not UTF-8, a struct whose content kind (the low five bits of its info byte) the encoding does not define — 10 with any of the high three bits set among them —, JSON content that does not parse, and a tag of a shared type or of an `Any` value the encoding does not define. What it adds to what Yjs reads: a variable-length integer anywhere above 2^53 − 1 (of a signed one, its magnitude), or longer than the 8 bytes that 2^53 − 1 takes, whatever its value; an end beyond 2^53 − 1, of a client's structs the clock of its first struct plus the lengths of them all (a skip's and a collected struct's as written, an item's that of its content, a string's in UTF-16 code units) and of a delete range its clock plus its length; and JSON content or an `Any` value nested more than 32 levels. The end keeps a replica that applies an update at clocks its state vector can carry; an update that goes on with a client starts at most at the clock the replica holds for it, or it is held, so one update at a time keeps the bound for all of them. Each JSON text (an entry of JSON content, an embed, a format's value) and each `Any` value (of `Any` content, a subdocument's options) counts on its own, as [§1.6](#16-notation) counts a frame: arrays and objects, the outermost the first level, an empty one too. JSON content parses as ECMAScript's `JSON.parse` does, without §1.6's I-JSON restrictions; an entry of JSON content that is the text `undefined` is Yjs's undefined value. A receiver of this profile also rejects any byte after a complete update or state vector, which Yjs ignores (§4.4). *Informative:* `Y.decodeUpdate` and `Y.decodeStateVector` read so but for these bounds: lib0 checks an integer's range only between its bytes, reads a long run of zero bytes as NaN, and reads `Any` values by recursion, one level per call, and Yjs adds a struct's length to its clock without a bound; the vectors of `updates-v2.json` ([§3.6](#36-conformance-suite)) show each |
 | Layers | Admitted: top-level shared types beside `content`, each named by a layer id ([§5.6](#56-layers)) |
 
 - **YJS-1** · *engine, application* — A document of this profile MUST keep all its
   content in one `Y.XmlFragment` named `content`, whose children are
   `Y.XmlElement`s named `paragraph`, each holding one `Y.XmlText`, and MUST NOT add
   other element names or attributes. Beside `content` it MUST NOT hold a top-level
-  shared type except a layer, named by its layer id ([§5.6](#56-layers)).
+  shared type except a layer, named by its layer id ([§5.6](#56-layers)). It MUST NOT
+  hold, in `content` or in a layer, JSON content or an `Any` value nested more than
+  32 levels, counted as "Reading without applying" below counts them.
   *Rationale:* a peer that does not know an element can still merge it, but cannot
   render, project or attribute it, so participants would see different documents
   from the same state. A layer is different by definition: it is not content, and
-  every peer keeps it (LAY-1) whether or not it shows it.
+  every peer keeps it (LAY-1) whether or not it shows it. A value nested deeper is
+  one Yjs writes and applies, but no receiver of this profile reads (FRM-6): the
+  replica that holds it could give it to nobody (SND-26).
 - **YJS-4** · *engine* — A receiver MUST NOT reject an update because what it
   holds breaks YJS-1, and MUST apply it like any other. It MUST project such
   content as it projects paragraphs:
@@ -3814,55 +4378,74 @@ transaction.
 
 ## Appendix B. Recommended values
 
-*Informative.* The values the reference implementation uses. Each row names the
-requirement it serves. A few rows repeat a number a requirement states itself:
-the bounds of control state (CTL-30, CTL-36, CTL-37), four requests kept per
-requester (RSY-19) and at least four streams per member (LOS-17). Such a number
-is the requirement's, not a recommendation, and the row marks it *required*.
+*Informative.* The values the reference implementation uses, and one for an
+application, each with the requirement it serves. A row marked *required* repeats
+a number the requirement states itself: the bounds of control state (CTL-30,
+CTL-36, CTL-37), the 4 MiB every transport carries (TRN-23), the span of a
+device's own clock (CTL-45), four requests kept per
+requester (RSY-19), at least four streams per member (LOS-17), and what bounds
+what loss detection costs — one report per phase (SND-11), three tries per gap,
+each wait at least double the one before (LOS-6, RSY-5), 10 min between two wakes
+of a gap (LOS-26), and between two closes sent again to one member and one per read
+(LIF-11). Every
+other value — the report delay (SND-11), the absence before a start request
+and the longest wait between two tries among them — is a recommendation: an
+implementation chooses its own (§1.3).
 
 | Value | Recommended | Serves |
 |---|---|---|
 | Engine default pacing | floor 0, no `maxIntervalMs`, `minChars` 0, no `maxChars`, latency 0 | SND-16, TRN-15 |
 | Quiet time (`batchWindowMs`) | 500 ms | SND-3 |
-| Retry back-off | Starts at max(1 s, floor), doubles per consecutive failure, capped at `maxIntervalMs` or 10 min; `retryAfterMs` honoured up to 1 h; after `needs-person`, the cap at once | SND-7, TRN-20 |
+| Retry back-off | From max(1 s, floor), doubling per consecutive failure, capped at `maxIntervalMs` or 10 min; `retryAfterMs` honoured up to 1 h; after `needs-person`, the cap at once | SND-7, TRN-20 |
 | Adaptive spacing | ×1.5 per `rate-limited` refusal, from the floor or 1 s; relaxed ×1.5 after 8 consecutive successes | SND-9 |
 | Resync response throttle | 1 000 ms per document per responder | RSY-9 |
-| Requests kept to answer later | By request id, at most 4 per requester (*required*) and 64 per document, each for at most 5 min; oldest dropped first; requesters served in turn | RSY-19 |
-| Resync request expiry | floor + 2 × latency, at least 10 s | RSY-4 |
-| Bootstrap retry | after 1, 2, 4, … expiries; at most 5 attempts | RSY-5 |
+| Requests kept to answer later | By request id, at most 4 per requester (*required*) and 64 per document, each for at most 5 min — 5 min past its turn where it has one — and none past its requester's wait (RSY-17); oldest dropped first | RSY-17, RSY-19, RSY-20 |
+| Resync request expiry | floor + 2 × latency, at least 10 s; for a request to all, that plus the answer window | RSY-4 |
+| Bootstrap retry | after 1, 2, 4, … expiries; at most 5 attempts, each repeat asking all; then one further request to all on a frame of a participant that did not answer the latest (RSY-5) — on a device of the creator, of another of her devices —, or, whoever answered, on a `control` frame, report or request of another device of the creator that states a control clock, the waits at least doubling on (*required*), never longer than 10 min | RSY-5, RSY-21 |
+| Answer window | 6 × the responder's own `expectedLatencyMs`, at least 30 s and at most 5 min | RSY-20 |
+| A member's wait before its turn | ⌊window × h / 2^32⌋, `h` the first 4 bytes, big-endian, of SHA-256 over the UTF-8 of `requestId` + `:` + its own stream; with a 60 s window, request `c41d07e9a2b85f36` and stream `0c4f9a2be81d7365`, 26 075 ms. At its turn it judges the first 4 answers it heard of the request | RSY-20 |
 | Loss-evidence wait | 1 × `expectedLatencyMs`, or 5 s when it is 0 | LOS-1 |
-| Held for missing predecessors | 32 MiB of pending structures and deletions; beyond it, all given up, as after a truncated history | LOS-23 |
-| Streams kept per member | 4 for their reports (at least 4 *required*), each with its latest; a fifth replaces the one heard from least recently; a stream with an answer counted or given up is kept besides | LOS-17, LOS-21 |
-| Answers counted per member | 8 at once; a ninth gives up the one heard from least recently, which stays evidence by stream and number; 8 streams with answers given up, beyond them the member's evidence stays while the engine runs; piece numbers up to 2^20 | LOS-21, LOS-22 |
+| Held for missing predecessors | 32 MiB of pending structures and deletions; beyond, all given up as a truncated history | LOS-23 |
+| Streams kept per member | 4 for their reports (at least 4 *required*), each with its latest, the furthest it stated, with at most 8 state digests at that vector and 8 control digests at its greatest control clock, and when it was last heard; a fifth replaces the one heard from least recently; one with an answer counted or given up kept besides | LOS-12, LOS-17, LOS-21, RSY-17 |
+| A difference in digests lapses | Once its stream was not heard for longer than the absence before a start request, 10 min | LOS-12 |
+| Answers counted per member | 8 at once, a ninth giving up the one heard from least recently, which stays evidence; 8 streams with answers given up, beyond them the member's evidence stays while the engine runs; piece numbers up to 2^20 | LOS-21, LOS-22 |
 | Incomplete answer | evidence once no piece has arrived for the floor + the loss-evidence wait | LOS-14 |
-| Automatic resync | at once for a truncated history; after 2 × the loss-evidence wait for a gap, a report that shows we are behind or differs in digest, or an incomplete answer; after the overdue time + 3 × the loss-evidence wait for silence; at most 3 per episode, each wait doubling, never longer than 10 min | LOS-6, LOS-19 |
-| Pace bound | 10 min: a pace the creator set longer runs as 10 min, for sending and for judging silence | SND-15 |
-| Control state bounds (*required*) | 64 creator devices, 1 024 counters above a hole per device, 5 000 targets on members and rights on layers beside the close and the pace (5 002 in a snapshot), 64 operations per target in a snapshot, a target's `seen` 64 devices, the close each device's latest of 64 devices without `seen`, 3 MiB held and 1 MiB for a device that adds a target, measured without the close, which holds always | CTL-30, CTL-34 to CTL-37 |
-| Smallest useful piece | 16 bytes of update; where a frame's other fields leave less room than that, the change is refused rather than cut into pieces too small to carry anything | SND-19 |
-| Incoming mail read | At most 10 MiB of one mail, by a partial IMAP fetch; a larger one is rejected unread (the largest mail a 4 MiB frame becomes is about 7.6 MiB) | BRG-13 |
-| Signal daemon response | At most 16 Mi characters per JSON-RPC line from `signal-cli`, plus one socket read (a 4 MiB attachment is about 5.6 Mi in Base64); a longer line is dropped unread and the calls waiting fail | BRG-14 |
+| Automatic resync | Per gap: at once for a truncated history, else after 2 × the loss-evidence wait and its place in the answer window, derived from the gap and its own stream as a member's turn is; at most 3 requests (*required*), all to all, each wait counted from the try before, the first 2 × the expiry of a request not to all (floor + 2 × latency, at least 10 s), each at least double the one before (*required*), never longer than 10 min, after a request let go for another's also until that one expired, then its place; then the gap rests, woken by a frame that raises its position or, for a CRDT client's gap, by a frame of the member named as its writer, its request timed from that frame as a first try's, at most once per gap in 10 min (*required*), from its previous wake, a frame read sooner waking it once the 10 min passed, and at once by the person or by a return or an absence longer than the one before a start request that the application tells of, with the request they bring; none where another's request to all reaches no further (RSY-22). After a return, one request to all, one expiry after the latest | LOS-6, LOS-18, LOS-19, LOS-25, LOS-26, RSY-5, RSY-21, RSY-22 |
+| Report | Owed from the first `edit` or `control` frame of its own the transport accepted in a phase; due a report delay, 10 s, after the last, once nothing of its own waits; at most one per phase (*required*); at once, as soon as SND-11 lets it, in the cases SND-11 and SND-24 name; while owed and refused for a reason worth retrying, again after the retry back-off, which a read that reached the messenger again ends | SND-11, SND-12, SND-24, SND-28 |
+| Start request | After more than 10 min away, counted as LIF-8 says, when that is not known, or with a gap; once | RSY-1 |
+| Close sent again | At most once per member that writes in 10 min and once per read (both *required*); none for the first read after a start | LIF-11 |
+| Positions of CRDT clients kept | 1 024 clients; the one named least recently goes first | LOS-25 |
+| Others' requests to all kept | 16, the oldest dropped first, each for a request to all's expiry | RSY-22 |
+| Pace bound | 10 min: a longer pace runs as 10 min, for sending and in the floor an incomplete answer is judged by | SND-15, LOS-14 |
+| Control state bounds (*required*) | 5 000 targets on members and rights on layers beside the pace and the reason, 5 002 in a snapshot or `control` frame; the reason 1 to 128 UTF-8 bytes; 3 MiB held, 1 MiB for a decision that adds a target, measured as CTL-34 says; the close and its reason outside every bound | CTL-23, CTL-30, CTL-34, CTL-36, CTL-37 |
+| Smallest transport (*required*) | `bounds.maxBytes` `null` or at least 4 194 304 bytes; a creation or join on a smaller one fails | TRN-23 |
+| Own clock of a device of the creator (*required*) | At most 24 h ahead of its wall clock, but for one step per decision | CTL-45 |
+| Own clock running ahead | Advice, no requirement: an application of the creator tells its person when the device's own clock, as persisted (CTL-26), lies more than 1 h ahead of its wall clock: its decisions then hold over concurrent ones for that long | CTL-45, CTL-22 |
+| Smallest useful piece | 16 bytes of update; where a frame's other fields leave less room, the change is refused | SND-19 |
+| Incoming mail read | At most 10 MiB of one mail, by a partial IMAP fetch; a larger one rejected unread (a 4 MiB frame becomes at most about 7.6 MiB) | BRG-13 |
+| Signal daemon response | At most 16 Mi characters per JSON-RPC line from `signal-cli`, plus one socket read (a 4 MiB attachment is about 5.6 Mi in Base64); a longer line is dropped and the calls waiting fail | BRG-14 |
 | Bridge retention | The newest 1 000 deliveries per document, and at most 64 Mi characters of their payload text; the newest always kept | BRG-17 |
-| Engine memory of processed ids | What `receive` still returns, plus its own sends for up to 1 h until their echo; 1 024 resync request ids of others | TRN-8 |
+| Engine memory of processed ids | What `receive` still returns, its own sends for up to 1 h until their echo, and 1 024 request ids of others and of its own it no longer keeps | TRN-8, RSY-6 |
+| Requests of one's own kept | Each for 30 min after it went out, longer while an answer arrives in pieces; at most 256, the oldest dropped first, one with an answer under way last | RSY-12 |
 | Matrix attachment download retry | 1, 2, 4 … s, at most 60 s apart, 8 attempts, at most 64 waiting | BRG-14 |
 | Signal attachment read retry | 3 attempts, 0.5 s and 1.5 s apart | BRG-14 |
 | Bridge ports | Signal 8787, Matrix 8788, email 8789 | — |
 
 Suggested pacing per bridge (`minInterval` / `maxInterval` / `expectedLatency`,
-then bounds; every one has `minChars` 0 and `maxChars` none). **Only the email interval is a decision; every other value is an
-estimate.** Named presets — a slower one for a strict provider, say — are an
-application's ([§3.5](#35-transport-profile)).
+then bounds; `minChars` 0 and `maxChars` none). **Only the email interval is a
+decision; every other value is an estimate.** Named presets are an application's
+([§3.5](#35-transport-profile)).
 
 | Bridge | Pacing | Bounds |
 |---|---|---|
-| Email to a provider | 35 s / 120 s / 60 s — above the one message per 34 s one provider was measured to allow; TDSP 1.x suggested 30 s, which ran into refusals there | floor 15 s; 4 MiB (a mail of at most about 7.6 MiB: measured 1.81 mail bytes per frame byte with PGP, 1.39 without; sized for 8 MiB, below the roughly 10 MiB providers commonly accept) |
+| Email to a provider | 35 s / 120 s / 60 s — above the one message per 34 s one provider was measured to allow; 1.x's 30 s ran into refusals there | floor 15 s; 4 MiB (a mail of at most about 7.6 MiB: 1.81 mail bytes per frame byte with PGP, 1.39 without, below the roughly 10 MiB providers accept) |
 | Email or Matrix to a server on the same machine | 0 / none / 0 (no floor, no cap) | email none; Matrix no floor, 4 MiB |
-| Matrix to a real homeserver | 1 s / 15 s / 5 s | floor 250 ms; 4 MiB. A homeserver limits by a burst and a sustained rate — Synapse by default 10 messages, then one every 5 s (`rc_message`) — so a person typing steadily is refused now and then, and the homeserver's wait (MTX-6) and the widened spacing (SND-9) take over; a floor at the sustained rate would slow every burst to one message per 5 s |
+| Matrix to a real homeserver | 1 s / 15 s / 5 s | floor 250 ms; 4 MiB. Synapse limits by a burst of 10 messages, then one every 5 s (`rc_message`), so steady typing is refused now and then, and the homeserver's wait (MTX-6) and the widened spacing (SND-9) take over; a floor at the sustained rate would slow every burst |
 | Signal | 2 s / 20 s / 10 s | floor 500 ms; 4 MiB |
 
-Measured sizes worth knowing: typed text costs about 10 bytes per character on
-the wire, pasted text about 1, a full snapshot 1 to 9 depending on how
-concurrently it was written. One measured email provider refused after about 35
-messages in 20 minutes, with 8 to 35 seconds per hop.
+Measured: typed text costs about 10 bytes per character on the wire, pasted text
+about 1, a full snapshot 1 to 9 depending on how concurrently it was written. One
+email provider refused after about 35 messages in 20 minutes, 8 to 35 s per hop.
 
 ## Appendix C. The bindings compared
 
@@ -3871,43 +4454,74 @@ Moved to [bindings/bridges.md](bindings/bridges.md#appendix-c-the-bindings-compa
 ## Appendix D. Example frames
 
 *Informative.* Produced by the reference encoder, documentId `doc-a1b2c3`,
-profile `yjs-paragraphs/1`, from a creator device tagged `Ms3dRk0ZyS7cH1qkM8fWNA`
-whose sender will send again within 30 seconds; until TDSP releases 2.0 the encoder
-writes the draft marker where these show `2` (VER-3). The `edit` frame is in
+profile `yjs-paragraphs/1`, from a device of the creator tagged
+`Ms3dRk0ZyS7cH1qkM8fWNA`, which is bootstrapped; until TDSP releases 2.0 the
+encoder writes the draft marker where these show `2` (VER-3). The `edit` frame is in
 [§4.5](#45-example).
 
-`control` — the device's first operation, grant `bob` write:
+`control` — the device's first decision, at 10:00 UTC on 26 October 2026: `bob`
+may write. The register's clock is the wall clock in milliseconds, its counter 0;
+the frame states the device's control clock and control digest after it:
 
 ```json
-{"tdsp":2,"kind":"control","documentId":"doc-a1b2c3","device":"Ms3dRk0ZyS7cH1qkM8fWNA","counter":1,"target":"member:bob","value":"write","seen":{},"due":30000}
+{"tdsp":2,"kind":"control","documentId":"doc-a1b2c3","device":"Ms3dRk0ZyS7cH1qkM8fWNA","targets":{"member:bob":{"value":"write","clock":[1793008800000,0],"device":"Ms3dRk0ZyS7cH1qkM8fWNA"}},"closed":false,"controlClock":[1793008800000,0],"controlDigest":"106166478695c222"}
 ```
 
-`control` — its second, the pace for everyone 30 seconds:
+`control` — its second, in the same millisecond, the pace for everyone 30 seconds:
+the clock is the one after the device's own, its counter one higher:
 
 ```json
-{"tdsp":2,"kind":"control","documentId":"doc-a1b2c3","device":"Ms3dRk0ZyS7cH1qkM8fWNA","counter":2,"target":"pace","value":30000,"seen":{},"due":30000}
+{"tdsp":2,"kind":"control","documentId":"doc-a1b2c3","device":"Ms3dRk0ZyS7cH1qkM8fWNA","targets":{"pace":{"value":30000,"clock":[1793008800000,1],"device":"Ms3dRk0ZyS7cH1qkM8fWNA"}},"closed":false,"controlClock":[1793008800000,1],"controlDigest":"f1bd21d9458955ff"}
 ```
 
-`control` — its third, the close:
+`control` — its third, a minute later, `carol` may read:
 
 ```json
-{"tdsp":2,"kind":"control","documentId":"doc-a1b2c3","device":"Ms3dRk0ZyS7cH1qkM8fWNA","counter":3,"target":"close","value":true,"seen":{},"due":30000}
+{"tdsp":2,"kind":"control","documentId":"doc-a1b2c3","device":"Ms3dRk0ZyS7cH1qkM8fWNA","targets":{"member:carol":{"value":"read","clock":[1793008860000,0],"device":"Ms3dRk0ZyS7cH1qkM8fWNA"}},"closed":false,"controlClock":[1793008860000,0],"controlDigest":"8d243bc3f8bf3126"}
 ```
 
-`heartbeat` from that device after the edit of §4.5 and the three operations above
-(the state vector names one Yjs client at clock 4; nothing was deleted, so the state
-digest is that of the two bytes `00 00`; the control digest is that of the three
-operations; it is the first report of the device's engine, whose stream is
-`0c4f9a2be81d7365`):
+`heartbeat` from that device, the first report of its engine, whose stream is
+`0c4f9a2be81d7365`. The edit of §4.5, the document's whole state, went out before the
+decisions and began no phase (SND-11); the device then had no network until after
+its third decision, so the three `control` frames went out one after another once
+it had, and the phase they began ended a report delay after the last of them. That
+frame went again just before the report, which therefore carries no `update`
+(SND-27). The state vector names one Yjs client at clock 4; nothing was deleted, so
+the state digest is that of the two bytes `00 00`; the control clock is the
+greatest clock among the three registers, the control digest that of the three:
 
 ```json
-{"tdsp":2,"kind":"heartbeat","documentId":"doc-a1b2c3","control":{"Ms3dRk0ZyS7cH1qkM8fWNA":3},"controlDigest":"7aeabcc525c85aea","stateVector":"AYma9JgPBA==","stateDigest":"96a296d224f285c6","stream":"0c4f9a2be81d7365","sequence":1}
+{"tdsp":2,"kind":"heartbeat","documentId":"doc-a1b2c3","controlClock":[1793008860000,0],"controlDigest":"8d243bc3f8bf3126","stateVector":"AYma9JgPBA==","stateDigest":"96a296d224f285c6","stream":"0c4f9a2be81d7365","sequence":1}
+```
+
+`heartbeat` from `bob`, a member, after his one edit, which added "!" after "Hi"
+(his Yjs client 2357911131, clock 0): it carries that edit's update again, as it went
+out, so a receiver that lost the edit takes it from the report; a member states no
+control clock; it is the second report of his engine, whose first was his request as a
+joiner:
+
+```json
+{"tdsp":2,"kind":"heartbeat","documentId":"doc-a1b2c3","controlClock":null,"controlDigest":null,"stateVector":"Aoma9JgPBNu8q+QIAQ==","stateDigest":"96a296d224f285c6","stream":"3b8e1f0a7c5d2946","sequence":2,"update":"AQHbvKvkCACEiZr0mA8DASEA"}
+```
+
+`control` — then the close, a frame without registers; the control clock stays, the
+control digest is that of the same registers, closed:
+
+```json
+{"tdsp":2,"kind":"control","documentId":"doc-a1b2c3","device":"Ms3dRk0ZyS7cH1qkM8fWNA","targets":{},"closed":true,"controlClock":[1793008860000,0],"controlDigest":"c3d2af7d419e5c5a"}
 ```
 
 `resync-request` of a joiner with nothing, the first report of its engine:
 
 ```json
-{"tdsp":2,"kind":"resync-request","documentId":"doc-a1b2c3","requestId":"5f3a9c0e12b47d68","control":null,"controlDigest":null,"force":false,"stateVector":"AA==","stateDigest":"96a296d224f285c6","stream":"7e0d5b31a9c4f286","sequence":1}
+{"tdsp":2,"kind":"resync-request","documentId":"doc-a1b2c3","requestId":"5f3a9c0e12b47d68","controlClock":null,"controlDigest":null,"all":false,"force":false,"stateVector":"AA==","stateDigest":"96a296d224f285c6","stream":"7e0d5b31a9c4f286","sequence":1}
+```
+
+`resync-request` of the same joiner after that request went unanswered, with a new
+`requestId` and `all` set, its engine's second report:
+
+```json
+{"tdsp":2,"kind":"resync-request","documentId":"doc-a1b2c3","requestId":"c41d07e9a2b85f36","controlClock":null,"controlDigest":null,"all":true,"force":false,"stateVector":"AA==","stateDigest":"96a296d224f285c6","stream":"7e0d5b31a9c4f286","sequence":2}
 ```
 
 `decline` of a joiner whose engine implements another profile:
@@ -3920,7 +4534,7 @@ The `edit` frame of §4.5 as a Signal group message's body — the envelope, whi
 keeps its own version 1, with the frame as a JSON string:
 
 ```json
-{"tdsp":1,"kind":"frame","documentId":"doc-a1b2c3","frame":"{\"tdsp\":2,\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\",\"due\":30000}"}
+{"tdsp":1,"kind":"frame","documentId":"doc-a1b2c3","frame":"{\"tdsp\":2,\"kind\":\"edit\",\"documentId\":\"doc-a1b2c3\",\"update\":\"AQOJmvSYDwAHAQdjb250ZW50AwlwYXJhZ3JhcGgHAIma9JgPAAYEAIma9JgPAQJIaQA=\"}"}
 ```
 
 ## Appendix E. Implementer checklists
@@ -3943,10 +4557,8 @@ keeps its own version 1, with the frame as a JSON string:
    only from the channel its document is bound to; ignore what is not yours,
    silently (BRG-10). A message you cannot read never stops you from reading the
    others (BRG-18).
-5. Make delivered messages immutable and record every attempt to alter one: drop
-   the same message presented again, record another one under a delivered id, and
-   compare them as BRG-12 says (BRG-11, BRG-12). Bound what you keep of each
-   document (BRG-17).
+5. Make delivered messages immutable and record every attempt to alter one
+   (BRG-11, BRG-12). Bound what you keep of each document (BRG-17).
 6. Resolve a send only once the messenger accepted it as its binding defines
    accepted (TRN-6), and classify send failures (BRG-8): a refusal only a person
    can lift is `needs-person`, `409` over the local bridge interface (LBI-6). If
@@ -3955,11 +4567,11 @@ keeps its own version 1, with the frame as a JSON string:
    loopback only, loopback origins only.
 7. Reach exactly one endpoint, and fetch attachments only from it, bounded and
    checked before anything else is done with them (BRG-14).
-8. Serve a transport profile that states the limits you measured and a pacing you
-   suggest, and say which values are estimates. Where the messenger has a position
-   to resume from, offer a cursor (TRN-18), truncated also behind what the bridge
-   skipped; offer an instance id that changes whenever the bridge may have lost
-   something it held, on every restart if in doubt (TRN-19).
+8. Serve a transport profile with the limits you measured and a pacing you
+   suggest, saying which values are estimates. Where the messenger has a position
+   to resume from, offer a cursor (TRN-18); offer an instance id that changes
+   whenever the bridge may have lost something, on every restart if in doubt
+   (TRN-19).
 9. Pass the conformance suite with two real accounts, repeatedly.
 10. Write down what the messenger cannot do; a gap is an error, never a silent
     no-op.
@@ -3973,53 +4585,62 @@ keeps its own version 1, with the frame as a JSON string:
    with test vectors (PRF-7), and ships with the application, never with a
    document (PRF-8). Keep layers you do not implement, and show that they are
    there (LAY-2).
-3. Persist the creator's control state — with its device tag, its counter and the
-   operations not yet sent (CTL-26) — and the list of documents the user has,
-   marking a document as the person's own before it creates the engine that
-   sends the initial state (LIF-5); where you can persist only asynchronously, hold every message until
-   the state is durable (CTL-38). Persist a capacity conflict with the control
-   state, and show it (CTL-32). Persist the cursor and the instance with content,
-   never a cursor ahead of the control state restored with it (LIF-8, CTL-40). On
-   a creator device without a basis, decide nothing for the person (CTL-29), and
-   show divergences until the person resolves them (CTL-33, CTL-43).
-4. Show the creator from an invitation — by an identifier the messenger keeps
-   unique, not only by a name they chose — and let the person confirm before
-   joining (INV-3); an invitation that names the person as its creator is that
-   claim, nothing more (INV-7). Decline an invitation whose profile the engine
-   does not implement, and show the declines others send. Tell the person when an
-   invitation, or a participant's frames, come from another version (DCL-1,
-   VER-4).
+3. Persist the creator's control state with its tag, its clock and the decisions
+   not yet sent (CTL-26), or hold every message until it is durable (CTL-38), and
+   the list of documents, marking one as the person's own before its initial state
+   goes out and creating anew one so marked without persisted control state
+   (LIF-5). Persist a capacity conflict and show it (CTL-32). Persist the cursor
+   and the instance with content, never a cursor ahead of the control state, and
+   when the last read that reached the messenger began; tell a restarted engine
+   that time, how long the transport keeps a message and whether the document was
+   unbound meanwhile (LIF-8, CTL-40, RSY-21). Persist the undistributed mark with
+   the content (SND-21), and the report owed, on this device only (SND-28). On a
+   device of the creator not bootstrapped, show that the rights are not known
+   yet; once its attempts ran out, ask whether another device
+   of hers or a backup holds the document, ask again when she says one does, and
+   offer to close it and continue in a new one (CTL-27, CTL-43, CTL-46). Show the
+   reason for the close only once it is closed (CTL-23).
+4. Show the creator from an invitation by an identifier the messenger keeps
+   unique, and let the person confirm before joining (INV-3); one that names the
+   person as its creator is that claim, nothing more (INV-7). Decline an invitation
+   whose profile the engine does not implement, and show others' declines. Tell the
+   person when an invitation, or a participant's frames, come from another version
+   (DCL-1, VER-4).
 5. Show send status and loss evidence; show an error only for a dropped change,
-   and show undistributed changes (SND-8, SND-21) until a resync has gone out —
-   never "synchronised" meanwhile — with an offer to send the whole state again.
-   Show when sending waits for the person, with what the transport said, and ask
-   the engine to send once they acted (TRN-22). Never present no evidence as
-   "synchronised", and not as "nothing suggests a loss" while the creator's last
+   and undistributed changes until a resync went out, with an offer to send the
+   whole state again (SND-8, SND-21). Show when sending waits for the person, and
+   tell the engine once they acted (TRN-22). Never present no evidence as
+   "synchronised", nor as "nothing suggests a loss" while the creator's last
    request went unanswered (LOS-15, LOS-20). Show an answer that lacks a piece
-   (LOS-14) apart from a bootstrap: the trust may be there before all the content
-   is.
-6. While the engine would refuse an edit — before the bootstrap, while the
-   person's permission is `read` or revoked or a layer the change touches is one
-   they may only read, in a capacity conflict, after a close — prevent typing, or
-   hold what the person types outside the engine's document (CTL-42). One way to
-   hold: keep a second replica that applies every update the engine's document
-   applies, let the person edit that replica, and once the engine may edit, apply
-   the replica's update since the engine's state vector to the engine's document
-   as a local edit. The CRDT merges it with whatever arrived meanwhile; a text
-   difference computed against an earlier state would instead undo or misplace
-   what arrived since. The application knows what it held, so afterwards it can
-   check whether that text is still there.
+   (LOS-14), and a gap that rests, with an offer to synchronise now (LOS-26,
+   LIF-12); bootstrap attempts that ran out, with an offer to ask again (RSY-5);
+   and a closed document as still synchronising while there is loss evidence
+   (LIF-6). Tell the engine when the person closes the document and before the
+   device sleeps (SND-11, LIF-12).
+6. While the engine would refuse an edit (CTL-13), prevent typing, or hold what
+   the person types outside the engine's document (CTL-42). One way to hold: a
+   second replica that applies every update the engine's document applies, which
+   the person edits; once the engine may edit, apply the replica's update since the
+   engine's state vector as a local edit, which the CRDT merges with whatever
+   arrived meanwhile — a text difference against an earlier state would undo or
+   misplace it.
 7. Write large embeds and binaries in parts no larger than the profile allows
    (SND-19), and offer pacing presets of your own; the transport suggests one
    pacing, and the creator may set the pace for everyone (SND-15).
-8. Say, per messenger, what the channel does and does not protect — an email
-   document without PGP persistently (EML-9, SEC-2), and the creator key's
-   fingerprint in every trust state (EML-13) — and never present attribution as
-   authentication.
+8. Say, per messenger, what the channel protects — an email document without PGP
+   persistently (EML-9, SEC-2), the creator key's fingerprint in every trust state
+   (EML-13) — and never present attribution as authentication.
 9. Before carrying a document between one person's devices through another
    service, tell the person; carry control state only between devices of the
    creator (ARC-5), and join on another device without asking again only with
    what the person confirmed, carried unchanged (INV-9).
+10. Keep the channel and the rights in step, and show where they differ: a
+    permission before the invitation, a revocation before or as you remove a
+    person, neither changed for a difference without the person (LIF-9, LIF-10).
+11. Tell a running engine how long it was away once a read reaches the messenger
+    again after the device slept or had no network: after an absence longer than
+    RSY-1's it asks all once, and after longer than the transport keeps a message
+    it returns (LIF-12, RSY-1, RSY-21).
 
 ## Appendix F. Reference implementation
 
@@ -4030,20 +4651,24 @@ engine runs on Node.js and in the browser, its bridges on Node.js.
 |---|---|---|
 | `messenger-port` | — | The transport contract with its optional cursor and instance, the transport profile, the send-failure classification, and the transport conformance suite ([§3.6](#36-conformance-suite)) |
 | `messenger-mock` | adapter | An in-memory transport with fault injection — delay, duplication, loss, a moved-on window, a restarted bridge — offering the cursor and the instance; for tests only |
-| `document-protocol` | engine, application | The engine (`DocumentEngine`), and the invitation link's reader and writer (`parseInvitation`, `encodeInvitation`): frames, control state as operations, bootstrap and resync, send scheduling, pieces, loss detection, declines |
+| `document-protocol` | engine, application | The engine (`DocumentEngine`), and the invitation link's reader and writer (`parseInvitation`, `encodeInvitation`): frames, control state as registers, bootstrap and resync, send scheduling, pieces, loss detection, declines |
 | `reconciliation` | engine | The profile `yjs-paragraphs/1` ([Appendix A](#appendix-a-profile-yjs-paragraphs1)), its splitting into pieces, and the attribution tracker |
 | `messenger-signal`, `messenger-matrix`, `messenger-email` | adapter | The adapters, each an HTTP client of its bridge through the [local bridge interface](bindings/local-bridge-interface.md) |
 | `bridges/signal-bridge`, `bridges/matrix-bridge`, `bridges/email-bridge` | bridge | The bridges, one per binding ([bindings/](bindings/)), each offering the local bridge interface on loopback |
 | `loopback` | adapter, bridge | The one check of whether an address is a loopback address, as the local bridge interface defines it |
 | `bridge-log` | bridge | The bridges' structured log. Its callers log identifiers, never message bodies, keys or credentials; as a safety net it redacts a field whose name suggests a secret (`password`, `token`, `secret`, `credential`, …), cuts every string at a bound, and escapes control characters so that a value cannot begin a line of its own |
 
-The adapters and bridges are those of the release that implements TDSP 1.4,
-changed to serve the transport profile of [§3.5](#35-transport-profile) (TRN-13).
-They carry this draft's frames unchanged, since the envelope did not change, but
-implement only part of what 2.0's bindings changed or added, and offer neither
-the cursor nor the instance (TRN-18, TRN-19). The implementation's conformance
-status — what has been verified, and against what — is published with it
-(`CONFORMANCE.md`), not here.
+The adapters and bridges carry this draft's frames unchanged, since the envelope
+did not change, and serve the transport profile of [§3.5](#35-transport-profile)
+(TRN-13); of what 2.0's bindings changed or added they implement part. Beside the
+implementation, the repository holds a small checker in Swift,
+[conformance/swift-checker/](conformance/swift-checker/), which by its authors'
+account was written from this specification, the bindings and the vector files
+alone, not from the reference implementation: it reads frames and invitations,
+merges registers, computes digests and runs the clock, and is no engine, so it is
+a second reading of the text, not a second engine exchanging with the first. The
+implementation's conformance status — what has been verified, and against what,
+the checker's runs included — is published with it (`CONFORMANCE.md`), not here.
 
 ## Appendix G. Changes from TDSP 1.x
 
@@ -4051,143 +4676,168 @@ status — what has been verified, and against what — is published with it
 requirements themselves state their full rationale. An ID not listed keeps its
 1.x text, but for references to sections or requirements that moved.
 
-The changes have six reasons, which the tables below cite by letter:
+The changes have nine reasons, which the tables below cite by letter:
 
 - **A — One writer, one number.** 1.x numbered the creator's control actions in
   one gap-free sequence per document. That holds only while the creator uses one
   device: two devices, or one restored from a backup, issued different actions
-  under the same number, which every receiver then had to detect and settle; a
-  device that had not seen the current number could not decide at all until
-  another device of the creator passed the state on — never, once those devices
-  were gone. And an action held only after its send succeeded, so a creator
-  without a connection saw nothing of a decision it had made. 2.0 counts
-  operations per device, each naming what its device had seen, and merges them
-  like the content ([§7](#7-control-state)).
+  under one number, and a device that had not seen the current number could not
+  decide at all. And an action held only after its send succeeded. 2.0 keeps per
+  target the latest decision of any device of the creator, ordered by a clock
+  that follows both the time and what the device had seen, and merges it like the
+  content ([§7](#7-control-state)).
 - **B — A shared policy for a private matter.** 1.x carried the creator's whole
-  sync policy to every participant — in a control action, in snapshots and in
-  the invitation link — with a grammar, an order of precedence and a clamp for
-  every value. Receivers need two things from it: when a sender will speak again,
-  and how quiet the creator wants the document. 2.0 keeps exactly those (`due`,
-  SND-14; the pace, SND-15); everything else is each participant's own (SND-16).
-- **C — Closed layouts.** In 1.x every new field broke the wire, so the protocol
-  could grow only by major version. 2.0 lets a field whose name contains `.` be
-  ignored when unknown, unless its sender marks it critical (FRM-9 to FRM-12,
-  FRM-15 to FRM-17).
+  sync policy to every participant, with a grammar, a precedence and a clamp for
+  every value. Receivers need one thing from it: how quiet the creator wants the
+  document. 2.0 keeps exactly that (the pace, SND-15); everything else is each
+  participant's own (SND-16).
+- **C — Closed layouts.** In 1.x every new field broke the wire. 2.0 lets a field
+  whose name contains `.` be ignored when unknown, unless its sender marks it
+  critical (FRM-9 to FRM-12, FRM-15 to FRM-17).
 - **D — Fragments.** A message too large for the messenger travelled as
   fragments that a receiver buffered and reassembled; one lost fragment lost the
-  whole message, and the buffers needed bounds in memory and time of their own. 2.0
-  splits a large update into pieces that are updates themselves, each useful on
-  its own (PRF-1 item 7, SND-17).
+  whole message. 2.0 splits a large update into pieces that are updates
+  themselves (PRF-1 item 7, SND-17).
 - **E — Loss guessed, not known.** Without a position to resume from, an engine
-  could only guess from overlapping answers whether something slid out of a
-  bridge's window (LOS-8), and a bridge restart between two polls stayed
-  invisible. A bridge whose messenger has such a position now says so (TRN-18,
-  TRN-19).
-- **F — One document for every messenger.** How frames travel on one messenger
-  changes with that messenger. Kept in documents of their own, the bindings can
-  change without a revision of the core, and the core describes only what every
-  transport offers.
+  could only guess whether something slid out of a bridge's window (LOS-8), and a
+  bridge restart between two polls stayed invisible. A bridge whose messenger has
+  such a position now says so (TRN-18, TRN-19).
+- **F — One document for every messenger.** Kept in documents of their own, the
+  bindings can change without a revision of the core, and the core describes only
+  what every transport offers.
+- **G — The channel is the boundary.** Whoever is removed from a channel receives
+  nothing new. 1.x let a member the creator had not named write; 2.0 has it wait
+  as a reader, and an application keeps the channel and the rights in step
+  ([§6.6](#66-who-takes-part)).
+- **H — Anyone may bring a new device up.** In 1.x only the creator, or another
+  device of the asker's own member, could bootstrap a device. In 2.0 anyone in the
+  channel may, passing on what reached it of the creator's decisions (§1.1) — a
+  new device of the creator excepted, which only another of her devices or her own
+  state brings up (CTL-46) ([§8.3](#83-who-answers),
+  [§7.6](#76-a-new-device-of-the-creator)).
+- **I — Loss is rare, and heals at the next occasion.** 1.x had every sender
+  promise a follow-up and every receiver judge the silence after it. Where loss is
+  rare, the typical loss is a sender's last change, which nothing later of it
+  shows. 2.0 sends one report after each phase of a sender's own writing, which
+  carries that change again (SND-11, SND-27), and asks for every other gap of one
+  stream at most three times before it rests until that stream or its writer's
+  member moves on, an absence or the person (LOS-25, LOS-26).
 
 **Withdrawn**, with what takes their place:
 
 | 1.x | Replaced by | Why |
 |---|---|---|
-| CTL-2, CTL-3 (a gap-free sequence of the creator, applied after the send) | CTL-20, CTL-21 | A: a tag and counter per device let several devices decide without a conflict, and an operation holds at once, so a decision shows while the messenger is away and goes out later. |
-| CTL-8, CTL-9 (highest and contiguous sequence) | §7.4, LOS-10, RSY-16, SND-11 | A: one number cannot describe several devices; a control vector compares per device, so a device that knows less is not taken for a gap. |
-| CTL-11 (the snapshot replaces, with a floor) | CTL-25 | A: a snapshot is merged as a union, which cannot undo anything; nothing is replaced, so no floor is needed to guard against an older snapshot. |
-| CTL-12 (persistence with an outbox) | CTL-26 | A: an operation is persisted with its counter, as unsent until the messenger takes it; a separate outbox of whole frames is not needed. |
+| CTL-2, CTL-3 (a gap-free sequence of the creator, applied after the send) | CTL-20, CTL-21, CTL-45 | A: registers ordered by a clock and a device tag let several devices decide without a conflict, and a decision holds at once, so it shows while the messenger is away. |
+| CTL-8, CTL-9 (highest and contiguous sequence) | LOS-10, LOS-12, RSY-16, SND-11 | A: one number cannot describe several devices; a clock and a digest can. |
+| CTL-11 (the snapshot replaces, with a floor) | CTL-25 | A: a snapshot merged register by register undoes nothing, so it needs no floor. |
+| CTL-12 (persistence with an outbox) | CTL-26 | A: a decision is persisted with the device's clock, its frame as unsent until the messenger takes it. |
 | CTL-14 (ordering policies) | — | B: no shared policy is left to order. |
-| CTL-16 (clamping the creator's policy) | SND-15 | B: the one shared value, the pace, yields to each participant's own bounds; nothing else is shared that would need a clamp. |
-| CTL-17, CTL-18 (conflicts under one number, devices continuing after an unbroken run) | CTL-22, CTL-23, CTL-24 | A: no two devices share a number. Concurrent decisions merge — one made in knowledge of another stands, of two concurrent ones the narrower holds — and a device restored from a backup that reuses its tag and counter is merged instead of stuck. |
-| CTL-19 (a creator device without control state waits) | CTL-27, CTL-28, CTL-29 | A: waiting for another device of the creator could last for ever. A new device decides at once and takes from members only which counters to supersede, never what holds. |
-| RSY-2 (`controlSequence` and `bootstrap` in a request) | RSY-16 | A: a request names what its sender holds per device (a control vector); `force` takes over from `bootstrap` after a truncated history. |
-| RSY-7 (when to answer, by sequence and `bootstrap`) | RSY-17 | A: the same decision, made by comparing vectors. |
+| CTL-16 (clamping the creator's policy) | SND-15 | B: the one shared value, the pace, yields to each participant's own bounds. |
+| CTL-17, CTL-18 (conflicts under one number, devices continuing after an unbroken run) | CTL-22, CTL-23 | A: no two devices share a number; concurrent decisions merge, the later by the deciding devices' clocks, and a device restored from a backup is merged alike everywhere instead of stuck. |
+| CTL-19 (a creator device without control state waits) | CTL-27, CTL-46, RSY-14 | A, H: the creator's devices hold all of her decisions, members only what reached them. A new device of the creator is bootstrapped by another of her devices or its own restored or carried state, merges members' answers meanwhile and decides nothing but the close and its reason; without any device or backup of hers, the document is closed and continued as a new one. |
+| RSY-2 (`controlSequence` and `bootstrap` in a request) | RSY-16 | A: a request states its sender's control clock and control digest; `force` takes over from `bootstrap` after a truncated history. |
+| RSY-7 (when to answer, by sequence and `bootstrap`) | RSY-17 | A: the same decision, made by comparing clocks and digests. |
 | SND-4 (the shared policy's precedence) | SND-15, SND-16 | B. |
 | FRG-1 to FRG-8 (fragments and reassembly) | PRF-1 item 7, SND-17, SND-18, SND-19 | D. |
-| LOS-3 (silence judged by the receiver's own policy) | LOS-11 | B: a receiver judges a sender's silence by what that sender promised (`due`), which is what lets pacing be each participant's own. |
-| LOS-5 (a gap in the control sequence) | LOS-10 | A: a missing counter of one device is a missing decision; the heartbeat makes the loss of the last one visible. |
+| LOS-3 (silence judged by the receiver's own policy) | — | B, I: no silence is judged; a report follows each phase of writing (SND-11) and carries its last change again (SND-27). |
+| LOS-5 (a gap in the control sequence) | LOS-10 | A: a control clock of a device of the creator above every clock held is a missing decision; the report after the device's phase shows the last one lost (SND-11, SND-27). |
 | INV-4, INV-5 (the policy in the invitation, its grammar) | — | B: an invitation carries no policy. |
 
 **Kept, changed:**
 
 | Requirement | Change | Why |
 |---|---|---|
-| FRM-2 | `"tdsp": 2` | The control frame, the heartbeat and the request change incompatibly; a 1.x engine must refuse a 2.0 frame loudly (VER-1) rather than misread it. |
+| FRM-2 | `"tdsp": 2` | The control frame, the heartbeat and the request change incompatibly; a 1.x engine must refuse a 2.0 frame loudly (VER-1). |
 | FRM-5, FRM-6 | Extension fields may be added; defined fields keep their one reading | C. |
-| VER-2 | An extension field is not an undefined value | C: its name keeps it apart from values a revision may define. |
-| CTL-1 | Operations instead of numbered actions | A. |
-| CTL-5 | Without 1.x's condition (c), a sequence above the last for the target and above the snapshot floor; device tags are compared only within the creator's MemberId and authenticate nothing | A: an operation counts in whatever order it arrives; which of two holds is decided by merging (CTL-23), not by arrival. A tag only tells the creator's own devices apart. |
-| CTL-6, TRN-8 | An operation already held is inert, where 1.x judged a frame by its sequence | A: a duplicate is the expected result of a re-offered message, and a set makes it harmless without a sequence. |
-| CTL-15 | The snapshot's layout: operations per target with a control vector and the counters held above a hole, and no policy | A, B; the counters, because an operation superseded above a hole is in no target's heads, and a state restored without them lost the hole. |
-| RSY-8 (with RSY-18) | What `control` carries in an answer; a member reports the creator's counters, and should report what it holds to a device of the creator; nothing from a device in a capacity conflict; every piece names the responder's stream and its own number, the last the count | A: the control reports are how a new device of the creator learns what to supersede (CTL-27), and the only way it learns what only members hold (CTL-33). A device in a capacity conflict knows that its state lacks something, and a device it bootstrapped would write on it. D: a requester that holds more than the responder cannot otherwise tell whether a piece is missing. |
-| SND-2 (with SND-20) | Which messages go first and which are retried, a part of 1.x's SND-2, is a requirement of its own (SND-20): a control frame is retried until the messenger takes it, and a piece of an answer; the seed is not: it is no pending change, and a failed send of it fails the document's creation (LIF-3). A send asked for at once keeps the floor | A: the operation already holds, so its send is owed, as an edit's is. And a conformance check: a send at once could push the next message into a refusal. The seed goes out before anyone is invited, so its failure fails the creation instead of waiting as a pending change, and the application can create a new document. |
+| VER-2 | An extension field is not an undefined value, nor an application's reason for the close (CTL-23) | C: their names keep them apart from values a revision may define. |
+| CTL-7 | Nor is the update a report carries rejected for its sender's permission | I: a report carries again only what went out (SND-27); judged by the receiver's rights, receivers that knew of a revocation at different times would diverge. |
+| CTL-1 | Registers instead of numbered actions | A. |
+| CTL-5 | Without 1.x's condition (c); a register is taken from the creator's `control` frames and from the snapshot of an answer the receiver merges (CTL-25); device tags only order registers | A: a register counts in whatever order it arrives, its clock deciding which holds (CTL-22). H: cooperating participants pass on what reached them of the creator's decisions (§1.1), which a device merges from whoever answers it, a new device of the creator too (CTL-25, CTL-27). |
+| CTL-6, TRN-8 | A register already held is inert, where 1.x judged a frame by its sequence | A: a duplicate is the expected result of a re-offered message. |
+| CTL-15 | The snapshot's layout: the close flag and one register per target; no policy | A, B. |
+| RSY-6, RSY-12, RSY-13 | Any member answers a request that asks all, at its turn; the requester takes its answer, control state included (CTL-25), as does a device that let its own request go for that one (RSY-22); only an answer to its own request bootstraps a device (RSY-14) | H; and a device restarted without a cursor would otherwise be bootstrapped by an old answer past a revocation (CTL-41, LOS-8). I: several devices with the same gap ask once. |
+| RSY-8 (with RSY-18) | An answer carries the responder's snapshot from any responder that is bootstrapped and in no capacity conflict, `null` otherwise; every piece names the responder's stream and its own number, the last the count | H: a member's answer is how a new device goes on while the creator is offline, a new device of the creator's excepted (CTL-46); a device that may lack something must not bootstrap another. D: a requester that holds more than the responder could not tell whether a piece is missing. |
+| SND-2 (with SND-20) | Which messages are retried is a requirement of its own (SND-20): a control frame until the messenger takes it, and a piece of an answer; not the seed, whose failed send fails the creation (LIF-3), unless the invitation went first (LIF-9) and its content stays undistributed. A send asked for at once keeps the floor | A: the decision already holds, so its send is owed. The seed goes out before anyone is invited; once the invitation went first, those invited must get its content. |
 | SND-1 | A floor, `minChars` or latency that is not finite falls back to its default | A conformance check: an infinite floor stopped every send. |
 | SND-7, SND-9 | A refusal of a message of any kind holds back, and widens the spacing of, the next send of every kind | A conformance check: an answer refused as rate-limited went out again every second. |
-| SND-8 (with SND-21 and SND-22), PRF-1 (item 7) | Pieces instead of fragments; a dropped answer, request or heartbeat leaves nothing undistributed. What the application shows (SND-21) and a refusal the profile ruled out (SND-22), parts of 1.x's SND-8, are requirements of their own, and SND-8 is the engine's alone; the application shows undistributed changes and offers to send the whole state again | D; and a conformance check: an application that only avoided the word "synchronised" met the rule while it showed everything as sent. |
-| SND-10 | A request that fails to send is no error; its outcome is *failed* | A conformance check: a request is no change, and a failed one showed nowhere. |
-| RSY-3, RSY-4 | A request the floor holds back waits; its expiry counts from when it was sent | A conformance check: an automatic request refused at the floor was spent, and an engine that kept writing never asked. |
-| SND-3 | A pending change goes out by the time a heartbeat the engine owes requires: at the heartbeat's time, or a floor before it where the change does not keep the heartbeat's promise | A: a person who kept typing would hold back the heartbeat a control frame owed for as long as they typed, receivers would wait in vain for what its `due` promised, and a lost decision would go unnoticed. |
-| SND-11 (with SND-23 and SND-24) | The heartbeat follows pieces, not fragments, and an applied answer that changed what the engine holds; it carries the control vector and its sender's stream, counts from the edit or control frame that promised it (SND-23), and goes at once when a request states what the engine holds while its last report states otherwise (SND-24); a change pending before it goes first, one made after it waits | A, D; counted from the last message of any kind, an answer to a joiner would push it past the edit's `due`, and a change typed on and on would hold it back for as long. After an answer that healed it, the engine's last report would stand for it, older than what it holds. |
-| ARC-4 | Credentials stay away from the engine and from every component that renders what came through the channel; a sign-in form outside it may pass a typed password to the bridge | "The application" was read as every part of it, which no bridge needing a password can meet. |
+| SND-8 (with SND-21 and SND-22), PRF-1 (item 7) | Pieces instead of fragments; a dropped answer, request or report leaves nothing undistributed. What the application shows (SND-21) and a refusal the profile ruled out (SND-22) are requirements of their own | D; and a conformance check: an application that only avoided the word "synchronised" met the rule while it showed everything as sent. |
+| SND-10 | A request that fails to send is no error, its outcome *failed*; a failed report is retried (SND-12) and reported to no one | A conformance check: a request is no change, and a failed one showed nowhere. |
+| RSY-3, RSY-4 | A request the floor holds back waits; its expiry counts from its send, for a request to all with the answer window (RSY-20), and passes alike whether it was answered or not; an answer ends a request, but for a bootstrap request to all it does not bootstrap; a failed send releases the slot | A conformance check: an automatic request refused at the floor was spent, and an engine that kept writing never asked; an answer that ends nothing must not cut the members' turns short, and what RSY-5 and RSY-21 count from a request must not depend on its answer. |
+| SND-11 (with SND-24) | The heartbeat is the report at the end of each phase of the sender's own writing, at most one per phase, a report delay after its last `edit` or `control` frame once nothing of its own waits; at once on close, before sleep, after every merge that changed a bootstrapped device of the creator's control digest — a `control` frame of another of her devices too —, after a bootstrap that left it other than the answer stated, and as SND-24 says; nothing but its own changes begins a phase | I: the typical loss, a lost last change, heals by the report, without a request and also where the sender goes offline at once; reading costs no report. A register that reached a device of the creator only in a member's answer, or in another device's frame under her greatest clock, reaches the members by her report, since members state no control clock and a `control` frame is no evidence (LOS-10). |
+| SND-12, SND-13 | A report goes through the scheduler, is retried while owed but never ahead of a change of its own, and marks nothing undistributed; the update it carries is applied as an edit's | I: a report lost to a passing refusal would wait, owed, until the device opens the document again. |
+| RSY-1 | A restarted engine asks as a joiner while it is not bootstrapped; bootstrapped, it sends one start request, to all, after its first read, only after a longer absence (Appendix B), not knowing how long, or holding a gap; a running engine told of such an absence too | I: a device away briefly reads what came meanwhile, and what it still lacks shows as a gap. |
+| ARC-4 | Credentials stay away from the engine and from every component that renders what came through the channel; a sign-in form outside it may pass a password to the bridge | "The application" was read as every part of it, which no bridge needing a password can meet. |
 | ARC-2 | Names its one exception: the service through which an application carries a document between one person's devices (ARC-5) | ARC-5 allows that service, which ARC-2 forbade without the exception. |
 | INV-3, INV-7 | The creator is shown by an identifier the messenger keeps unique, or a name the person gave; an invitation naming the person as creator is a claim | A self-chosen name is what a forger copies, and an invitation naming the person themselves is the forgery they can least recognise. |
-| TRN-11, TRN-12 | Five reasons: `needs-person` for a refusal only a person can lift | An identity not trusted, a device not confirmed or no account was either retried without end (`unavailable`) or dropped (`rejected`); neither serves, and implementations chose differently. |
+| TRN-11, TRN-12 | Five reasons: `needs-person` for a refusal only a person can lift | An untrusted identity, an unconfirmed device or no account was retried without end or dropped; implementations chose differently. |
 | LOS-1 | The waiting time comes from the engine's own pacing | B. |
-| RSY-9 (with RSY-19) | Kept by request id, four per requester instead of one, served in turn (RSY-19); a request for which the profile fails to compute an answer is let go and reported | wappensc/tdsp#31: several devices of one member asking at once each get their answer. And a request the profile could not answer was kept and failed again on every later processing, keeping the responder from the others. |
+| RSY-9 (with RSY-19) | Kept by request id, four per requester instead of one, of each stream only its latest, served in turn (RSY-19); a request the profile cannot answer is let go and reported | wappensc/tdsp#31: several devices of one member asking at once each get their answer; a request read late must not cost an answer for what a later one asks; and one the profile could not answer failed again on every later processing. |
 | LOS-2 | A deletion the CRDT holds back until what it deletes arrives is a pending gap | The text left open whether a held deletion was one; it is the same signature of a lost or late insertion. |
-| LOS-4 | The latest report of each of a member's streams is judged (a heartbeat, a request, an answer's last piece), those of one's own member too | wappensc/tdsp#31: a person may write from several devices, and one device's heartbeat must not hide another's. |
-| LOS-8 (with LOS-19 and LOS-20) | Only without a cursor; a truncated history sets `force`, and ends for anyone but the creator only with an answer that brings control state; while the creator's request that ended it is *unanswered*, an application does not say that nothing suggests a loss (LOS-15, LOS-20) | E: where the bridge offers a cursor, its answer replaces the guess (LOS-9). An unanswered request may mean that nobody who could answer was online; "nothing suggests a loss" would then say more than the engine knows. |
-| INV-6 | `policy` is an unknown parameter | B. |
+| LOS-4 | The latest report of each of a member's streams is judged, after the update it carries; each client it shows behind is a gap of its own (LOS-25) | wappensc/tdsp#31: one device's report must not hide another's. I: judged before what it carries, a report would show its own repeat missing. |
+| LOS-8 (with LOS-19 and LOS-20) | Only without a cursor; a truncated history sets `force` and ends only with an answer that carries control state, to a request sent with `force` after it was last found; while the creator's request that ended it is *unanswered*, an application does not say that nothing suggests a loss (LOS-15, LOS-20) | E: a cursor replaces the guess (LOS-9). An unanswered request may mean that nobody who could answer was online. |
+| INV-6 (with §11.3) | `policy` is an unknown parameter; a refused link names the first of its problems in a stated order; `channelId` is required by every binding but email | B; and one reading for every link: two readers must name the same problem, and a reader of an unknown provider cannot tell whether a channel id is needed. |
 | TRN-13 | A transport profile is `{ bounds, pacing }` | B: a transport suggests its pacing; named presets belong to applications. |
 | TRN-10, TRN-17, DCL-3, LOS-6 | The class names everyone the requirement binds: an application too (TRN-10, DCL-3, LOS-6), an engine too (TRN-17) | Each has a sentence for a class its tag did not name. |
-| PRF-1 (item 4), with its class | The update that holds nothing: a profile names one, which a `resync-response` carries where the requester lacks nothing; PRF-1 binds whoever defines a profile (*all*) | An empty `update` is `invalid-field` in every kind, so an answer that brings no content still needs an update every receiver reads; and a profile is defined by someone other than an engine. |
-| CTL-10 | A snapshot from another device of one's own member that names another profile is rejected too | It is applied as the creator's is (CTL-25), and so confirms the profile as the creator's does. |
+| PRF-1 (item 4), with its class | A profile names the update that holds nothing, which a `resync-response` carries where the requester lacks nothing; the state since a vector holds only what a replica applied; PRF-1 binds whoever defines a profile (*all*) | An empty `update` is `invalid-field`; what waits for missing predecessors would only count against a receiver's bounds (LOS-23); and a profile is defined by someone other than an engine. |
+| CTL-10 | A snapshot that names another profile is rejected from whoever answers | Every accepted snapshot is merged (CTL-25) and may bootstrap the receiver (RSY-12, RSY-14). |
 | ATR-1 | Only an answer to a request made while the engine held nothing is adopted wholesale | An engine that restarted with content keeps the attribution it restored; 1.x left open whether its answer was a bootstrap response. |
 | ATR-2, RSY-13 | Unattributed text is `authorId: null` in an overlay and no member's last edit | 1.x named an unattributed author but gave it no form on the wire; a MemberId invented for it is shown as a person by another implementation. |
-| DCL-1, VER-1 | No `decline` for an invitation of another version; the person is told instead | 1.x asked for `unsupported-version`, which no creator could receive: the creator's engine rejects a frame of another version (VER-1), and an invitation of another version cannot be read (INV-6). |
+| DCL-1, VER-1 | No `decline` for an invitation of another version; the person is told instead | No creator could receive 1.x's `unsupported-version`: its engine rejects a frame of another version (VER-1). |
 | FRM-7 | A rejection carries the delivery's sender | So that an application can say whom a version skew concerns (VER-4). |
-| PRF-6, LIF-5 | Restored control state is what CTL-26 persists; an application marks a document it creates before the initial state goes out, and resumes one without control state as a new device of the creator | A: the persisted form changed with the control state, and a new device decides at once (CTL-27). Creating a document issues no operation, so without the mark a stop right after creating it left nothing that said it existed. |
+| PRF-6, LIF-5 | Restored control state is what CTL-26 persists; an application marks a document it creates before the initial state goes out, and creates one so marked without persisted control state anew | A: the persisted form changed. Without the mark a stop right after creating left nothing that said the document existed; without persisted control state nothing of it went out (CTL-26, CTL-38), and a device of the creator resumed without state would wait for an answer no one can give (RSY-14). |
 | LAY-2 | A copy is the same document; a new document from its content, and an export, may leave layers out and say so | Whether continuing in a new document was a copy that must keep every layer was left open. |
-| PRF-7, LAY-4 | The id of a profile or a layer defined outside this specification should begin with a reverse domain name its definer controls, as an extension's does (FRM-15); both requirements are of the class *all*, not *application* | The text said so only informatively; two definers must not choose one id, and one that does not control the domain cannot be sure of it. What a definition must hold binds its definer, whom only the class *all* names (§1.4). |
+| PRF-7, LAY-4 | The id of a profile or a layer defined outside this specification should begin with a reverse domain name its definer controls (FRM-15); both are of the class *all* | Two definers must not choose one id; a definition binds its definer, whom only *all* names (§1.4). |
 | DCL-3 | At most one report per sender for as long as the engine runs; across a restart, what a person saw is the application's to remember | An engine keeps no state of a decline, so the 1.x wording could not be kept across a restart. |
-| RSY-5, RSY-14 | A device of the creator is bootstrapped by any answer to its own request, and at once with restored content and a basis; its automatic requests on loss evidence do not depend on its bootstrap | A: a restarted device of the creator otherwise asked for a bootstrap no one owed it, and stopped asking about real evidence once those attempts ran out. |
-| LIF-6 | After a close, an operation issued before it still goes out; an application shows a closed document as synchronising while its engine suspects a loss, so the class names it too | A: it already holds on its device, and receivers must learn of it to agree. And a closed document can still change until the last edits sent before the close arrive. |
-| CTL-13 (with CTL-42) | A revoked member is refused as a reader is, on the document and on every layer, and `read` refuses only a change of the part it is set on; only an unknown permission refuses nothing after the bootstrap. Holding changes, the application's part of 1.x's CTL-13, is a requirement of its own (CTL-42), and CTL-13 the engine's alone; held changes may also be kept or discarded after a revocation or in a capacity conflict | 1.x took a revoked member for one the creator had not named: with operations merged, concurrent `read` and revoke ended in writing, against both intents. A member may only read the content and still comment on a layer (LAY-5). |
+| RSY-5, RSY-14 | Bootstrapped alike for every device: by creating the document, by an answer to its own request that carries control state — for a device of the creator, only another of hers —, or by a restored or carried bootstrapped state (CTL-41); never by content alone, its own decisions or an answer to someone else; until then it asks on, its repeats asking all, and hands on no control state; once the attempts ran out, one further request to all on a frame of a participant that did not answer the latest request — on a device of the creator, of another of hers —, or, whoever answered, on a `control` frame, report or request of another device of the creator that states a control clock, the waits at least doubling up to a longest wait (Appendix B); the application shows attempts that ran out. A device of the creator asks for its gaps whatever its bootstrap | A: 1.x waited for the creator alone, a joiner stopped asking before anyone came back, and unbounded asking would spend the budget of a participant nobody can answer; answers that end nothing must not keep everyone else's frames from bringing the further request. H: any member's answer brings a new device up without the creator, a new device of the creator excepted (CTL-46). |
+| LIF-6 | After a close, a decision made before it still goes out, reports go and are applied, and a device of the creator sends the close again (LIF-11); the application is named as it shows a closed document | A: the decision holds on its device, and receivers must learn of it to agree; edits sent before the close still arrive. I: the report repeats the last change before the close, or the close itself. |
+| CTL-13 (with CTL-42) | A revoked member is refused as a reader is, on the document and on every layer; `read` refuses only a change of the part it is set on; after the bootstrap an unknown permission refuses as `read` does. Holding changes is a requirement of its own (CTL-42), also after a revocation or in a capacity conflict | A: with decisions of several devices merged, concurrent `read` and revoke could end in writing. G: a member the creator has not named yet waits as a reader. A member may read the content and still comment on a layer (LAY-5). |
+| YJS-1 | A document of `yjs-paragraphs/1` holds no JSON content or `Any` value nested more than 32 levels | No receiver of the profile reads such an update (Appendix A); SND-26 refuses the change. |
 
 **New:**
 
 | Requirements | What | Why |
 |---|---|---|
-| FRM-14 | No entry of 0 in a control vector; one received is read as absent | The control digest is computed over the vectors a participant holds; two spellings of one state would make equal states look diverged. |
 | FRM-13 | Which reason a frame with several faults is rejected for: the version before the kind, the kind before the fields | A frame of another version is judged by its version alone, which is what an application shows a person (VER-4). |
 | FRM-9 to FRM-12 (with FRM-15 to FRM-17) | Extension fields, `crit`, their bounds and what a definition states: an extension's name (FRM-15), checking the value of an extension one implements (FRM-16); an extension is not passed on (FRM-17) | C; wappensc/tdsp#71: ignoring an extension is not passing it on. |
-| ARC-5 | An application may carry a document's content and binding between one person's devices through another service, and tells the person; the control state only between devices of the creator. A device of the creator that takes over carried control state continues under a new tag, and the state gives it a basis only if it was one (with CTL-25, CTL-28, RSY-14) | ARC-1 concerns participants; it said nothing about one person's devices, which a messenger without history cannot bring up to date. Two devices under one tag would notice only once one received what the other issued (CTL-24). A member's control state carried through another service would be that service's word, and a member's engine takes control state only from the channel or, on the same device, from what it persisted (CTL-39). |
+| ARC-5 | An application may carry a document's content and binding between one person's devices through another service, and tells the person; control state only between devices of the creator, which continue under a new tag and are bootstrapped by it only if it was bootstrapped there (with CTL-25, RSY-14) | ARC-1 concerns participants, not one person's devices, which a messenger without history cannot bring up to date. Two devices under one tag would meet at every decision made at one clock (CTL-22). A member takes control state only from the channel or from what it persisted on that device (CTL-39). |
 | INV-9 | Joining on another device of the person without asking again, when the confirmation travels from where the person gave it | INV-3 protects the creator's identity; the service that carries it is trusted as the person's machine. |
-| INV-10 | The `MUST` of §11.3's opening, to use the link's form, as a requirement of its own | A `MUST` without an ID, which §1.3 left informative although it was meant to bind; the content is unchanged |
-| TRN-20 (with TRN-22) | A send refused as `needs-person` is kept, shown, and tried again when the application says the person acted, or after the longest back-off; what the application shows meanwhile (TRN-22) | The person can lift the refusal and waiting cannot; without its own handling it would spin or be dropped. |
-| TRN-18 (with TRN-21), TRN-19 | An optional cursor with `truncated`, answered in the window's order (TRN-21), and truncated also behind what the bridge passed over; a bridge instance id, the epoch of the window, that changes whenever the bridge may have lost something | E: the engine continues after the last delivery an answer held; a gap the bridge skipped, or a loss in a restart, is what it cannot see by itself. |
-| CTL-20 to CTL-29 (with CTL-38) | Operations, merging, the snapshot, persistence, a new device of the creator; reported counters only for a device without a basis; a basis only by creating the document, restoring a state that was one, another device's snapshot in answer to its own request, or the person's confirmation after a member's control report (CTL-33), and until then a snapshot only to a member the device decided about itself; a basis persisted with the state, and holding every message as the alternative to persisting synchronously (CTL-38) | A. The wire does not say whether the device behind an operation, or behind a snapshot sent to someone else, had a basis: counted as one, two devices without one would give each other one, and bootstrap a member a lost device had removed. |
-| CTL-39, CTL-41 (with LIF-8 and CTL-40) | Any participant may persist its control state and restore it on that device only; a member that restored it, and read on from the cursor persisted with its content without a gap, is bootstrapped by it; an application persists the cursor and the instance with content (LIF-8), never a cursor ahead of the control state restored with it (CTL-40) | E: 1.x had no cursor, and a restarted member waited for the creator's answer before it edited, for hours if the creator was offline. A member that reads on without a gap stands where one that never restarted stands; a cursor ahead of its control state would read past a revocation unseen. |
-| CTL-33 (with CTL-43) | What only members hold shown to a device of the creator, with the values reported; resolved by an explicit confirmation that counts the reported counters as seen, and, after a member's control report, gives a device without a basis one; an application shows divergences for as long as they last (CTL-43) | A: deciding a target again superseded a vanished device's decision only when it was narrower; automatic is only what a rule merges without a question of authority. A creator who lost every device has no other device left to give its new one a basis; before any control report, a confirmation would vouch for a state nobody else has seen. |
-| PRF-1, item 9 | Reading an update and a state vector without applying them; one the profile cannot read, or with a byte after it, rejects its frame (§4.4) | A frame is checked whole before anything of it is applied (FRM-6), and CRDT libraries fail differently on bytes they cannot read: one throws, another has applied part already. |
-| LOS-12, CTL-31; PRF-1, item 8 | State digests beside the vectors in heartbeats, requests and an answer's last piece; a receiver that holds a sender's vector compares what it deleted within it, and different digests are evidence and something to offer; a device of the creator learns of a collision from a report | wappensc/tdsp#71: a vector counts what was inserted or issued, so a lost deletion and two operations under one dot went unseen; the digest is a fixed 8 bytes. Compared at equal vectors only, a lost deletion would stay unseen at a receiver that has edited since. |
-| LOS-13, LOS-14 (with LOS-17, LOS-18, LOS-21 and LOS-22) | Streams: a heartbeat, a request and an answer name their sender's engine as it runs now and number its reports; a report replaces only an older one of its stream; an answer applied whole ends a difference in digests; an answer's pieces are numbered, the last with the count, and one with a piece missing is evidence, counted apart from the stream's reports and its other answers, until it is whole or the stream's state at a higher number is held; copies count once, pieces that disagree are never whole, an answer given up for a bound stays evidence | Kept by member, a lagging device's report would end the evidence another device's had shown, and a receiver that holds more than an answer could not tell whether a piece of it is missing. Two answers of one stream are two transfers: a piece of a later one, to someone else, must not end the evidence of an incomplete one. |
-| LAY-5, LAY-6 (with LAY-7), CTL-4 | A member's right on a layer, inherited from the document where the creator set none or reset it (`null`); of concurrent values `read` before inherit before `write` (CTL-23), the narrowest effective right whatever the permission on the document; none for a revoked member; enforced by the sending engine, a change that touches a layer it may not write refused whole (LAY-7); an operation on a right on a layer names no creator either (CTL-4) | wappensc/tdsp#33 (L5) and #50 (no. 2): commenting on content one may only read, and its opposite, without a value beyond `read` and `write`. Ordered with inherit as the narrowest value, a concurrent reset undid a restriction and let a member write who should only read. |
-| CTL-30, CTL-32 (with CTL-34 to CTL-37) | Bounds on device tags, targets, holes and bytes; the operation that fills a hole is never refused for them; at the bound on devices, the first in code point order are kept, a close always; 5 000 members and rights on layers, beside which the close and the pace always have room; a creator issues nothing the bounds or one answer could not hold, a new target only up to 1 MiB of the 3 MiB a receiver holds; beyond the bytes or the targets, a capacity conflict: no new target, no edit of one's own, no control state handed on, shown until a person resolves it; the bytes are measured without the close, which no bound refuses and every device of the creator can always issue; the close keeps each device's latest of 64 devices and no `seen`, and a target's `seen` over 64 devices is refused like the bytes | A: a set of operations would otherwise let a forged or broken creator application make every receiver keep anything (§1.7, item 11). Refusing a union over the bytes whole left receivers of the same operations with different rights; two bounds keep devices that grew apart mergeable, and the conflict names what is left. Honest devices can reach the bound on targets together, and cutting there in code point order would take rights from people unseen, so it is a conflict as the bytes are. A full document must still be closable, and the room between the two bounds is no reserve for that, since changes of targets held use it too: so the close lies outside the bytes, bounded by a count of its own. A target's `seen` is bounded too, so that no state a receiver holds is one a snapshot cannot carry. |
-| RSY-16, RSY-17 | A control vector and `force` in requests, `null` until a member is bootstrapped, whatever it restored, and until a device of the creator has a basis; when to answer | A: a device of the creator that holds everything already would otherwise never be answered, and never get a basis. |
-| SND-14 to SND-16 | `due`, the pace, local pacing; each engine bounds the pace it runs (10 min recommended) and runs a longer one as that bound | B; a pace of days would hold every participant's heartbeats and answers for as long. The bound is each engine's own: a receiver waits for the longer of a sender's `due` and the pace it runs itself, so differing bounds raise no false alarm. |
+| INV-10 | The `MUST` of §11.3's opening as a requirement of its own | Without an ID §1.3 left it informative; the content is unchanged |
+| TRN-20 (with TRN-22) | A send refused as `needs-person` is kept, shown, and tried again when the person acted, or after the longest back-off (TRN-22) | The person can lift the refusal and waiting cannot. |
+| TRN-23 (with TRN-14) | A transport carries frames of at least 4 MiB; an engine fails the creation or join of a document on a smaller one, and obtains the profile before it registers a document it creates | Two devices of the creator decide apart, and their merge may hold more than an answer of a small transport carries, within the bounds every receiver holds (CTL-30): nobody new could be bootstrapped, and nothing would say so. A refused transport keeps no document registered. |
+| TRN-18 (with TRN-21), TRN-19 | An optional cursor with `truncated`, in the window's order (TRN-21); a bridge instance id that changes whenever the bridge may have lost something | E: the engine continues after the last delivery it read; a gap the bridge skipped, or a loss in a restart, it cannot see by itself. |
+| CTL-20 to CTL-23, CTL-25 to CTL-27, CTL-43, CTL-45, CTL-46 (with CTL-38) | Registers with a clock and a device tag, the later clock holding, the narrower value only at a tie; a device's own clock, at most 24 hours ahead of its wall clock, above every register of the target it decides (CTL-45); every answer's snapshot merged register by register; persistence with the clock, or holding every message instead (CTL-38); a new device of the creator merges answers but is bootstrapped only by another of her devices or its own state, decides nothing but the close and its reason before (CTL-27), and its application asks for another device and offers to close as `creator-state-lost` (CTL-43, CTL-46) | A: a clock above everything its device knew orders a decision after what it saw, whatever the wall clocks say; the span keeps one register far ahead from dragging every clock along. H: what members pass on brings a new device the creator's decisions; a new device of the creator's takes her state only from her devices (CTL-46). |
+| CTL-23 (with CTL-36, LIF-6, LIF-7, VER-5) | A register on `close-reason`, set by a device of the creator with its close or after it, refused before as `not-closed`: one of four codes or an application's own (`application-reason`, as FRM-15 names an extension), of at most 128 bytes, the greater string at a tie; presented and shown only once the document is closed; outside every bound like the close; a later minor revision may add codes | A person who sees a document closed learns why, in their own language, and an application can tell its own close from the person's. As a register it needs no merge of its own; a newer code costs an older receiver the reason, never the close. |
+| CTL-39, CTL-41 (with LIF-8 and CTL-40) | Any participant may persist its control state and restore it on that device; a member that read on from the cursor persisted with its content without a gap is bootstrapped by it; never a cursor ahead of the control state restored with it (CTL-40) | E: a restarted 1.x member waited for the creator before it edited. One that reads on without a gap stands where one that never restarted stands; a cursor ahead would read past a revocation unseen. |
+| LIF-8 (with RSY-21) | An application persists with content when the last read that reached the messenger began, and tells a restarted engine that time, how long its transport keeps a message and whether it unbound the document; a running one it tells of a read that reaches the messenger again | E, H: where a transport cannot tell what it no longer holds, the time tells the engine that it may lack something (RSY-21); a device that slept cannot see its absence. |
+| RSY-20, RSY-21 | Any member answers a request to all at a turn derived from the request and its own stream, falls silent once it heard an answer that holds what it would give, and lets the request go at its turn with nothing to offer; every request asks all but the first of a bootstrap, and that one too in a return — a restart after longer than the transport keeps, or of a document unbound meanwhile, or of a device of the creator without content, and such an outage of a running engine —, which wakes every resting gap a running engine holds and ends once a request of it to all was answered or two expired | H: those who answer at once are asked first; asked all, the members' answers spread so that one usually suffices. A gap heals only through whoever holds what is missing, mostly a member (I). A returning device may lack what nothing shows, and an answer may be lost on its way to it alone. |
+| LIF-9, LIF-10 | An application keeps the channel and the rights in step — a permission before the invitation, a revocation before or as it removes a person —, compares the two, shows where they differ and changes neither without its person; where the binding cannot add or remove a member, it shows that | G: within the channel rights are as strong as the participants' engines; who takes part at all is the channel's. |
+| PRF-1, item 9 | Reading an update and a state vector without applying them; one the profile cannot read rejects its frame (§4.4) | A frame is checked whole before anything of it applies (FRM-6), and CRDT libraries fail differently on bytes they cannot read. |
+| LOS-12; PRF-1, item 8 | State and control digests beside the state vector and the control clock in reports, requests and an answer's last piece; a receiver compares what it deleted within a sender's vector, control digests at equal clocks, of reports only, never of `control` frames; evidence ends as LOS-18 says, and a difference lapses once its stream was not heard for the absence of RSY-1 | wappensc/tdsp#71: a vector counts what was inserted and a clock how late the latest decision is, so a lost deletion, close or register under an equal clock went unseen; the digest costs 8 bytes. Compared at equal vectors only, a lost deletion would stay unseen at a receiver that has edited since. A `control` frame carries nothing that orders it among its device's frames, so one that arrives late would show a difference that is none; a report of a stream that no longer runs would show one for good. |
+| LOS-13, LOS-14 (with LOS-17, LOS-18, LOS-21 and LOS-22) | Streams: reports, requests and answers name their sender's engine as it runs and number its frames; a report replaces only an older one of its stream; an answer applied whole, or whose last piece's state or a later one is held, ends a difference in digests up to its number (LOS-18); an answer's pieces are numbered, the last with the count, and one with a piece missing is evidence until it is whole or the stream's state at a higher number is held | Kept by member, a lagging device's report would end the evidence another device's had shown, and a receiver that holds more than an answer could not tell whether a piece is missing. |
+| LAY-5, LAY-6 (with LAY-7), CTL-4 | A member's right on a layer, inherited from the document where none is set or it was reset (`null`); at a tie `read` before inherit before `write` (CTL-23), the narrowest effective right; none for a revoked member; enforced by the sending engine, a change touching a layer it may not write refused whole (LAY-7); no register names the creator (CTL-4) | wappensc/tdsp#33 (L5) and #50 (no. 2): commenting on content one may only read, and its opposite. With inherit as the narrowest value at a tie, a reset and a restriction could let a member write who should only read. |
+| CTL-30, CTL-32 (with CTL-34, CTL-36, CTL-37) | Bounds: 5 000 members and rights on layers, beside the pace and the reason, and 3 MiB, measured at a fixed width per target; a creator decides nothing the bounds or one answer could not hold, a new target only up to 1 MiB; beyond them, a capacity conflict: no new target, no edit of one's own, no control state handed on, shown until a person resolves it; the close and its reason outside every bound, the reason only where an answer can still carry it (CTL-36) | A: registers of any number of devices would otherwise let a broken creator application make every receiver keep anything (§1.7, item 11). Refusing what passes the bounds whole keeps receivers of the same registers alike, in any order; a full document must still be closable, and say why. |
+| RSY-16, RSY-17 | A control clock and digest, `force` and `all` in requests, `null` until the requester is bootstrapped; when to answer, judged by the furthest the requesting stream stated; no held request reconsidered after its requester's wait | A: a device that holds everything but is not bootstrapped would otherwise never be answered; a request read late must not be answered with what its requester holds by then; reconsidered without end, an unanswered request would be answered by every member after the next change. |
+| SND-15, SND-16 | The pace, local pacing; each engine bounds the pace it runs (10 min recommended) | B; a pace of days would hold every report and answer for as long; what a receiver judges by the pace is its own waiting, so differing bounds raise no false alarm. |
+| SND-27, SND-28 | The report that ends a phase carries its last `edit` again, byte for byte, where it is whole and fits, or follows its last `control` frame sent again; a receiver applies it as an edit; a report is owed from the first frame of its phase until the transport accepted it or refused it for good, observable, persisted with the content on that device, and sent at the next start | I: one message per pause, and a lost last change heals whether its sender is still online or not; only what went out is carried. |
+| SND-26 | An engine refuses a change of its own that its profile does not read as one update, reports it and merges it with no other | Every receiver would refuse it (FRM-6), and with it every change sent in the same message; the sender alone would hold it, and could bootstrap no one. |
+| SND-25 | Every duration is measured on a clock that does not run back; only CTL-45's clock reads the wall clock (§1.6) | Measured on a wall clock set back, every wait would last as long again. |
 | SND-17 to SND-19 | Pieces | D. |
-| LOS-9 | The cursor and the instance id replace LOS-8's guess; a new instance is evidence on its own, with or without a cursor, and after a restart one other than the instance restored with the cursor (§6.3) | E: a bridge that offers an instance but no cursor still shows a restart; restored with the cursor, the instance shows what a bridge lost while the engine was gone. |
-| LOS-10, LOS-11 (with LOS-16) | A gap per device; silence judged by `due`, or the pace when longer; another device of one's own member counts like anyone, one's own frames coming back do not; a heartbeat ends the expectations of the frames it holds, a further frame those of its own source | A, B; and wappensc/tdsp#31: a person may write from several devices, and each must notice the others' losses. |
-| LOS-15 | The `MUST NOT` of §10's opening, that no evidence is no claim of completeness, as a requirement of its own | A `MUST NOT` without an ID, which §1.3 left informative although it was meant to bind; the content is unchanged but for the creator's unanswered request (LOS-20) |
-| LOS-23 (with PRF-1, item 2) | What an engine holds for missing predecessors is bounded; beyond the bound it is given up, as *history truncated* evidence; a profile says how many bytes it holds so, and how to give them up | 1.x bounded the buffer of incomplete fragments; pieces wait in the CRDT's own pending structures, which anyone in the channel can fill. |
-| LOS-24 | The definition of a digest, of the state digest and of the control digest, as a requirement | A normative definition without an ID, which §1.3 left informative although every receiver compares digests that other implementations computed |
+| LOS-9 | The cursor and the instance id replace LOS-8's guess; a new instance is evidence, after a restart one other than the instance restored (§6.3) | E: a restarted bridge shows even without a cursor. |
+| LOS-10 | A control clock of the creator above every clock held, stated in a report; a `control` frame is no evidence | A. A register that only members hold stays with them (CTL-46, §10.6). A report orders itself by its stream and number (LOS-13), a `control` frame not at all. |
+| LOS-25, LOS-26 (with LOS-6, LOS-18) | A gap of one stream with its position; its first request after its own place in the answer window, at most three requests to all per gap, the waits at least doubling up to a longest wait (Appendix B), then it rests, shown, until a frame that raises its position, or a frame of the member named as the writer of its CRDT client, wakes it, at most once in 10 min, or an absence longer than a start request's or a return the application tells of, or the person, does | I: a gap nobody reachable can heal must not spend the tries of a later loss of another stream, and resting costs nothing until its writer is back — under a new client id after a restart, but the same member. Placed apart, receivers with the same gap ask once (RSY-22). |
+| LOS-27 | A new CRDT client id at every start | I: two engines under one client id would give two updates one clock, and a gap's position would not be one writer's. |
+| RSY-22 | An automatic request for gaps is let go when another's request to all heard within its expiry reaches no further, and counts as made; the answers to that one are taken | I: five devices with the same gap cost one request and one answer. |
+| LIF-11 | A device of the creator that holds the close sends it again, at most once per member in 10 min and once per read, when someone edits the closed document, but not for what its first read after a start brings | I: a member that lost the close, its repeat and the report after them writes on, and nobody can tell from an edit that a close came before it. |
+| LIF-12 | An application tells its engine when the person stops using the document and before sleep, tells a running engine how long it was away, and offers to synchronise now | I: the report goes before the device does; a running engine cannot see its absence; the person may know that another device is online again. |
+| LOS-15 | The `MUST NOT` of §10's opening as a requirement of its own | Without an ID §1.3 left it informative; the content is unchanged but for the creator's unanswered request (LOS-20) |
+| LOS-23 (with PRF-1, item 2) | What an engine holds for missing predecessors is bounded, given up beyond as *history truncated*; a profile says how | 1.x bounded the buffer of fragments; pieces wait in the CRDT's pending structures, which anyone in the channel can fill. |
+| LOS-24 | The definition of a digest, of the state digest and of the control digest | A definition every receiver compares across implementations needs an ID |
 | YJS-4 | A receiver applies content YJS-1 forbids, and projects it one way | A CRDT cannot refuse part of the state it converges to, and engines that project it differently disagree about every attribution offset after it. |
-| VER-3 | The draft marker | A draft must never leave frames that a released 2.0 would read as its own. |
+| VER-3 | The draft marker, also in persisted control state | A draft must never leave frames that a released 2.0 would read as its own, nor a persisted state another draft would read as its own. |
 | VER-4 | An application shows whose frames are of another version | VER-1's loud failure reached only the application, and the person saw a silent participant instead. |
-| VER-5 (with VER-6) | What a revision that defines a new right must define: capabilities per value, a merge that grants no more than every merged value, commutative, associative and idempotent, decisions in knowledge of others superseding, revocation first, and how older implementations are kept from reading it as `write` or inherit (VER-6) | A third right is not invented now, but the rules any later one must keep are laid down; a total order does not fit every model. |
-| SEC-1, SEC-2 | The `SHOULD` of §15.3 to combine independent checks of "no external connection", and the `MUST` of §15.5 to tell the person of an email document without PGP, as requirements of their own | A `SHOULD` and a `MUST` without an ID, which §1.3 left informative although they were meant to apply; the content is unchanged |
-| JSN-1 | The `SHOULD` of §1.6 to check the nesting depth in one pass, as a requirement of its own | A `SHOULD` without an ID, which §1.3 left informative although it was meant to apply; the content is unchanged |
+| VER-5 (with VER-6) | What a revision that defines a new right must define (VER-6); a later minor revision may define further codes of `close-reason` | The rules any later right must keep are laid down now; the later decision holds, so a value needs only a place for a tie. |
+| SEC-1, SEC-2 | The `SHOULD` of §15.3 and the `MUST` of §15.5 (email without PGP) as requirements of their own | Without an ID §1.3 left them informative; the content is unchanged |
+| JSN-1 | The `SHOULD` of §1.6 to check the nesting depth in one pass, as a requirement of its own | Without an ID §1.3 left it informative; the content is unchanged |
 
 **Moved** into [bindings/](bindings/) (F): §12 (BRG-1 to BRG-17), §12.6 (LBI-1 to
 LBI-6, the routes gaining an optional cursor and instance), §13 (BND-1 to BND-3,
@@ -4197,12 +4847,12 @@ and EML-13 new:
 
 | Requirements | Change | Why |
 |---|---|---|
-| BRG-1, BRG-8, LBI-6 | Five reasons of §3.4: a send while the bridge is not provisioned, and every refusal only a person can lift, is `needs-person`, `409` over the local bridge interface; where the messenger reports such a refusal as it reports one that passes, the binding says how the bridge tells them apart, and until it can the refusal is `unavailable`; an adapter passes `Retry-After` on as `retryAfterMs` (LBI-6, TRN-11) | 409 already meant a state the person ends, not one waiting ends (TRN-11). Taken for `needs-person` at once, a passing refusal would hold every message for the longest back-off. An engine behind the local bridge interface did not learn the wait the messenger stated. |
+| BRG-1, BRG-8, LBI-6 | Five reasons of §3.4: a send while the bridge is not provisioned, and every refusal only a person can lift, is `needs-person`, `409` locally; where the messenger reports such a refusal as one that passes, the bridge says `unavailable` until it can tell them apart; `Retry-After` reaches the engine as `retryAfterMs` (LBI-6, TRN-11) | 409 meant a state the person ends (TRN-11); taken for `needs-person` at once, a passing refusal would hold every message for the longest back-off. |
 | BRG-2 | Provisioning keeps credentials from components that render what came through the channel, as ARC-4 | As ARC-4. |
 | BRG-9; MTX-7 (new) | The choice between body and attachment may go by the size of the envelope as written; Matrix measures it so, at 32 000 bytes | Escapes in the envelope and Megolm's Base64 let a frame of 32 000 bytes exceed Matrix's 65 536 bytes per event, and a frame within `maxBytes` was refused as too large. |
-| BRG-11, BRG-12, SIG-3 | The same message again (same id, same content) is dropped; another message under a delivered id is recorded, not delivered; content is compared before anything is fetched, a frame in the body by its bytes, one in an attachment by the hash its envelope names, an encrypted file also by its key and iv; a bridge that keeps a delivery id across a restart keeps what it compares by with it (a hash of key and iv suffices); nothing is recorded for a message the bridge does not take (BRG-10, MTX-5); a shared vocabulary of reasons; a bridge that drops messages of non-members asks the messenger anew each time | The texts did not tell the two apart, so a second message under one id was delivered or dropped without a record; and a remembered "not a member" dropped the first frames of whoever just joined. An encrypted file's hash is that of its ciphertext, which under another key and iv is another frame. An id kept without what it was compared by cannot tell a message presented again from a replaced one; a record of an event the bridge does not take would let a homeserver fill the log. |
+| BRG-11, BRG-12, SIG-3 | The same message again (same id, same content) is dropped; another message under a delivered id is recorded, not delivered; content is compared before anything is fetched — in the body by its bytes, an attachment by its hash, an encrypted file also by key and iv —, and what it is compared by is kept with a delivery id kept across a restart; nothing is recorded for a message the bridge does not take (BRG-10, MTX-5); a shared vocabulary of reasons; membership asked anew each time | The texts did not tell the two apart, and a remembered "not a member" dropped the first frames of whoever just joined. An encrypted file's hash is that of its ciphertext; an id kept without what it was compared by cannot tell a message presented again from a replaced one. |
 | BRG-14 | A binding says where the messenger's own client fetches attachments, a fetch the bridge cannot bound | §15.5 promised a bound that, on such a messenger, nothing enforces. |
-| BRG-15 | The integrity log holds the violations a bridge recorded and the notices its binding names; each entry has a `kind`, `violation` or `notice`, and a notice names the `recipient` it concerns instead of a sender; so does the local bridge interface's integrity-log route | A recipient a send skipped (SIG-4) is nothing done to the channel and has no sender; an application has to tell it from a violation. |
+| BRG-15 | The integrity log holds violations and notices, each with a `kind`; a notice names the `recipient` it concerns; so does the local bridge interface's route | A recipient a send skipped (SIG-4) is nothing done to the channel. |
 | BRG-17 | A bridge may drop a delivery once the one reader it serves kept it | A bridge that keeps its window on disk need not keep a frame's text a second time; a cursor from before still reads as truncated. |
 | BRG-18 (new) | A message a bridge cannot read never keeps it from reading the others; values nested too deep in a messenger's answer may be dropped | One deeply nested event in a Matrix `/sync` stopped a bridge for good: the answer never parsed, and its position never moved. |
 | LBI-1 | A bridge listens on a loopback address only, such as `127.0.0.1` or `::1`: any address of §12.6's definition, not only these two | The definition already took in `localhost` and all of `127.0.0.0/8`, and naming two addresses read as excluding the others. |
@@ -4210,26 +4860,27 @@ and EML-13 new:
 | BND-3 | The 64 hexadecimal digits are ASCII | A Unicode test for hexadecimal digits takes full-width forms too, a second spelling of the same hash. |
 | BND-4 (new) | The `MAY` of §13.1 to carry a frame as an attachment, as a requirement of its own | A `MAY` without an ID, which §1.3 left informative although it was meant to apply; the content is unchanged |
 | EML-13 (new) | The part of 1.x's EML-8 on what an application shows of the creator's key, as a requirement of its own | It was a part of a longer requirement, and requires what it did there |
-| SIG-4, SIG-5 (new) | When a group send is accepted, from `signal-cli`'s result per recipient, and every recipient it skipped as an identity to trust recorded in the integrity log, as a notice (BRG-15); a bridge reads a connection before `signal-cli` pushes into it | `signal-cli` reports a group message sent once one member got it, and hands each waiting message to a device once. A member whose identity changed receives nothing while every send succeeds, and only the person can trust the new identity. |
+| SIG-4, SIG-5 (new) | When a group send is accepted, by `signal-cli`'s result per recipient, each recipient skipped as an identity to trust a notice (BRG-15); a bridge reads a connection before `signal-cli` pushes into it | `signal-cli` reports a group message sent once one member got it, and hands each waiting message to a device once; a member whose identity changed receives nothing while every send succeeds. |
 | SIG-7 (new) | A send `signal-cli` refuses because it cannot load the account is `unavailable` while the bridge's link status, which SIG-7 defines, shows the device linked, `needs-person` once it shows it unlinked | `signal-cli` refuses so for a passing failure and for an unlinked device alike; only the second waits for the person. |
-| SIG-6 (new) | A bridge that receives through a subscription reads before it subscribes, again on every connection; it keeps its instance across ending the subscription only if it read up to the answer and its `signal-cli` hands on the message in hand | A subscription lets a bridge stop receiving without closing the connection; `signal-cli` 0.14.9 drops the message it is handling when the last subscription ends. |
-| MTX-4, MTX-5 (new) | Room keys only to devices their owners signed, the bridge's own device signed, frames only from signed devices (older sessions excepted); MTX-5 (new): an unencrypted TDSP event in an encrypted room, an edit included, is ignored without a record, and that the room was seen encrypted is persisted with each binding to it | Shared with every device, as 1.x said, a key reached any device a homeserver added, and frames from such a device were delivered; Matrix clients now exclude unsigned devices (MSC4153), and a bridge that does not is not given keys by them. A homeserver can place an unencrypted event under any member's name; a bridge that forgot the room was encrypted would take the room's word again after a restart. |
+| SIG-6 (new) | A bridge that receives through a subscription reads before it subscribes, on every connection, and keeps its instance across ending it only if its `signal-cli` hands on the message in hand | `signal-cli` 0.14.9 drops the message it is handling when the last subscription ends. |
+| MTX-4, MTX-5 (new) | Room keys only to devices their owners signed, the bridge's own signed, frames only from signed devices, and none to or from a changed identity until a person agrees; MTX-5 (new): an unencrypted TDSP event in an encrypted room is ignored without a record, and that the room was seen encrypted is persisted | A key shared with every device reached any device a homeserver added; Matrix clients now exclude unsigned devices (MSC4153). A homeserver can place an unencrypted event under any member's name. |
 | MTX-6 (new) | The wait of a Matrix rate limit from the `Retry-After` header, the body's `retry_after_ms` only without one | Matrix 1.10 moved the wait into the header (MSC4041). |
 
-**On the wire:** frames carry `"tdsp": 2`; `edit` and `control` frames carry
-`due`; a `control` frame is one operation (`device`, `counter`, `target`, `value`,
-`seen`) instead of a numbered action, and may aim at a member's right on a layer;
-a `heartbeat` carries a control vector or
-`null` instead of `controlSequence`; a `resync-request` carries a control vector or
-`null` and `force` instead of `controlSequence` and `bootstrap`; a `heartbeat`, a
-`resync-request` and every piece of a `resync-response` name their sender's stream
-and a number in it, and every piece of an answer its own number, the last the
-count; the snapshot is a
-set of operations per target with a control vector and the counters held above a
-hole; the `fragment` kind is gone;
+**On the wire:** frames carry `"tdsp": 2`; a `control` frame carries registers
+(`targets`, each a `value`, a `clock` and a `device`), the flag `closed` and its
+device's `controlClock` and `controlDigest` instead of a numbered action, and may
+aim at a member's right on a layer and at the reason for the close
+(`close-reason`); a `heartbeat` carries a control clock and control digest or
+`null` instead of `controlSequence`, and may carry `update`, its sender's last
+edit again; a `resync-request` carries a control clock and control
+digest or `null`, `force` and `all` instead of `controlSequence` and `bootstrap`;
+a `heartbeat`, a `resync-request` and every piece of a `resync-response` name
+their sender's stream and a number in it, and every piece of an answer its own
+number, the last the count; the snapshot is one register per target with the flag
+`closed`; the `fragment` kind is gone;
 any frame may carry extension fields and `crit`; a `heartbeat` and a
-`resync-request` carry digests beside their vectors, and an answer's last piece the
-responder's state vector and digest; an overlay's range may name no author
+`resync-request` carry a state digest beside their state vector, and an answer's
+last piece the responder's state vector and digest; an overlay's range may name no author
 (`authorId: null`); a `resync-response`'s `update` is never empty,
 and where nothing is lacking it is the profile's update that holds nothing; an
 invitation carries `tdsp=2`

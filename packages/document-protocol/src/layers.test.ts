@@ -1,7 +1,8 @@
 import { InMemoryMessengerPort } from "@tdsp/messenger-mock";
 import { encodeUpdate, getPlainText, insertPlainText } from "@tdsp/reconciliation";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import * as Y from "yjs";
+import { CURRENT_FRAME_VERSION } from "./framing";
 import { DocumentEngine, isLayerId } from "./index";
 
 /**
@@ -57,17 +58,24 @@ describe("layers (SPECIFICATION.md §5.6)", () => {
   });
 
   it("an engine whose application ignores a layer passes it on: to a restarted creator, and in a whole-state resend (LAY-1)", async () => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const { port, alice, bob } = await aliceAndBob();
     alice.document.transact(() => comments(alice).set("c1", "Too loud?"));
     await bob.sync();
+    // What a device of the creator persists (CTL-26): its registers, its tag, its clock, bootstrapped.
     const controlState = {
-      control: alice.controlState,
+      tdsp: CURRENT_FRAME_VERSION,
+      control: { closed: alice.controlState.closed, targets: alice.controlState.targets },
       device: alice.deviceTag as string,
-      counter: alice.controlVector[alice.deviceTag as string] ?? 0,
+      clock: alice.controlClock,
+      bootstrapped: true,
     };
     alice.dispose();
 
-    // The creator comes back without its content; only a peer can give it back (RSY-6).
+    // The creator comes back without its content; a member asked by all gives it back (RSY-6).
     const hidden = new Set((await port.receive(DOCUMENT_ID, "x")).map((delivery) => delivery.id));
     const forgetful = {
       ...port,
@@ -83,8 +91,13 @@ describe("layers (SPECIFICATION.md §5.6)", () => {
       creatorMemberId: "alice",
       controlState,
     });
-    await bob.sync(); // bob, who never looked at the layer, answers the creator
-    await restarted.sync();
+    // Bob, who never looked at the layer, answers the creator's repeat, which asks all, at his turn
+    // (RSY-20, RSY-21).
+    for (let second = 0; second < 60 && getPlainText(restarted.fragment) === ""; second++) {
+      await vi.advanceTimersByTimeAsync(1_000);
+      await bob.sync();
+      await restarted.sync();
+    }
     expect(restarted.document.getMap<string>(LAYER).get("c1")).toBe("Too loud?");
     expect(getPlainText(restarted.fragment)).toBe("The dog barks.");
 

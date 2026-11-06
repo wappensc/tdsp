@@ -1,6 +1,6 @@
 # TDSP bindings — The local bridge interface
 
-**Specification · TDSP bindings 2.0 (draft) · 24 October 2026**
+**Specification · TDSP bindings 2.0 (draft) · 3 November 2026**
 
 Part of TDSP 2.0, whose core is [SPECIFICATION.md](../SPECIFICATION.md). This
 document holds what TDSP 1.4 had in §12.6 of its specification, unchanged in
@@ -9,6 +9,15 @@ of the core lists: its requirements keep their IDs, and its sections their numbe
 reference to either stays unambiguous. The requirement language and the
 conformance classes are the core's ([§1.3](../SPECIFICATION.md#13-requirement-language),
 [§1.4](../SPECIFICATION.md#14-conformance-classes)).
+
+**Maturity: draft.** This interface is the one the reference adapters and bridges speak:
+not specified for a second implementation, not part of TDSP 2.0's stable set
+([§14](../SPECIFICATION.md#14-versioning-and-extensibility)), and free to change without a
+new version of the core. An incompatible change increments this document's version; until
+the interface is stable, adapters and bridges interoperate only within one release of this
+repository. Body limits, paging, content types and caching headers are not normative;
+LBI-1 to LBI-6 stand as written, the status codes and their mapping in LBI-6 among them.
+An adapter that runs its bridge in its own process needs none of it.
 
 ### 12.6 The local bridge interface (optional)
 

@@ -106,9 +106,15 @@ describe("email's timing (§1.7, items 1 and 13)", () => {
     const port = new EmailTimedPort();
     const options = { creatorMemberId: "alice", batchWindowMs: 500 };
     const alice = await DocumentEngine.create(DOCUMENT_ID, "alice", port, undefined, options);
+    // Bob is named before he joins (LIF-9); the frame waits for alice's next slot (SND-2).
+    const granted = alice.setMembership("bob", "write");
     const bob = await DocumentEngine.join(DOCUMENT_ID, "bob", port, undefined, options);
-    await run(180_000, alice, bob); // the join: a request, an answer, each a minute on the way
+    // The join: a request, the grant and an answer, each a minute on the way, the grant before the
+    // answer at alice's floor; before the pace the provider may refuse one, which waits longer.
+    await run(300_000, alice, bob);
+    await granted;
     expect(bob.hasCompletedBootstrap).toBe(true);
+    expect(bob.mayEdit).toBe(true);
     // The bridge suggests 30 s, below the 34 s the provider was measured to allow: before the pace,
     // the provider may refuse, and the scheduler retries and slows down (SND-7).
     const paced = alice.setPace(40_000); // the creator keeps the thread quiet for everyone
@@ -121,9 +127,9 @@ describe("email's timing (§1.7, items 1 and 13)", () => {
       alice.edit((fragment) => insertPlainText(fragment, 0, `a${i} `));
       bob.edit((fragment) => insertPlainText(fragment, 0, `b${i} `));
       await run(20_000, alice, bob);
-      // Each message takes a minute: a follow-up due within 120 s plus a latency is not overdue.
+      // Each message takes a minute: what is only late shows no gap past its wait (LOS-1, LOS-25).
       for (const engine of [alice, bob]) {
-        expect(engine.syncHealth.suspicions.filter((s) => s.kind === "sender-overdue")).toEqual([]);
+        expect(engine.syncHealth.suspicions).toEqual([]);
       }
     }
     await run(600_000, alice, bob);

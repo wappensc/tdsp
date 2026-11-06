@@ -9,6 +9,7 @@ import {
   encodeDeletionsWithin,
   encodeStateVector,
   encodeUpdate,
+  encodeUpdateSince,
   ensureParagraph,
   getFragment,
   getPlainText,
@@ -17,10 +18,10 @@ import {
   isStateVector,
   isUpdate,
   lacksUpdatesOf,
+  mergeUpdates,
   observeUpdates,
   pendingBytes,
   pendingGapClients,
-  stateVectorHolds,
   updateClientIds,
 } from "./index";
 import { splitUpdate } from "./split";
@@ -175,25 +176,6 @@ describe("noticing that something is missing", () => {
     applyUpdate(receiver, updates[1] as Uint8Array); // late, not lost
     expect(pendingGapClients(receiver)).toEqual([]);
     expect(lacksUpdatesOf(receiver, encodeStateVector(writer))).toBe(false);
-  });
-
-  it("a state vector holds an update once it reaches the update's last item, and every one holds a deletion", () => {
-    const { writer, receiver, updates, type } = stream();
-    type("one", 0);
-    type("two", 3);
-    const [first, second] = updates as [Uint8Array, Uint8Array];
-    applyUpdate(receiver, first);
-    // What a heartbeat of the receiver would say: it holds the first edit, not the second.
-    expect(stateVectorHolds(encodeStateVector(receiver), first)).toBe(true);
-    expect(stateVectorHolds(encodeStateVector(receiver), second)).toBe(false);
-    expect(stateVectorHolds(encodeStateVector(writer), second)).toBe(true);
-    applyUpdate(receiver, second);
-    expect(stateVectorHolds(encodeStateVector(receiver), second)).toBe(true);
-    // A state vector counts no deletion, so an update that only deletes is held by any.
-    deletePlainText(getFragment(writer), 0, 3);
-    const deletion = updates[2] as Uint8Array;
-    expect(updateClientIds(deletion)).toEqual([]);
-    expect(stateVectorHolds(encodeStateVector(createDocument()), deletion)).toBe(true);
   });
 
   it("a receiver is not 'behind' a sender that knows less than it does", () => {
@@ -381,6 +363,61 @@ describe("what a replica deleted of the items a state vector counts (Appendix A,
     );
   });
 
+  /** A writer's updates, one per edit: "abc", "b" deleted, "def", "e" deleted, "g". */
+  function steps(): Uint8Array[] {
+    const writer = createDocument();
+    writer.clientID = 5;
+    const updates: Uint8Array[] = [];
+    observeUpdates(writer, (update) => updates.push(update));
+    insertPlainText(getFragment(writer), 0, "abc");
+    deletePlainText(getFragment(writer), 1, 1); // "ac"
+    insertPlainText(getFragment(writer), 2, "def"); // "acdef"
+    deletePlainText(getFragment(writer), 3, 1); // "acdf"
+    insertPlainText(getFragment(writer), 4, "g"); // "acdfg"
+    // The first edit also made the paragraph, in updates of their own: one step.
+    return [mergeUpdates(updates.slice(0, -4)), ...updates.slice(-4)];
+  }
+
+  it("leaves out a deletion held for items that have not arrived (LOS-23)", () => {
+    const [abc, deleteB, , deleteE] = steps() as [Uint8Array, Uint8Array, Uint8Array, Uint8Array];
+    const receiver = createDocument();
+    applyUpdate(receiver, abc);
+    applyUpdate(receiver, deleteE); // deletes an item of "def", which it lacks
+    expect(pendingBytes(receiver)).toBeGreaterThan(0);
+    expect(encodeDeletions(receiver)).toEqual(Uint8Array.of(0, 0));
+    expect(encodeDeletionsWithin(receiver, encodeStateVector(receiver))).toEqual(
+      encodeDeletions(receiver),
+    );
+    applyUpdate(receiver, deleteB); // a deletion it can apply counts as ever
+    const applied = createDocument();
+    applyUpdate(applied, abc);
+    applyUpdate(applied, deleteB);
+    expect(encodeDeletions(receiver)).toEqual(encodeDeletions(applied));
+  });
+
+  it("has no structs while it holds a struct for a missing predecessor (LOS-23)", () => {
+    const [abc, deleteB, , , g] = steps() as [
+      Uint8Array,
+      Uint8Array,
+      Uint8Array,
+      Uint8Array,
+      Uint8Array,
+    ];
+    const receiver = createDocument();
+    applyUpdate(receiver, abc);
+    applyUpdate(receiver, deleteB);
+    applyUpdate(receiver, g); // follows "def", which it lacks
+    expect(pendingBytes(receiver)).toBeGreaterThan(0);
+    const applied = createDocument();
+    applyUpdate(applied, abc);
+    applyUpdate(applied, deleteB);
+    expect(encodeDeletions(receiver)[0]).toBe(0);
+    expect(encodeDeletions(receiver)).toEqual(encodeDeletions(applied));
+    expect(encodeDeletionsWithin(receiver, encodeStateVector(receiver))).toEqual(
+      encodeDeletions(receiver),
+    );
+  });
+
   it("is the same whatever order the updates arrived in", () => {
     const writer = createDocument();
     writer.clientID = 9;
@@ -399,5 +436,50 @@ describe("what a replica deleted of the items a state vector counts (Appendix A,
       encodeDeletionsWithin(forwards, vector),
     );
     expect(encodeDeletionsWithin(forwards, vector)).toEqual(encodeDeletions(writer));
+  });
+});
+
+describe("the updates a state vector lacks (Appendix A, RSY-8)", () => {
+  /** A replica that applied "abc" and holds an insertion and a deletion of client 7 for "lost", which never came. */
+  function holding() {
+    const writer = createDocument();
+    writer.clientID = 7;
+    const updates: Uint8Array[] = [];
+    observeUpdates(writer, (update) => updates.push(update));
+    insertPlainText(getFragment(writer), 0, "abc");
+    const abc = mergeUpdates(updates.splice(0));
+    insertPlainText(getFragment(writer), 3, "lost"); // never arrives
+    insertPlainText(getFragment(writer), 7, "held"); // waits for "lost"
+    deletePlainText(getFragment(writer), 4, 2); // deletes items of "lost": waits as well
+    const [, held, deletion] = updates as [Uint8Array, Uint8Array, Uint8Array];
+    const replica = createDocument();
+    for (const update of [abc, held, deletion]) applyUpdate(replica, update);
+    const applied = createDocument();
+    applyUpdate(applied, abc);
+    return { replica, applied };
+  }
+
+  it("carry only what the replica applied, nothing it holds for missing predecessors (LOS-23)", () => {
+    const { replica, applied } = holding();
+    expect(pendingBytes(replica)).toBeGreaterThan(0);
+    expect(encodeUpdate(replica)).toEqual(encodeUpdate(applied));
+    for (const stateVector of [Uint8Array.of(0), encodeStateVector(createDocument())]) {
+      expect(encodeUpdateSince(replica, stateVector)).toEqual(
+        encodeUpdateSince(applied, stateVector),
+      );
+    }
+    const receiver = createDocument();
+    applyUpdate(receiver, encodeUpdateSince(replica, Uint8Array.of(0)));
+    expect(getPlainText(getFragment(receiver))).toBe("abc");
+    expect(pendingBytes(receiver)).toBe(0);
+  });
+
+  it("leaves what the replica holds as it was", () => {
+    const { replica } = holding();
+    const before = pendingBytes(replica);
+    encodeUpdateSince(replica, Uint8Array.of(0));
+    encodeUpdate(replica);
+    expect(pendingBytes(replica)).toBe(before);
+    expect(pendingGapClients(replica)).toEqual([7]);
   });
 });
