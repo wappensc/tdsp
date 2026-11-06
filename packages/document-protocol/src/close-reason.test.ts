@@ -183,7 +183,7 @@ describe("the reason for the close (CTL-23)", () => {
     expect(isCloseReason(`com.example.${"x".repeat(114)}/1`)).toBe(true);
   });
 
-  it("a reason this draft does not define a receiver takes and shows as it is; its own engine sets none (VER-5)", async () => {
+  it("a reason this version does not define a receiver takes and shows as it is; its own engine sets none (VER-5)", async () => {
     for (const value of ["expired", "com.example.moved", "Fertig!"]) {
       const { port, alice, bob, errors } = await creatorAndMember();
       // A later version's code, a name not formed as FRM-15 says, and one no name at all.

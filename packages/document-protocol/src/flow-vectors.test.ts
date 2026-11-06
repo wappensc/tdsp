@@ -28,7 +28,7 @@ import type { LossDetectorOptions } from "./loss-detector";
 import type { Register } from "./registers";
 
 /**
- * The published flow vectors (test-vectors/flows-draft-10.json), driven through the reference engine:
+ * The published flow vectors (test-vectors/flows-v2.json), driven through the reference engine:
  * several devices, each an engine, on a channel whose deliveries the vector controls, under a clock
  * the vector advances (SPECIFICATION.md §3.6). What the file's `format` says is what this runner
  * does; a vector that fails here is a wrong vector or an engine bug.
@@ -113,7 +113,7 @@ interface FlowFile {
 }
 
 const file = JSON.parse(
-  readFileSync(new URL("../test-vectors/flows-draft-10.json", import.meta.url), "utf8"),
+  readFileSync(new URL("../test-vectors/flows-v2.json", import.meta.url), "utf8"),
 ) as FlowFile;
 
 /** A text as a vector writes it: as it is, or `{"repeat": text, "times": n}`, that text n times over. */
@@ -1041,9 +1041,9 @@ describe("the runner's `$pieces` matcher, on frame lists made for it (SND-17, RS
   });
 });
 
-describe("flow vectors, at the draft marker", () => {
-  it("name the current draft and profile, in the format this runner reads", () => {
-    expect(file.version).toBe("de.wappensc.together.tdsp.probe.draft-10");
+describe("flow vectors, at version 2", () => {
+  it("name the version and profile, in the format this runner reads", () => {
+    expect(file.version).toBe(2);
     expect(file.profile).toBe("yjs-paragraphs/1");
     expect(file.format.version).toBe(3);
   });
@@ -1071,7 +1071,7 @@ describe("flow vectors, at the draft marker", () => {
     expect(turn).toStrictEqual({ kind: "turn", at: derived });
   });
 
-  it("hold every case group, and no fewer flows than this draft revision has", () => {
+  it("hold every case group, and no fewer flows than 2.0 has", () => {
     // A flow dropped, or a group left empty, is a case lost for every other engine (§3.6).
     expect(file.flows.length).toBeGreaterThanOrEqual(28);
     expect([...new Set(file.flows.map((flow) => flow.group))].sort()).toStrictEqual([

@@ -582,8 +582,8 @@ describe("the report a bootstrapped device of the creator owes for what it merge
   });
 });
 
-describe("a state persisted under another draft's marker, or none, is read as nothing (VER-3, CTL-26, CTL-39)", () => {
-  it("neither a member's bootstrapped state nor the creator's is used; under this draft's marker both are", async () => {
+describe("a state persisted under a draft's marker, or none, is read as nothing (VER-3, CTL-26, CTL-39)", () => {
+  it("neither a member's bootstrapped state nor the creator's is used under draft-10's marker, or the string \"2\"; under version 2 both are", async () => {
     // The plain in-memory transport: it keeps a cursor, so a restart reads on from it, not the history.
     const port = new InMemoryMessengerPort();
     const persisted: PersistedControlState[] = [];
@@ -605,11 +605,13 @@ describe("a state persisted under another draft's marker, or none, is read as no
     const restore = { state: encodeUpdate(bob.document), cursor: bob.cursor };
     expect(restore.cursor).toBeDefined();
     bob.dispose();
-    const another = "de.wappensc.together.tdsp.probe.draft-6";
+    // The last draft's marker (VER-3): what a device that ran draft-10 persisted.
+    const another = "de.wappensc.together.tdsp.probe.draft-10";
     const { tdsp: _marker, ...unmarked } = saved;
     for (const [state, held] of [
       [unmarked, undefined],
       [{ ...saved, tdsp: another }, undefined],
+      [{ ...saved, tdsp: "2" }, undefined],
       [saved, "write"],
     ] as const) {
       const again = await DocumentEngine.join(DOC, "bob", port, undefined, {

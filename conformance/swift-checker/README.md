@@ -21,16 +21,16 @@ dependencies; SHA-256 is implemented here, so the results are the same on macOS 
 
 | File | What the checker does |
 |---|---|
-| `packages/document-protocol/test-vectors/frames-draft-10.json` | Decodes each frame as a receiver of `yjs-paragraphs/1` (§1.6, §4, §5.4, §7.5): a valid one to its kind and, where listed, its snapshot's targets; an invalid one to the reason of §4.4. Updates and state vectors are read without applying them (Appendix A), by a reader of Yjs update encoding version 1 written for this |
-| `packages/document-protocol/test-vectors/invitations-draft-10.json` | Reads each query as §11.3 and INV-6 say, to the invitation or to the vector's `problem` |
-| `packages/document-protocol/test-vectors/control-draft-10.json` | Merges each vector's registers (CTL-22, CTL-23) in every order, each frame also twice and the whole twice, and as one snapshot; compares the state, its control digest (LOS-24) and every member's right on the document and on the layer (§7.1, LAY-5) |
-| `packages/document-protocol/test-vectors/digests-draft-10.json` | The control digest through its RFC 8785 text and its length in bytes; the encoding of what a replica deleted, within a state vector where given, and its state digest (Appendix A, LOS-24); for `fromUpdates`, a small replica that applies the updates, holds what lacks its predecessors, and projects the text (Appendix A, YJS-4) |
-| `packages/document-protocol/test-vectors/updates-draft-10.json` | Reads each update and state vector as Appendix A's *Reading without applying* says, to whether it is one: integers up to 2^53 − 1 in at most 8 bytes, a client's structs and each delete range ending at most at 2^53 − 1, JSON content and `Any` values nested at most 32 levels |
-| `packages/document-protocol/test-vectors/clock-draft-10.json` | CTL-45's algorithm as written: `next`, `wall`, `cap`, `raise`, a decision, and sequences of them |
-| `wire/frames-draft-10.json` | Reads each frozen frame back: its kind, and its fields equal to the entry's `input`. It does not re-encode: the text fixes no order of a frame's members (FRM-4), so byte-equal output is the reference encoder's property, not the wire's |
-| `wire/invitations-draft-10.json` | Reads each link to its invitation |
+| `packages/document-protocol/test-vectors/frames-v2.json` | Decodes each frame as a receiver of `yjs-paragraphs/1` (§1.6, §4, §5.4, §7.5): a valid one to its kind and, where listed, its snapshot's targets; an invalid one to the reason of §4.4. Updates and state vectors are read without applying them (Appendix A), by a reader of Yjs update encoding version 1 written for this |
+| `packages/document-protocol/test-vectors/invitations-v2.json` | Reads each query as §11.3 and INV-6 say, to the invitation or to the vector's `problem` |
+| `packages/document-protocol/test-vectors/control-v2.json` | Merges each vector's registers (CTL-22, CTL-23) in every order, each frame also twice and the whole twice, and as one snapshot; compares the state, its control digest (LOS-24) and every member's right on the document and on the layer (§7.1, LAY-5) |
+| `packages/document-protocol/test-vectors/digests-v2.json` | The control digest through its RFC 8785 text and its length in bytes; the encoding of what a replica deleted, within a state vector where given, and its state digest (Appendix A, LOS-24); for `fromUpdates`, a small replica that applies the updates, holds what lacks its predecessors, and projects the text (Appendix A, YJS-4) |
+| `packages/document-protocol/test-vectors/updates-v2.json` | Reads each update and state vector as Appendix A's *Reading without applying* says, to whether it is one: integers up to 2^53 − 1 in at most 8 bytes, a client's structs and each delete range ending at most at 2^53 − 1, JSON content and `Any` values nested at most 32 levels |
+| `packages/document-protocol/test-vectors/clock-v2.json` | CTL-45's algorithm as written: `next`, `wall`, `cap`, `raise`, a decision, and sequences of them |
+| `wire/frames-v2.json` | Reads each frozen frame back: its kind, and its fields equal to the entry's `input`. It does not re-encode: the text fixes no order of a frame's members (FRM-4), so byte-equal output is the reference encoder's property, not the wire's |
+| `wire/invitations-v2.json` | Reads each link to its invitation |
 
-Not run: `flows-draft-10.json`, which needs an engine.
+Not run: `flows-v2.json`, which needs an engine.
 
 ## Running it
 
@@ -46,12 +46,12 @@ swift run --package-path conformance/swift-checker tdsp-checker --verbose  # eve
 the Command Line Tools alone do not have it. `swift run … tdsp-checker` needs only the toolchain.
 
 `tdsp-checker` takes the specification's directory as an argument and otherwise finds it from
-its own place in the tree; it exits 1 if any vector fails. Every vector passes as of the draft
-marker `de.wappensc.together.tdsp.probe.draft-10`.
+its own place in the tree; it exits 1 if any vector fails. Every vector passes at TDSP 2.0, whose frames and
+invitations carry the version `2`.
 
 ## What the text left open
 
-Nothing, as of this marker. Writing the checker turned up thirteen places where a second
+Nothing, as of TDSP 2.0. Writing the checker turned up thirteen places where a second
 reading of the text could fail a vector while following the words; the text now says, for
 each, what it means, and the checker follows it:
 
@@ -77,7 +77,7 @@ each, what it means, and the checker follows it:
 12. An overlay's `ranges` may be empty; a decline's optional fields, and a heartbeat's
     `update`, are never `null` (§4.3, §5.4). A frame that is not UTF-8 is `not-json`, which no
     vector shows: the frame vectors carry frames as JSON strings.
-13. The rights in `control-draft-10.json` are the registers' permissions, not what a closed
+13. The rights in `control-v2.json` are the registers' permissions, not what a closed
     document takes (§3.6, LAY-5).
 
 One difference from the reference implementation stays, and no vector shows it: of a frame

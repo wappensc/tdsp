@@ -632,7 +632,7 @@ describe("persisted control state read back (CTL-26, CTL-39)", () => {
     },
   };
 
-  it("takes this draft's form", () => {
+  it("takes this version's form", () => {
     expect(registerStateFrom(JSON.parse(JSON.stringify(valid)))).toEqual(valid);
     expect(registerStateFrom({ closed: false, targets: {} })).toEqual({
       closed: false,

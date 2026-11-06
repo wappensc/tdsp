@@ -55,9 +55,6 @@ private func missing(_ detail: String) -> Rejection { Rejection(reason: .missing
 private func isExtension(_ name: String) -> Bool { name.contains(".") }
 
 public enum FrameDecoder {
-    /// VER-3: the draft marker in place of `2`.
-    public static let draftMarker = Edition.marker
-
     static let kinds = ["edit", "resync-request", "resync-response", "control", "heartbeat", "decline"]
 
     public static func decode(_ text: String) -> FrameResult {
@@ -72,7 +69,7 @@ public enum FrameDecoder {
         }
         guard let members = value.objectMembers else { return .rejected(.notJSON, "not an object") }
         // FRM-13: the version before the kind, the kind before every other field.
-        guard let tdsp = value["tdsp"], tdsp.stringValue == draftMarker else {
+        guard Edition.isVersion(value["tdsp"]) else {
             return .rejected(.unsupportedVersion, "tdsp is \(value["tdsp"].map { "\($0)" } ?? "missing")")
         }
         guard let kind = value["kind"]?.stringValue, kinds.contains(kind) else {

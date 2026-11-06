@@ -28,8 +28,7 @@ import { type JsonPath, numbersNotInIntegerForm, strictJsonProblem } from "./str
  * {"tdsp":2,"kind":"edit","documentId":"doc-a1b2c3","update":"<Base64>"}
  * ```
  *
- * Every frame has `tdsp` (the format version: 2, the draft marker until TDSP releases 2.0,
- * VER-3), `kind` and `documentId`; each kind adds its own fields (§4.3). Decoding is strict for
+ * Every frame has `tdsp` (the format version: 2, FRM-2), `kind` and `documentId`; each kind adds its own fields (§4.3). Decoding is strict for
  * the defined fields (§4.4): one that is missing, of the wrong type or out of range, or a field
  * without `.` the kind does not define, rejects the whole frame with a named reason; an
  * extension field is ignored unless `crit` names it (FRM-9, FRM-10). There is no unframed path:
@@ -41,11 +40,10 @@ import { type JsonPath, numbersNotInIntegerForm, strictJsonProblem } from "./str
  */
 
 /**
- * The draft marker every frame of this engine carries in place of `2` (VER-3):
- * no draft frame passes for TDSP 2.0, and every 1.x engine refuses it as `unsupported-version`.
- * The revision rises with every incompatible change of the draft wire.
+ * The frame format version every frame of this engine carries (FRM-2): 2. A 1.x frame, and a
+ * frame of a draft of 2.0 under its marker (VER-3), are another version (`unsupported-version`).
  */
-export const CURRENT_FRAME_VERSION = "de.wappensc.together.tdsp.probe.draft-10";
+export const CURRENT_FRAME_VERSION = 2;
 
 /**
  * How a receiver checks the value of an extension it implements (FRM-16): `true` for one the

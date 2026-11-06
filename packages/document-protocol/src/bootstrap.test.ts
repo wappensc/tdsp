@@ -21,8 +21,8 @@ import { registerStateDigest } from "./registers";
  * How a device is bootstrapped (SPECIFICATION.md RSY-14, RSY-16, CTL-39, LOS-19, VER-3), beside what
  * bootstrap.security.test.ts checks: by the first answer to its own request that carries control
  * state, whoever sent it; what it tells its application; what its requests state then; what it
- * persists and restores; and that such an answer ends a truncated history. That a state another
- * draft persisted counts as none bootstrap.security.test.ts holds.
+ * persists and restores; and that such an answer ends a truncated history. That a state a draft
+ * of 2.0 persisted counts as none bootstrap.security.test.ts holds.
  */
 
 const DOC = "doc-1";

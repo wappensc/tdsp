@@ -41,7 +41,7 @@ describe("invitations as a link (SPECIFICATION.md §11.3)", () => {
     expect(parseInvitation(text)).toEqual({ ok: true, invitation: MATRIX });
   });
 
-  it("ignores 1.x's policy parameter: the draft shares no policy (SND-16)", () => {
+  it("ignores 1.x's policy parameter: 2.0 shares no policy (SND-16)", () => {
     const text = `${encodeInvitation(MATRIX)}&policy=2000%2C10000%2C0%2Cinf%2C3000%400`;
     expect(parseInvitation(text)).toEqual({ ok: true, invitation: MATRIX });
   });
@@ -67,7 +67,12 @@ describe("invitations as a link (SPECIFICATION.md §11.3)", () => {
 
   it.each([
     ["no version, but a document", without("tdsp"), "unsupported-version"],
-    ["another version", swap("tdsp", "2"), "unsupported-version"],
+    ["another version", swap("tdsp", "1"), "unsupported-version"],
+    [
+      "the draft-10 marker (VER-3)",
+      swap("tdsp", "de.wappensc.together.tdsp.probe.draft-10"),
+      "unsupported-version",
+    ],
     ["a documentId twice", `${base}&documentId=doc-9`, "repeated-field"],
     ["a creator twice, the second empty", `${base}&creatorMemberId=`, "repeated-field"],
     ["no profile", without("profile"), "missing-field"],

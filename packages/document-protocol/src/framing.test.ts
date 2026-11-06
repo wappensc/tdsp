@@ -54,12 +54,10 @@ const helloUpdate = (() => {
 })();
 
 describe("the frame (SPECIFICATION.md §4)", () => {
-  it("is JSON text with the draft marker, the kind and the documentId first", () => {
+  it("is JSON text with the version 2, the kind and the documentId first", () => {
     const frame = encodeEditFrame(DOC, new Uint8Array([1, 2, 3]));
-    expect(frame).toBe(
-      '{"tdsp":"de.wappensc.together.tdsp.probe.draft-10","kind":"edit","documentId":"doc-1","update":"AQID"}',
-    );
-    expect(CURRENT_FRAME_VERSION).toBe("de.wappensc.together.tdsp.probe.draft-10");
+    expect(frame).toBe('{"tdsp":2,"kind":"edit","documentId":"doc-1","update":"AQID"}');
+    expect(CURRENT_FRAME_VERSION).toBe(2);
   });
 
   it("round-trips an edit, with a real Yjs update that still applies", () => {
@@ -88,7 +86,7 @@ describe("the frame (SPECIFICATION.md §4)", () => {
       text: "My app cannot open this document.",
     });
     expect(full).toBe(
-      '{"tdsp":"de.wappensc.together.tdsp.probe.draft-10","kind":"decline","documentId":"doc-1","reason":"unsupported-profile","profiles":["com.example.markdown/1"],"text":"My app cannot open this document."}',
+      '{"tdsp":2,"kind":"decline","documentId":"doc-1","reason":"unsupported-profile","profiles":["com.example.markdown/1"],"text":"My app cannot open this document."}',
     );
     expect(decodeFrame(full)).toEqual({
       kind: "decline",
@@ -150,7 +148,10 @@ describe("decoding rejects with a named reason (§4.4)", () => {
 
   it("unsupported-version: no tdsp, or another version", () => {
     expect(reasonOf(tampered(edit, { tdsp: undefined }))).toBe("unsupported-version");
-    expect(reasonOf(tampered(edit, { tdsp: 2 }))).toBe("unsupported-version");
+    expect(reasonOf(tampered(edit, { tdsp: "de.wappensc.together.tdsp.probe.draft-10" }))).toBe(
+      "unsupported-version",
+    );
+    expect(reasonOf(tampered(edit, { tdsp: "2" }))).toBe("unsupported-version");
     expect(reasonOf(tampered(edit, { tdsp: 1 }))).toBe("unsupported-version");
     expect(reasonOf(tampered(edit, { tdsp: "1" }))).toBe("unsupported-version");
   });
@@ -283,7 +284,7 @@ describe("extension fields (FRM-9 to FRM-11)", () => {
     );
   });
 
-  it("writes the draft marker, which no 1.x engine reads as its own", () => {
+  it("writes the version 2, which no 1.x engine reads as its own", () => {
     expect(JSON.parse(edit).tdsp).toBe(CURRENT_FRAME_VERSION);
     expect(CURRENT_FRAME_VERSION).not.toBe(1);
   });
@@ -453,7 +454,7 @@ describe("registers, snapshots, heartbeats and requests (§4.3, §7)", () => {
 
   it("round-trips a register on every kind of target (CTL-20)", () => {
     expect(grant).toBe(
-      `{"tdsp":"${CURRENT_FRAME_VERSION}","kind":"control","documentId":"doc-1","device":"${TAG}","targets":{"member:bob":{"value":"write","clock":[${T},0],"device":"${TAG}"}},"closed":false,"controlClock":[${T},0],"controlDigest":"${CONTROL}"}`,
+      `{"tdsp":${CURRENT_FRAME_VERSION},"kind":"control","documentId":"doc-1","device":"${TAG}","targets":{"member:bob":{"value":"write","clock":[${T},0],"device":"${TAG}"}},"closed":false,"controlClock":[${T},0],"controlDigest":"${CONTROL}"}`,
     );
     for (const [target, value] of [
       ["member:bob", "read"],
@@ -562,7 +563,7 @@ describe("registers, snapshots, heartbeats and requests (§4.3, §7)", () => {
 
   it("round-trips a heartbeat with a control clock, and one without (SND-11)", () => {
     expect(heartbeat).toBe(
-      `{"tdsp":"${CURRENT_FRAME_VERSION}","kind":"heartbeat","documentId":"doc-1","controlClock":[${T},0],"controlDigest":"${CONTROL}","stateVector":"AA==","stateDigest":"${STATE}","stream":"${STREAM}","sequence":7}`,
+      `{"tdsp":${CURRENT_FRAME_VERSION},"kind":"heartbeat","documentId":"doc-1","controlClock":[${T},0],"controlDigest":"${CONTROL}","stateVector":"AA==","stateDigest":"${STATE}","stream":"${STREAM}","sequence":7}`,
     );
     expect(decodeFrame(heartbeat)).toEqual({
       kind: "heartbeat",
@@ -637,7 +638,7 @@ describe("registers, snapshots, heartbeats and requests (§4.3, §7)", () => {
 
   it("round-trips a request that states nothing, and one that states its clock, asks all and asks regardless (RSY-16)", () => {
     expect(request).toBe(
-      `{"tdsp":"${CURRENT_FRAME_VERSION}","kind":"resync-request","documentId":"doc-1","requestId":"0123456789abcdef","controlClock":null,"controlDigest":null,"all":false,"force":false,"stateVector":"AA==","stateDigest":"00112233aabbccdd","stream":"${STREAM}","sequence":8}`,
+      `{"tdsp":${CURRENT_FRAME_VERSION},"kind":"resync-request","documentId":"doc-1","requestId":"0123456789abcdef","controlClock":null,"controlDigest":null,"all":false,"force":false,"stateVector":"AA==","stateDigest":"00112233aabbccdd","stream":"${STREAM}","sequence":8}`,
     );
     const forced = encodeResyncRequestFrame({
       documentId: DOC,
@@ -873,7 +874,7 @@ describe("registers, snapshots, heartbeats and requests (§4.3, §7)", () => {
     expect(reasonOf(renamed("member:"))).toBe("invalid-field");
   });
 
-  it("missing-field, for each required field of the kinds this draft defines anew", () => {
+  it("missing-field, for each required field of the kinds 2.0 defines anew", () => {
     for (const field of ["device", "targets", "closed", "controlClock", "controlDigest"]) {
       expect(reasonOf(tampered(grant, { [field]: undefined })), field).toBe("missing-field");
     }

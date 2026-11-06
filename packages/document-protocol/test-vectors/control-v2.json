@@ -1,6 +1,6 @@
 {
-  "$comment": "TDSP 2.0 draft control-state test vectors (draft revision 10): each vector's frames — registers and the close, as `control` frames and snapshots carry them — merged in any order, each also twice, and as one snapshot, hold exactly `state`, whose control digest is `digest` (LOS-24), and give each member the right listed, on the document and on the layer — `read`, `write`, `revoked` (refused as `read` is, CTL-13, on every layer, LAY-5) or `unknown` (never named). Of two registers on one target the greater clock holds, then the later device tag in Unicode code point order, then the narrower value — for the reason for the close the greater string in code point order — (CTL-22, CTL-23); the close only goes from false to true (LIF-7). Checked in src/test-vectors.test.ts.",
-  "version": "de.wappensc.together.tdsp.probe.draft-10",
+  "$comment": "TDSP 2.0 control-state test vectors: each vector's frames — registers and the close, as `control` frames and snapshots carry them — merged in any order, each also twice, and as one snapshot, hold exactly `state`, whose control digest is `digest` (LOS-24), and give each member the right listed, on the document and on the layer — `read`, `write`, `revoked` (refused as `read` is, CTL-13, on every layer, LAY-5) or `unknown` (never named). Of two registers on one target the greater clock holds, then the later device tag in Unicode code point order, then the narrower value — for the reason for the close the greater string in code point order — (CTL-22, CTL-23); the close only goes from false to true (LIF-7). Checked in src/test-vectors.test.ts.",
+  "version": 2,
   "layer": "com.example.comments/1",
   "vectors": [
     {

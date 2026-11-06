@@ -1,6 +1,6 @@
 {
-  "$comment": "TDSP 2.0 draft clock test vectors (draft revision 10): CTL-45's algorithm as pure functions, every clock a pair [ms, counter] of JSON integers. `next`: next(clock), or \"none\" at the end of the range. `wall`: the wall clock `now` (ms, any number) as a clock. `cap`: the end of the span from `now`. `raise`: own after raise(clock) at `now`, `clock` the control clock after a restore or a merge. `decide`: a decision on one target at `now` by a device whose own clock is `own`, with the clocks of the registers it holds on that target (`held`): the decision's clock, or \"refused\", and `ownAfter`. `sequence`: one device's own clock through `steps` in order, each a raise or a decision, with `ownAfter` after each. Checked in src/test-vectors.test.ts.",
-  "version": "de.wappensc.together.tdsp.probe.draft-10",
+  "$comment": "TDSP 2.0 clock test vectors: CTL-45's algorithm as pure functions, every clock a pair [ms, counter] of JSON integers. `next`: next(clock), or \"none\" at the end of the range. `wall`: the wall clock `now` (ms, any number) as a clock. `cap`: the end of the span from `now`. `raise`: own after raise(clock) at `now`, `clock` the control clock after a restore or a merge. `decide`: a decision on one target at `now` by a device whose own clock is `own`, with the clocks of the registers it holds on that target (`held`): the decision's clock, or \"refused\", and `ownAfter`. `sequence`: one device's own clock through `steps` in order, each a raise or a decision, with `ownAfter` after each. Checked in src/test-vectors.test.ts.",
+  "version": 2,
   "constants": { "MAX_MS": 281474976710655, "MAX_COUNTER": 65535, "SPAN": 86400000 },
   "vectors": [
     {

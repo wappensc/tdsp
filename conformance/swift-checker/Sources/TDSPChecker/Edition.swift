@@ -1,12 +1,18 @@
-/// What names the edition of TDSP this checker reads, in one place: the marker that frames and
-/// invitations carry in place of the version while 2.0 is a draft (VER-3), and the name the vector
-/// files carry for it. Releasing 2.0 changes these lines and nothing else of the file names.
+/// What names the edition of TDSP this checker reads, in one place: the version that frames and
+/// invitations carry (FRM-2, §11.3), and the name the vector files carry for it. A draft of 2.0
+/// wrote its marker in place of the version (VER-3), which is another version.
 public enum Edition {
-    /// VER-3: the draft marker in place of `2`.
-    public static let marker = "de.wappensc.together.tdsp.probe.draft-10"
+    /// FRM-2, §11.3: the version, as the digits an integer is written in (§1.6).
+    public static let version = "2"
 
     /// The suffix of this edition's vector and wire files: `frames-<suffix>.json`.
-    public static let fileSuffix = "draft-10"
+    public static let fileSuffix = "v2"
+
+    /// Whether a JSON value is the version: the integer written as `version`, not a string.
+    static func isVersion(_ value: JSONValue?) -> Bool {
+        if case .number(let lexeme)? = value { return lexeme == version }
+        return false
+    }
 
     /// A published test vector file of this edition, relative to the specification's directory.
     public static func vectors(_ name: String) -> String {
